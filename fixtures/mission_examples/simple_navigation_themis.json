@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "85b6dc76-774c-4db8-a208-48c68ac6237d",
+  "phase": 1,
+  "name": "Themis simple navigation",
+  "behavior": 0,
+  "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+  "transit": {
+    "geofence": {"feature_id": "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e"},
+    "optimization": {
+      "road_usage": 1.0,
+      "energy": 0.8
+    },
+    "desired_vehicle_constraints": {
+      "max_speed": 4.0
+    }
+  },
+  "objective": {
+    "geometries": [
+      {"geometry": {"geometry_type": "Point", "coordinates": [4.39167, 50.84417]}}
+    ],
+    "vehicle_formation": 0,
+    "maximize_coverage": false
+  }
+}

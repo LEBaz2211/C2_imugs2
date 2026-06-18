@@ -1,0 +1,115 @@
+# C2 iMUGS2 Replacement
+
+This repository is a clean replacement implementation inspired by the old multi-robot C2 / fog / planner / edge-supervisor system.
+
+The long-term project will support LLM benchmarking, but the immediate goal is simpler: provide a working, testable replacement flow that accepts a `mission_config`, plans per-agent tasks, stores mission state, and can later be wrapped with ROS 2 nodes and Docker services.
+
+## Current Flow
+
+```text
+mission_config JSON
+-> validation and normalization
+-> fixture-backed map/agent repositories
+-> simple planner
+-> task_plan JSON
+-> mission feedback
+-> edge-dispatch records
+```
+
+## Try It
+
+Backend:
+
+```bash
+python -m c2_imugs2.cli demo
+```
+
+or after installing:
+
+```bash
+pip install -e .
+c2-imugs2 demo
+```
+
+The demo uses:
+
+```text
+fixtures/missions/simple_navigation.json
+fixtures/agents.json
+fixtures/map_features.json
+```
+
+Runtime JSON outputs are written under:
+
+```text
+data/runtime/
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The UI opens on Vite's local URL, normally `http://localhost:5173`. It is a shadcn-style React surface with a fictive mission map, animated UGV trajectories, polygon drawing, a schema-aligned mission JSON editor, task-plan preview, asset browser, and a quiet LLM-assistant placeholder. The assistant is intentionally local/deterministic for now; the benchmarking harness comes later.
+
+Run the replacement core and UI together:
+
+```bash
+docker compose up --build
+```
+
+Run the vendored legacy ROS stack:
+
+```bash
+docker compose -f docker-compose.legacy-ros.yml up --build
+```
+
+That compose file builds and runs the actual old `centralized_coordination`, `planner`, `c2_ros2_rest_api`, `rosbridge`, `agent_tasks_supervisor`, and `test_autonomy_sim` nodes from the trimmed source copied into `legacy_ros/`. For the edge side, `agent_tasks_supervisor` and `test_autonomy_sim` run in the same container because they are two executables from the same old package and form one simulated UGV pair.
+
+After it is running:
+
+```bash
+./scripts/check_legacy_ros_stack.sh
+```
+
+## What Is Implemented
+
+- Canonical mission and task-plan schemas.
+- Legacy mission normalization for `objective.geometry` -> `objective.geometries[]`.
+- Legacy spelling alias `optimalization` -> `optimization`.
+- File-backed mission, plan, map, and agent repositories.
+- Explicit ports/interfaces for planner, repositories, and edge dispatch.
+- Deterministic point/feature planner for `NAVIGATE`.
+- Coverage placeholder behavior that still emits useful waypoint tasks for area features.
+- Mission lifecycle service with `INIT`, `APPROVE`, and `START`.
+- Edge dispatch records for later ROS 2 integration.
+- React + shadcn-style frontend for mission visualization and editing.
+- Legacy ROS Docker compose wrapper and ICD map for the old fog/planner/edge topic/service names.
+
+## Architecture
+
+The core is modular. `MissionService` depends on small ports, not concrete implementations:
+
+- `PlannerPort`
+- `AgentRepositoryPort`
+- `MapRepositoryPort`
+- `MissionRepositoryPort`
+- `PlanRepositoryPort`
+- `EdgeDispatcherPort`
+
+This means the simple planner can be swapped with the actual planner by implementing `create_plan(mission_config, agents) -> task_plan`.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## What Comes Next
+
+- ROS 2 interface package and nodes.
+- Edge mock node.
+- MongoDB adapter.
+- HTTP API for connecting the UI to the backend runtime.
+- Better graph/path planning.
+- Coverage and formation logic.
+- LLM benchmark harness after the replacement system works.

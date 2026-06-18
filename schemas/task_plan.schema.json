@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskPlan",
+  "type": "object",
+  "required": ["mission_id", "tasks"],
+  "properties": {
+    "mission_id": {"type": "string"},
+    "tasks": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["task_id", "primitives", "objectives"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "primitives": {"type": "array"},
+          "objectives": {"type": "array"}
+        }
+      }
+    }
+  }
+}
+

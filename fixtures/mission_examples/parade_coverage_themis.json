@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "9f94003b-4559-4afc-b00a-e292bf17eb2d",
+  "phase": 1,
+  "name": "Themis parade coverage",
+  "behavior": 1,
+  "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+  "transit": {
+    "geofence": {"feature_id": "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e"},
+    "optimization": {
+      "road_usage": 0.4,
+      "energy": 0.8
+    },
+    "desired_vehicle_constraints": {
+      "max_speed": 3.0
+    }
+  },
+  "objective": {
+    "geometries": [
+      {"feature_id": "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e"}
+    ],
+    "maximize_coverage": true
+  }
+}

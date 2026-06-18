@@ -1,0 +1,3 @@
+unique_identifier_msgs/UUID mission_id
+uint8 mission_status
+string<=2000 error_message

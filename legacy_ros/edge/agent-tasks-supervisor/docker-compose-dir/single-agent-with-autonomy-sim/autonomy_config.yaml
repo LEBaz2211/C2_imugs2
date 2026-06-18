@@ -1,0 +1,40 @@
+autonomy_id_key:
+  ros__parameters:
+    coordinate_mode: 0    # 0 = Global (GPS), 1 = Local
+    vehicle_type: "ugv"
+    start_location: [48.786092, 2.091700] 
+    active_autonomy_mode: 1
+
+    max_speed: 4.5
+    max_acceleration: 8.0
+    max_weight: 16.0
+    max_tilt_angle: 1.8
+
+    fuel_status_pct: 85.0
+    fuel_hours: 1.5
+    battery_status_pct: 90.0
+    battery_hours: 3.0
+
+    vehicle_dimensions: [0.9, 0.6, 0.55]
+
+    # List of sensor names (arbitrary length)
+    sensors: 
+      - lidar
+      - camera
+      - gps
+
+    # Sensor properties
+    lidar:
+      type: 1
+      status: 1
+      field_of_view: [360.0, 3.14]
+
+    camera:
+      type: 2
+      status: 1
+      field_of_view: [120.0, 2.0]
+
+    gps:
+      type: 3
+      status: 1
+      field_of_view: [180.0, 3.14]

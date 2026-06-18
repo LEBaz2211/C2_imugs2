@@ -1,0 +1,6 @@
+string task_id
+uint8 task_requested_state
+---
+string task_id
+uint8 task_state
+string<=1024 feedback

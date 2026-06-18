@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentProfile",
+  "type": "object",
+  "required": ["agent_id", "current_location"],
+  "properties": {
+    "agent_id": {"type": "string"},
+    "name": {"type": "string"},
+    "vehicle_type": {"type": "string"},
+    "status": {"type": "string"},
+    "current_location": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "constraints": {"type": "object"},
+    "capabilities": {"type": "array", "items": {"type": "string"}}
+  }
+}
+

@@ -1,0 +1,22 @@
+version: '3.5'
+
+services:
+    planner:
+        container_name: planner
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/planner:humble_cyclone_1.0
+        restart: no
+        network_mode: host
+        environment:
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+            - DISPLAY=172.17.0.1:0
+        command: ros2 run planner planner_node --ros-args --params-file /app/config.yaml
+        volumes:
+            - ./config_planner.yaml:/app/config.yaml
+            - ./data/.planresults:/app/data/.planresults
+            - ./data/map:/app/data/map
+
+
+# networks:
+#   multi_robot_network:
+#     name: multi_robot_network

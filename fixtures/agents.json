@@ -1,0 +1,32 @@
+{
+  "agents": [
+    {
+      "agent_id": "ugv-alpha",
+      "name": "UGV Alpha",
+      "vehicle_type": "UGV",
+      "status": "available",
+      "current_location": [4.3905, 50.8437],
+      "constraints": {"max_speed": 5.0},
+      "capabilities": ["waypoint_navigation", "coverage"]
+    },
+    {
+      "agent_id": "ugv-bravo",
+      "name": "UGV Bravo",
+      "vehicle_type": "UGV",
+      "status": "available",
+      "current_location": [4.3925, 50.8439],
+      "constraints": {"max_speed": 4.0},
+      "capabilities": ["waypoint_navigation"]
+    },
+    {
+      "agent_id": "ugv-charlie",
+      "name": "UGV Charlie",
+      "vehicle_type": "UGV",
+      "status": "available",
+      "current_location": [4.3898, 50.8451],
+      "constraints": {"max_speed": 3.5},
+      "capabilities": ["waypoint_navigation", "relay"]
+    }
+  ]
+}
+

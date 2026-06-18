@@ -1,0 +1,10 @@
+before_script:
+  - export DEBIAN=`cat /etc/debian_version 2> /dev/null`
+  - "[ -n \"$DEBIAN\" ] && apt update && apt install -y curl || true"
+  - "[ -n \"$DEBIAN\" ] && curl -s https://packagecloud.io/install/repositories/dotocean/imugs/script.deb.sh | sudo bash || true"
+  - "[ -n \"$DEBIAN\" ] && apt update && apt upgrade -y && apt install -y ros-$ROS_DISTRO-swarm-planner-msgs ros-$ROS_DISTRO-swarm-client-msgs || true"
+
+include:
+  project: dotocean/shared/imugs/imugs-devops
+  file: 
+    - .gitlab-ci.ros.msgs.yml

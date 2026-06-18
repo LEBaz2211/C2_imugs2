@@ -1,0 +1,4 @@
+uint8 requested_state
+---
+uint8 state
+string<=1024 feedback

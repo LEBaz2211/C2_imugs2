@@ -1,0 +1,73 @@
+{
+    "task_id": "2b4ad006-3d8b-4290-9f62-a9fb07987e04",
+    "objectives": [
+        {   
+            "objective_id": "5c741cc4-30dd-4a17-bd32-9c5dadfe18mf",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+                {   
+                    "primitive_id": "4t741cc4-30dd-4a17-bd32-9c5dadfe19rk",
+                    "primitive_type": "waypoint",
+                    "parameters": {
+                        "coordinates": [50.844400, 4.392069, 0],
+                        "speed": 3,
+                        "max_speed": 5,
+                        "mobility_profile": 0,
+                        "wait_time": 5
+                    },
+                    "completion": {
+                        "ends_task": false,
+                        "next_primitive": ["prim3"]  
+                    }
+                },
+                {
+                    "primitive_id": "b2b741cc4-30dd-4a17-bd32-9c5dadfe19rk",
+                    "primitive_type": "search_mine",
+                    "parameters": {
+                        "pattern": "zigzag",
+                        "swath": 5,
+                        "sensors": ["emi", "gpr", "stereo_cam"]
+                    },
+                    "completed_trigger": "object_found",
+                    "completion": {
+                        "completed": ["prim3"]  
+                    }
+                }
+            ]
+        },
+        {   
+            "objective_id": "4c741cc4-60dd-4a17-bd32-9c5dadfe18dd",
+            "primitive_id": "p2",
+            "primitive_type": "search_mine",
+            "parameters": {
+                "pattern": "zigzag",
+                "swath": 5,
+                "sensors": ["emi", "gpr"]
+            },
+            "geometry": "linestring",
+            "start_trigger": "",
+            "outputs": ["mine_location"],
+            "completed_trigger": "object_found",
+            "completion": {
+                "completed": ["p3"]
+            }
+        },
+        {
+            "objective_id": "d40055fd-cecb-4d3f-9cd7-c785a2617bbc",
+            "primitive_id": "p3",
+            "primitive_type": "dispose_mine",
+            "parameters": {
+                "swath": 5,
+                "grippers": ["robot_arm_1"]
+            },
+            "start_trigger": "object_found",
+            "inputs": {
+                "grip_location": "mine_location"
+            },
+            "completion": {
+                "completed": ["p1", "p2"]
+            }
+        }
+    ]
+}

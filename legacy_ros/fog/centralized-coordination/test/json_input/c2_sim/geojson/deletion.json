@@ -1,0 +1,4 @@
+{
+    "category": "gnss_forbidden_zones",
+    "ids_to_delete: [5, 12, 15, 17]"
+}

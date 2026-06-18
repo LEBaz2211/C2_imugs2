@@ -1,0 +1,99 @@
+name: c2-imugs2-legacy-ros
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: c2-imugs2-mongodb
+    network_mode: host
+    volumes:
+      - ./data/legacy-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  centralized-coordination:
+    build:
+      context: ./legacy_ros
+      dockerfile: docker/Dockerfile.centralized
+    image: c2-imugs2/centralized-coordination:local
+    container_name: c2-imugs2-centralized-coordination
+    network_mode: host
+    env_file:
+      - ./legacy_ros/.env.ros
+    environment:
+      MONGODB_CONNSTRING: mongodb://127.0.0.1:27017
+    volumes:
+      - ./legacy_ros/config/config_centralized_coordination.yaml:/app/config.yaml:ro
+    command: ros2 run centralized_coordination centralized_coordination_executable --ros-args --params-file /app/config.yaml
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  planner:
+    build:
+      context: ./legacy_ros
+      dockerfile: docker/Dockerfile.planner
+    image: c2-imugs2/planner:local
+    container_name: c2-imugs2-planner
+    network_mode: host
+    env_file:
+      - ./legacy_ros/.env.ros
+    volumes:
+      - ./legacy_ros/config/config_planner.yaml:/app/config.yaml:ro
+      - ./legacy_ros/config/data/map:/data/map:ro
+      - ./data/legacy-planresults:/app/data/.planresults
+    command: ros2 run planner planner_node --ros-args --params-file /app/config.yaml
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  c2-ros-rest:
+    build:
+      context: ./legacy_ros
+      dockerfile: docker/Dockerfile.c2_ros
+    image: c2-imugs2/c2-ros-rest:local
+    container_name: c2-imugs2-c2-ros-rest
+    network_mode: host
+    env_file:
+      - ./legacy_ros/.env.ros
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 run c2_ros2_rest_api c2_ros2_rest_api"
+    depends_on:
+      - centralized-coordination
+
+  rosbridge:
+    build:
+      context: ./legacy_ros
+      dockerfile: docker/Dockerfile.c2_ros
+    image: c2-imugs2/rosbridge:local
+    container_name: c2-imugs2-rosbridge
+    network_mode: host
+    env_file:
+      - ./legacy_ros/.env.ros
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+    depends_on:
+      - centralized-coordination
+
+  edge-agent-sim-1:
+    build:
+      context: ./legacy_ros
+      dockerfile: docker/Dockerfile.edge
+    image: c2-imugs2/edge-agent-sim:local
+    container_name: c2-imugs2-edge-agent-sim-1
+    network_mode: host
+    env_file:
+      - ./legacy_ros/.env.ros
+    environment:
+      AGENT_ID: f9992bb3_9871_451f_90a0_9207eb9fe6c5
+      AUTONOMY_TOPIC_PREFIX: Themis_Fr
+    volumes:
+      - ./legacy_ros/config/config_agent-tasks-supervisor.yaml:/app/config.yaml:ro
+      - ./legacy_ros/config/config_autonomy.yaml:/app/autonomy_config.yaml:ro
+      - ./legacy_ros/config/launch_agent_tasks_supervisor.sh:/app/launch_agent_tasks_supervisor.sh:ro
+      - ./legacy_ros/config/launch_autonomy_sim.sh:/app/launch_autonomy_sim.sh:ro
+      - ./legacy_ros/config/launch_edge_with_autonomy_sim.sh:/app/launch_edge_with_autonomy_sim.sh:ro
+    command: bash -lc "bash /app/launch_edge_with_autonomy_sim.sh"
+    depends_on:
+      - centralized-coordination

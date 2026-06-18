@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "c2-imugs2"
+version = "0.1.0"
+description = "Clean replacement core for iMUGS-style multi-robot C2 mission planning."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.111",
+  "pymongo>=4.8",
+  "uvicorn[standard]>=0.30",
+  "websockets>=12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+c2-imugs2 = "c2_imugs2.cli:main"
+c2-imugs2-api = "c2_imugs2.api:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

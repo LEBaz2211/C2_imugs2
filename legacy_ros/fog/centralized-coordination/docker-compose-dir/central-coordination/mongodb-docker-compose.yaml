@@ -1,0 +1,21 @@
+version: '3.5'
+
+# networks:
+#   multi_robot_network:
+#     name: multi_robot_network
+
+
+services:
+    # Swarm Manager Database:
+    mongodb:
+        image: mongo:latest
+        container_name: mongodb
+        hostname: mongodb
+        ports:
+            - 27017:27017 # for visualization on MongoDB Compass: connect to 127.0.0.1:27017
+        volumes:
+            - ~/apps/mongo:/data/db
+        network_mode: 'host'
+        # networks:
+        #     - multi_robot_network
+

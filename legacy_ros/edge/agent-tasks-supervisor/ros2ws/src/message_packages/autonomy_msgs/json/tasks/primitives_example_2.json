@@ -1,0 +1,237 @@
+{
+    "mission_id": "ac19d601-9473-4bca-a029-e39861a21b1d",
+    "tasks": {
+        "agent_id_1": {
+            "task_id": "2b4ad006-3d8b-4290-9f62-a9fb07987e04",
+            "primitives": [
+                {
+                    "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                    "primitive_type": "waypoint",
+                    "primitive_intputs": [],
+                    "primitive_outputs": [],
+                    "completion": {
+                        "ends_objective": true,
+                        "ends_task": false,
+                        "followed_by_primitives": [],
+                        "inherit_other_primitives": false,
+                        "resume_after": false
+                    }
+                },
+                {
+                    "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07",
+                    "primitive_type": "search_mine",
+                    "parameters": {
+                        "pattern": "zigzag",
+                        "swath": 5,
+                        "sensors": [
+                            "emi",
+                            "gpr",
+                            "stereo_cam"
+                        ]
+                    },
+                    "primitive_intputs": [],
+                    "primitive_outputs": [
+                        "contact"
+                    ],
+                    "completion": {
+                        "ends_objective": false,
+                        "ends_task": false,
+                        "followed_by_primitives": [
+                            "3h4ad006-3d8b-4290-9f62-a9fb07987e59"
+                        ],
+                        "inherit_other_primitives": false,
+                        "resume_after": true
+                    }
+                },
+                {
+                    "primitive_id": "3h4ad006-3d8b-4290-9f62-a9fb07987e59",
+                    "primitive_type": "dispose_mine",
+                    "parameters": {
+                        "grippers": [
+                            "robot_front_arm_1"
+                        ]
+                    },
+                    "primitive_intputs": [
+                        {
+                            "4a4ad006-3d8b-4290-9f62-a9fb07987e07": "contact"
+                        }
+                    ],
+                    "primitive_outputs": [],
+                    "completion": {
+                        "ends_objective": true,
+                        "ends_task": false,
+                        "followed_by_primitives": [],
+                        "inherit_other_primitives": false,
+                        "resume_after": true
+                    }
+                }
+            ],
+            "objectives": [
+                {
+                    "objective_id": "8r4ad006-3d8b-4290-9f62-a9fb07987e02",
+                    "objective_type": "combined_primitives",
+                    "parallel_execution": true,
+                    "primitives": [
+                        {
+                            "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                            "parameters": {
+                                "coordinates": [
+                                    50.844400,
+                                    4.392069,
+                                    0
+                                ],
+                                "speed": 3,
+                                "max_speed": 5,
+                                "mobility_profile": 0,
+                                "wait_time": 5
+                            }
+                        },
+                        {
+                            "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07"
+                        }
+                    ]
+                },
+                {
+                    "objective_id": "9o4ad006-3d8b-4290-9f62-a9fb07987e08",
+                    "objective_type": "combined_primitives",
+                    "parallel_execution": true,
+                    "primitives": [
+                        {
+                            "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                            "parameters": {
+                                "coordinates": [
+                                    50.843400,
+                                    4.393069,
+                                    0
+                                ],
+                                "speed": 3,
+                                "max_speed": 5,
+                                "mobility_profile": 0,
+                                "wait_time": 0
+                            }
+                        },
+                        {
+                            "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07"
+                        }
+                    ]
+                }
+            ]
+        },
+        "agent_id_2": {
+            "task_id": "3b4ad006-3d8b-4290-9f62-a9fb07987e05",
+            "primitives": [
+                {
+                    "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                    "primitive_type": "waypoint",
+                    "primitive_intputs": [],
+                    "primitive_outputs": [],
+                    "completion": {
+                        "ends_objective": true,
+                        "ends_task": false,
+                        "followed_by_primitives": [],
+                        "inherit_other_primitives": false,
+                        "resume_after": false
+                    }
+                },
+                {
+                    "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07",
+                    "primitive_type": "search_mine",
+                    "parameters": {
+                        "pattern": "zigzag",
+                        "swath": 5,
+                        "sensors": [
+                            "emi",
+                            "gpr",
+                            "stereo_cam"
+                        ]
+                    },
+                    "primitive_intputs": [],
+                    "primitive_outputs": [
+                        "contact"
+                    ],
+                    "completion": {
+                        "ends_objective": false,
+                        "ends_task": false,
+                        "followed_by_primitives": [
+                            "3h4ad006-3d8b-4290-9f62-a9fb07987e59"
+                        ],
+                        "inherit_other_primitives": false,
+                        "resume_after": true
+                    }
+                },
+                {
+                    "primitive_id": "3h4ad006-3d8b-4290-9f62-a9fb07987e59",
+                    "primitive_type": "dispose_mine",
+                    "parameters": {
+                        "grippers": [
+                            "robot_front_arm_1"
+                        ]
+                    },
+                    "primitive_intputs": [
+                        {
+                            "4a4ad006-3d8b-4290-9f62-a9fb07987e07": "contact"
+                        }
+                    ],
+                    "primitive_outputs": [],
+                    "completion": {
+                        "ends_objective": true,
+                        "ends_task": false,
+                        "followed_by_primitives": [],
+                        "inherit_other_primitives": false,
+                        "resume_after": true
+                    }
+                }
+            ],
+            "objectives": [
+                {
+                    "objective_id": "8r4ad006-3d8b-4290-9f62-a9fb07987e02",
+                    "objective_type": "combined_primitives",
+                    "parallel_execution": true,
+                    "primitives": [
+                        {
+                            "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                            "parameters": {
+                                "coordinates": [
+                                    50.844400,
+                                    4.392069,
+                                    0
+                                ],
+                                "speed": 3,
+                                "max_speed": 5,
+                                "mobility_profile": 0,
+                                "wait_time": 5
+                            }
+                        },
+                        {
+                            "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07"
+                        }
+                    ]
+                },
+                {
+                    "objective_id": "9o4ad006-3d8b-4290-9f62-a9fb07987e08",
+                    "objective_type": "combined_primitives",
+                    "parallel_execution": true,
+                    "primitives": [
+                        {
+                            "primitive_id": "5s4ad006-3d8b-4290-9f62-a9fb07987e44",
+                            "parameters": {
+                                "coordinates": [
+                                    50.843400,
+                                    4.393069,
+                                    0
+                                ],
+                                "speed": 3,
+                                "max_speed": 5,
+                                "mobility_profile": 0,
+                                "wait_time": 0
+                            }
+                        },
+                        {
+                            "primitive_id": "4a4ad006-3d8b-4290-9f62-a9fb07987e07"
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+}

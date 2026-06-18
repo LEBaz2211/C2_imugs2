@@ -1,0 +1,31 @@
+{
+  "mission_id": "f17d27fc-50f6-11ec-bf63-0242ac130002",
+  "behavior": 0,
+  "vehicles":[
+    "f17d27fc-50f6-11ec-bf63-0242ac130002",
+    "fcee3176-50f6-11ec-bf63-0242ac130002",
+    "t18d27fc-50f6-11ec-bf63-0242ac130055"
+  ],
+  "objective": {
+    "geometry": {  
+      "geometry_type": "Polygon",
+      "coordinates": [
+        [-67.13734, 45.13745],
+        [-66.96466, 44.8097],
+        [-68.03252, 44.3252]
+      ]
+    },
+    "arrival_time": {
+      "earliest": "1316615270",
+      "target": "1316615273",
+      "latest": "1316615271"
+    }
+  },
+  "transit": {
+    "geofence": {"feature_id": "d17d27fc-50d6-11ec-bf63-0242ac130202"},
+    "desired_vehicle_constraints": {
+      "max_speed": 4
+    }
+  }
+  
+}

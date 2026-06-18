@@ -1,0 +1,55 @@
+{
+  "features": [
+    {
+      "feature_id": "staging-area",
+      "name": "Staging area",
+      "feature_type": "workspace",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[4.389, 50.843], [4.394, 50.843], [4.394, 50.846], [4.389, 50.846], [4.389, 50.843]]]
+      },
+      "properties": {"feature_type": "workspace"}
+    },
+    {
+      "feature_id": "delivery-point-east",
+      "name": "East delivery point",
+      "feature_type": "objective",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [4.396, 50.844]
+      },
+      "properties": {"feature_type": "objective"}
+    },
+    {
+      "feature_id": "pickup-points",
+      "name": "Pickup points",
+      "feature_type": "objective",
+      "geometry": {
+        "type": "MultiPoint",
+        "coordinates": [[4.391, 50.845], [4.393, 50.845], [4.395, 50.845]]
+      },
+      "properties": {"feature_type": "objective"}
+    },
+    {
+      "feature_id": "main-road",
+      "name": "Main road",
+      "feature_type": "road",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[4.389, 50.844], [4.396, 50.844]]
+      },
+      "properties": {"feature_type": "road"}
+    },
+    {
+      "feature_id": "enemy-risk-zone",
+      "name": "Enemy risk zone",
+      "feature_type": "risk",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[4.392, 50.8442], [4.393, 50.8442], [4.393, 50.8448], [4.392, 50.8448], [4.392, 50.8442]]]
+      },
+      "properties": {"feature_type": "risk"}
+    }
+  ]
+}
+

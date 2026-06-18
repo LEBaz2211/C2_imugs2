@@ -1,0 +1,22 @@
+FROM ros:humble-ros-core-jammy
+
+SHELL ["/bin/bash", "-c"]
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+WORKDIR /app
+
+COPY fog/planner/.config/install_dependencies.sh /tmp/install_dependencies.sh
+RUN chmod +x /tmp/install_dependencies.sh && /tmp/install_dependencies.sh
+
+COPY fog/planner/ros2ws/src /app/ros2ws/src
+
+RUN chmod +x /app/ros2ws/src/path_planning_lib/build_lib.sh && \
+    /app/ros2ws/src/path_planning_lib/build_lib.sh && \
+    python3 -m pip install --no-cache-dir --force-reinstall "numpy<2" && \
+    source /opt/ros/humble/setup.bash && \
+    cd /app/ros2ws && \
+    colcon build
+
+COPY docker/entrypoint-planner.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

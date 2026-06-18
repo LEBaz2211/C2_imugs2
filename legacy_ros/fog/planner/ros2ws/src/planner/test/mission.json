@@ -1,0 +1,30 @@
+{
+    "behavior": 0,
+    "transit": {
+      "desired_vehicle_constraints": {
+        "max_speed": 3
+      }
+    },
+    "vehicles": [
+      "agent_1",
+      "agent_2",
+      "agent_3"
+    ],
+    "objective": {
+      "geometry": {
+        "geometry_type": "MultiPoint",
+        "coordinates": [
+          [25.861999592381864, 59.4391728521982],
+          [25.86392125671736, 59.44157945093596],
+          [25.856700125217003, 59.441533688416854]
+        ]
+      },
+      "arrival_time": {
+        "latest": "2023-11-22T11:02:54.674Z",
+        "target": "2023-11-22T11:02:54.674Z",
+        "earliest": "2021-11-22T11:02:54.674Z"
+      }
+    },
+    "name": "Startgarage"
+  }
+  

@@ -1,0 +1,3 @@
+[submodule "ros2ws/src/message_packages/centralized_msgs"]
+	path = ros2ws/src/message_packages/centralized_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/centralized_msgs.git

@@ -1,0 +1,132 @@
+version: '3.5'
+
+services:
+    
+    autonomy_sim_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: autonomy_sim1
+      command: bash -c ". launch_autonomy_sim.sh"
+      volumes:
+            - type: bind
+              source: ./autonomy_config.yaml
+              target: /app/autonomy_config.yaml
+            - type: bind
+              source: ./launch_autonomy_sim.sh
+              target: /app/launch_autonomy_sim.sh
+      restart: "no"
+      environment:
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+      network_mode: host
+      # networks:
+      #       - swarming_network
+
+    autonomy_sim_2:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: autonomy_sim2
+      command: bash -c ". launch_autonomy_sim.sh"
+      volumes:
+            - type: bind
+              source: ./autonomy_config.yaml
+              target: /app/autonomy_config.yaml
+            - type: bind
+              source: ./launch_autonomy_sim.sh
+              target: /app/launch_autonomy_sim.sh
+      restart: "no"
+      environment:
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+            - AUTONOMY_TOPIC_PREFIX=Themis_Ge
+      network_mode: host
+      # networks:
+      #       - swarming_network
+      
+
+    autonomy_sim_3:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: autonomy_sim3
+      command: bash -c ". launch_autonomy_sim.sh"
+      volumes:
+            - type: bind
+              source: ./autonomy_config.yaml
+              target: /app/autonomy_config.yaml
+            - type: bind
+              source: ./launch_autonomy_sim.sh
+              target: /app/launch_autonomy_sim.sh
+      restart: "no"
+      environment:
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+            - AUTONOMY_TOPIC_PREFIX=Themis_Es
+      network_mode: host
+      # networks:
+      #       - swarming_network
+
+    agent_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_1
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=f9992bb3_9871_451f_90a0_9207eb9fe6c5
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: "no"
+      network_mode: host
+      # networks:
+      #       - swarming_network
+    
+    agent_2:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_2
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=4dd12623_3fb6_4ae4_91c2_1f4b10d2327d
+            - AUTONOMY_TOPIC_PREFIX=Themis_Ge
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: "no"
+      network_mode: host
+      # networks:
+      #       - swarming_network
+
+    agent_3:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_3
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=2b4a887b_95af_451d_bd85_e0dcacb72524
+            - AUTONOMY_TOPIC_PREFIX=Themis_Es
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: "no"
+      network_mode: host
+      # networks:
+      #       - swarming_network
+
+# networks:
+#   swarming_network:
+#     name: swarming_network
+

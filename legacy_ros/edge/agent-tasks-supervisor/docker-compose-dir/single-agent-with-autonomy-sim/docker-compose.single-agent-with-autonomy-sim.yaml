@@ -1,0 +1,63 @@
+version: '3.5'
+
+services:
+    
+    # ROS2 
+    agent_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_2.0
+      container_name: agent_1
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=f9992bb3_9871_451f_90a0_9207eb9fe6c5
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: "no"
+      network_mode: host
+    
+    autonomy_sim_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_2.0
+      container_name: autonomy_sim1
+      command: bash -c ". launch_autonomy_sim.sh"
+      volumes:
+            - type: bind
+              source: ./autonomy_config.yaml
+              target: /app/autonomy_config.yaml
+            - type: bind
+              source: ./launch_autonomy_sim.sh
+              target: /app/launch_autonomy_sim.sh
+      restart: "no"
+      environment:
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+      network_mode: host
+
+    # dds_ssf:
+    #     image: ubuntu-ddsrouter-ssf:0.3.0
+    #     container_name: dds_ssf
+    #     command: ddsrouter -c /root/DDS_ROUTER_CONFIGURATION.yaml
+    #     restart: unless-stopped
+    #     volumes:
+    #         - type: bind
+    #           source: ../../dds/SSF_DDS_ROUTER_CONFIGURATION_AUTONOMY.yaml
+    #           target: /root/DDS_ROUTER_CONFIGURATION.yaml
+    #     # ports:
+    #     #     - 55575
+    #     #     - 55576
+    #     # network_mode: "host"
+    #     networks:
+    #         - swarming_network
+
+
+networks:
+  swarming_network:
+    name: swarming_network
+

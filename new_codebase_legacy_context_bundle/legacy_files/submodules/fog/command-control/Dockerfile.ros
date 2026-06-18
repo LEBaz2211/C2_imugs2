@@ -1,0 +1,28 @@
+# Use the ROS Humble base image
+FROM ros:humble-ros-core-jammy
+
+
+# Set the default shell for the subsequent instructions
+SHELL ["/bin/bash", "-c"]
+
+# Copy the script for installing dependencies to the container
+COPY install_ros_dependencies.sh /
+# Make the script executable
+RUN chmod +x /install_ros_dependencies.sh
+# Run the script to install dependencies
+RUN /install_ros_dependencies.sh
+
+# Set environment variable for the FastRTPS implementation to use
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# Set the current prefix for colcon to /app
+ENV COLCON_CURRENT_PREFIX=/app
+# Set the working directory to /app
+WORKDIR /app
+
+COPY src/backend/ros2-rest-api /app/backend/ros2-rest-api
+
+# Build ROS2 packages
+RUN cd /app/backend/ros2-rest-api/ros2_ws \
+        && . /opt/ros/humble/setup.bash \
+        && colcon build --merge-install --cmake-args '-DCMAKE_BUILD_TYPE=RelWithDebInfo' -Wall -Wextra -Wpedantic \
+        && rm -rf /app/backend/ros2-rest-api/ros2_ws/src

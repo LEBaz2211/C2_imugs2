@@ -1,0 +1,3 @@
+uint8 active_autonomy_mode
+VehicleConstraints vehicle_constraints
+VehicleInfo vehicle_info

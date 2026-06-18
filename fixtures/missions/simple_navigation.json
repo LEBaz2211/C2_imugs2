@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "mission-simple-navigation",
+  "phase": 1,
+  "name": "Simple navigation to east delivery point",
+  "behavior": 0,
+  "vehicles": ["ugv-alpha", "ugv-bravo"],
+  "transit": {
+    "geofence": {"feature_id": "staging-area"},
+    "optimization": {
+      "road_usage": 1.0,
+      "energy": 0.8
+    },
+    "desired_vehicle_constraints": {
+      "max_speed": 4.0
+    }
+  },
+  "objective": {
+    "geometries": [
+      {"feature_id": "delivery-point-east"}
+    ],
+    "vehicle_formation": 1,
+    "vehicle_formation_distance": 5.0,
+    "maximize_coverage": false
+  }
+}
+

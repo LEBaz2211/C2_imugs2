@@ -1,0 +1,4 @@
+unique_identifier_msgs/UUID[] agent_id_list
+---
+centralized_msgs/Agent[] agents
+string<=2000 error_message

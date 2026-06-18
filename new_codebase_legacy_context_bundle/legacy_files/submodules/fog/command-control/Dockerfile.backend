@@ -1,0 +1,26 @@
+# Backend Dockerfile
+
+FROM node:22
+
+# avoid interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+
+WORKDIR /app/backend
+
+# Install Individual NPM packages
+COPY ./src/backend/mongodb-server/package*.json ./mongodb-server/
+RUN cd /app/backend/mongodb-server \
+        && npm install --legacy-peer-deps && npm cache clean --force
+
+COPY ./src/backend/openai-server/package*.json ./openai-server/
+RUN cd /app/backend/openai-server \
+        && npm install --legacy-peer-deps && npm cache clean --force
+
+# Copy the rest of the project files, 
+COPY ./src/backend /app/backend
+
+
+# # Install Whisper Speech to text API dependencies
+# RUN apt-get update && apt-get install -y python3 python3-pip git 
+# RUN pip3 install git+https://github.com/openai/whisper.git flask flask-cors

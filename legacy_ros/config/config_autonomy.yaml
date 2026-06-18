@@ -1,0 +1,46 @@
+autonomy_id_key:
+  ros__parameters:
+    start_location: [4.392485,50.844129] 
+
+
+autonomy_test_node_Themis_Fr : 
+  ros__parameters:
+    vehicle_type: "ugv"
+    start_location: [4.392588,50.844317] 
+    coordinate_mode: 0    # 0 = Global (GPS), 1 = Local
+    active_autonomy_mode: 1
+
+    max_speed: 4.5
+    max_acceleration: 8.0
+    max_weight: 16.0
+    max_tilt_angle: 1.8
+
+    fuel_status_pct: 85.0
+    fuel_hours: 1.5
+    battery_status_pct: 90.0
+    battery_hours: 3.0
+
+    vehicle_dimensions: [0.9, 0.6, 0.55]
+
+    # List of sensor names (arbitrary length)
+    sensors: 
+      - lidar
+      - camera
+      - gpr
+
+    # Sensor properties
+    lidar:
+      type: 1
+      status: 1
+      field_of_view: [360.0, 3.14]
+
+    camera:
+      type: 2
+      status: 1
+      field_of_view: [120.0, 2.0]
+
+    gpr:
+      type: 3
+      status: 1
+      field_of_view: [180.0, 3.14]
+

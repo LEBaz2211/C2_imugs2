@@ -1,0 +1,149 @@
+version: '3.5'
+
+
+
+services:
+
+    # Portainer service
+    portainer:
+      image: portainer/portainer-ce:latest
+      container_name: portainer
+      restart: always
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - portainer_data:/data
+      ports:
+        - "9000:9000"
+    # Database
+    mongodb:
+        image: mongo:latest
+        container_name: mongodb
+        hostname: mongodb
+        ports:
+            - 27017:27017 # for visualization on MongoDB Compass: connect to 127.0.0.1:27017
+        volumes:
+            - ~/apps/mongo:/data/db
+        network_mode: 'host'
+        restart: unless-stopped
+        healthcheck:
+          test: ["CMD","mongosh", "--eval", "db.adminCommand('ping')"]
+          interval: 5s
+          timeout: 5s
+          retries: 3
+          start_period: 5s
+
+
+
+
+# General docker-compose with all Multi-Robot Framework services
+# ==============================================================
+
+#  FOG:
+# ------
+# Centralized Coordination Executable
+    centralized_coordination:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/centralized-coordination:humble_cyclone_latest
+        container_name: centralized_coordination
+        env_file:
+            - ../../.env.ros
+        environment: 
+            - MONGODB_CONNSTRING=mongodb://127.0.0.1:27017
+        command: ros2 run centralized_coordination centralized_coordination_executable --ros-args --params-file /app/config.yaml
+        volumes:
+            - type: bind
+              source: ./config_centralized_coordination.yaml
+              target: /app/config.yaml
+        network_mode: host
+        depends_on: 
+            mongodb:
+              condition: service_healthy
+# Planner
+    planner:
+        container_name: planner
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/planner:humble_cyclone_latest
+        restart: no
+        network_mode: host
+        env_file:
+            - ../../.env.ros
+        command: ros2 run planner planner_node --ros-args --params-file /app/config.yaml
+        volumes:
+            - ./config_planner.yaml:/app/config.yaml
+            - ./data/.planresults:/app/data/.planresults
+            - ./data/map:/app/data/map
+
+
+# Command & Control
+    c2-frontend:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/command-control:frontend_latest
+        container_name: c2-frontend
+        # env_file:
+        #     - ../../.env.personal_api_keys
+        ports:
+            - 3000:3000
+        network_mode: host
+    
+    c2-backend-ros2-ws-server:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/command-control:ros2_latest
+        container_name: c2-backend-ros2-ws-server
+        command: bash -c "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+        env_file:
+            - ../../.env.ros
+        network_mode: host
+
+
+    c2-backend-ros2-node:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/command-control:ros2_latest
+        container_name: c2-backend-ros2-c2-node
+        command: bash -c "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 run c2_ros2_rest_api c2_ros2_rest_api"
+        env_file:
+            - ../../.env.ros
+        network_mode: host
+
+    c2-backend-db-server:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/command-control:backend_latest
+        container_name: c2-backend-db-server
+        command: node mongodb-server/mongodb-server.js
+        network_mode: host
+
+
+
+# EDGE
+# ------
+
+# Agent Task Supervisors
+# ------------------------
+    agent_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_latest
+      container_name: agent_1
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      env_file: 
+        - ../../.env.ros
+      environment:
+        - AGENT_ID=f9992bb3_9871_451f_90a0_9207eb9fe6c5
+        - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+      volumes:
+        - ./config_agent-tasks-supervisor.yaml:/app/config.yaml
+        - ./launch_agent_tasks_supervisor.sh:/app/launch_agent_tasks_supervisor.sh
+      restart: "no"
+      network_mode: host
+
+
+    # AUTONOMY Simulator
+    # -------------------
+
+    autonomy_sim_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_latest
+      container_name: autonomy_sim1
+      command: bash -c ". launch_autonomy_sim.sh"
+      env_file: 
+        - ../../.env.ros
+      environment:
+        - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+      volumes:
+        - ./config_autonomy.yaml:/app/autonomy_config.yaml
+        - ./launch_autonomy_sim.sh:/app/launch_autonomy_sim.sh
+      restart: "no"
+      network_mode: host
+
+volumes:
+  portainer_data:

@@ -1,0 +1,31 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    2.3267734050750732,
+                    48.86772660818936
+                ]
+            },
+            "properties": {
+                "blockage_type": 2
+            }
+        },
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    2.3276880383491516,
+                    48.867758366587886
+                ]
+            },
+            "properties": {
+                "blockage_type": 5
+            }
+        }
+    ]
+}

@@ -1,0 +1,29 @@
+services:
+  c2-imugs2-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    network_mode: host
+    environment:
+      C2_IMUGS2_REPO_ROOT: /app
+      C2_IMUGS2_LEGACY_REST_URL: http://localhost:5001/mission_control
+      C2_IMUGS2_ROSBRIDGE_URL: ws://localhost:9090
+    volumes:
+      - ./data/runtime:/app/data/runtime
+      - ./legacy_ros/config/data/map:/app/legacy_ros/config/data/map:ro
+    command: ["c2-imugs2-api"]
+
+  c2-imugs2-ui:
+    image: node:20-bookworm-slim
+    working_dir: /app/frontend
+    volumes:
+      - .:/app
+      - c2-imugs2-ui-node-modules:/app/frontend/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  c2-imugs2-ui-node-modules:
