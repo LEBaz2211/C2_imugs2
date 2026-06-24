@@ -9,6 +9,8 @@ export type GeometryLiteral = {
 export type GeometryRef = {
   feature_id?: string;
   geometry?: GeometryLiteral;
+  geometry_type?: string;
+  coordinates?: unknown;
 };
 
 export type MissionConfig = {

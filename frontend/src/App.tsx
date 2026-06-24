@@ -287,6 +287,7 @@ export default function App() {
   }
 
   function closeMissionComposer() {
+    clearMission();
     setShowNewMission(false);
   }
 
@@ -913,6 +914,35 @@ function MissionPanel({
     );
   }
 
+  if (missionText.trim() || missionState) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <Button size="sm" variant="ghost" onClick={onClear}>
+            <ArrowLeft className="h-4 w-4" />
+            Missions
+          </Button>
+          {missionState ? <Badge tone={missionStateTone(missionState)}>{missionStatusLabel(missionState)}</Badge> : <Badge>draft</Badge>}
+        </div>
+
+        {missionText.trim() ? (
+          <MissionEditor
+            mission={mission}
+            missionText={missionText}
+            missionState={missionState}
+            validation={validation}
+            jsonFocusLabel={jsonFocusLabel}
+            missionJsonRef={missionJsonRef}
+            onMissionTextChange={onMissionTextChange}
+            onClear={onClear}
+          />
+        ) : missionState ? (
+          <RuntimeMissionDetails state={missionState} />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -968,24 +998,7 @@ function MissionPanel({
         <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">No missions yet. Create one from an example or by selecting an objective point on the map.</div>
       )}
 
-      {!missionText.trim() ? (
-        missionState ? (
-          <RuntimeMissionDetails state={missionState} />
-        ) : (
-          <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">Select an existing mission, create one from an example, or choose an objective point on the map.</div>
-        )
-      ) : (
-        <MissionEditor
-          mission={mission}
-          missionText={missionText}
-          missionState={missionState}
-          validation={validation}
-          jsonFocusLabel={jsonFocusLabel}
-          missionJsonRef={missionJsonRef}
-          onMissionTextChange={onMissionTextChange}
-          onClear={onClear}
-        />
-      )}
+      <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">Select an existing mission, create one from an example, or choose an objective point on the map.</div>
     </div>
   );
 }

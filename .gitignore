@@ -11,3 +11,5 @@ data/legacy-planresults/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+AGENTS.md
