@@ -23,14 +23,29 @@ export type DeletedMapFeature = {
   map_features: MapFeature[];
 };
 
+export type UpdatedMapFeature = CreatedMapFeature;
+
 export type MissionState = {
   mission_id: string;
   status?: number | string | null;
   status_name?: string;
   requested_status?: number;
   requested_status_name?: string;
+  command_phase?: string;
+  planner_status?: string;
+  path_status?: string;
+  initialized_at?: string;
+  updated_at?: string;
   planned_paths?: Record<string, LonLat[]>;
   config?: MissionConfig;
+  adapter_adjustments?: {
+    type: string;
+    field?: string;
+    before?: unknown;
+    after?: unknown;
+    distance_meters?: number;
+    message?: string;
+  }[];
   legacy_rest?: { ok: boolean; status_code: number; body: string };
 };
 
@@ -49,6 +64,8 @@ export type DiagnosticsState = {
     topics: string[];
     services: string[];
   };
+  missions?: MissionState[];
+  planner_state?: unknown;
 };
 
 export type AgentUpdateEvent = {
@@ -63,6 +80,12 @@ export type PlannerUpdateEvent = {
   mission_id?: string;
   paths?: Record<string, LonLat[]>;
   source?: string;
+  received_at?: string;
+  path_summary?: {
+    path_count: number;
+    waypoint_count: number;
+    waypoints_by_agent: Record<string, number>;
+  };
   state?: unknown;
   raw?: unknown;
 };
@@ -89,6 +112,12 @@ export type LegacyTrace = {
   planner_state?: unknown;
 };
 
+export type ForgottenMission = {
+  mission_id: string;
+  removed: boolean;
+  message: string;
+};
+
 export async function getRuntimeBootstrap(mapName = "rma"): Promise<RuntimeBootstrap> {
   return getJson(`/api/runtime/bootstrap?map=${encodeURIComponent(mapName)}`);
 }
@@ -103,6 +132,10 @@ export async function createMapFeature(feature: FeatureCollection["features"][nu
 
 export async function deleteMapFeature(featureId: string, mapName = "rma"): Promise<DeletedMapFeature> {
   return deleteJson(`/api/map/features/${encodeURIComponent(featureId)}?map=${encodeURIComponent(mapName)}`);
+}
+
+export async function updateMapFeature(featureId: string, feature: FeatureCollection["features"][number], mapName = "rma"): Promise<UpdatedMapFeature> {
+  return putJson(`/api/map/features/${encodeURIComponent(featureId)}?map=${encodeURIComponent(mapName)}`, feature);
 }
 
 export async function getDiagnostics(): Promise<DiagnosticsState> {
@@ -133,6 +166,10 @@ export async function startMission(missionId: string): Promise<MissionState> {
   return postJson(`/api/missions/${missionId}/start`, {});
 }
 
+export async function forgetMission(missionId: string): Promise<ForgottenMission> {
+  return deleteJson(`/api/missions/${encodeURIComponent(missionId)}`);
+}
+
 export function createEventSource() {
   return new EventSource(`${API_BASE_URL}/api/events`);
 }
@@ -155,6 +192,16 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 async function deleteJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<T>;
+}
+
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<T>;
 }

@@ -1,6 +1,6 @@
-import { Check, Hexagon, Layers, MousePointer2, Pencil, Trash2 } from "lucide-react";
+import { Check, Hexagon, Layers, MousePointer2, Pencil, Target, Trash2, X } from "lucide-react";
 import type { Feature, FeatureCollection } from "geojson";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polygon, Polyline, Popup, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Button } from "./components/ui/button";
@@ -19,7 +19,13 @@ type MapViewProps = {
   plannerState?: PlannerUpdateEvent;
   selectedFeatureId?: string;
   onCreateFeature: (feature: DraftMapFeature) => void;
+  onUpdateFeature: (featureId: string, feature: DraftMapFeature) => void;
+  onRemoveFeature: (feature: MapFeature) => void;
+  onSetObjective: (feature: MapFeature) => void;
+  onAddFeatureToMission: (feature: MapFeature) => void;
+  missionComposerActive: boolean;
   onSelectFeature: (featureId: string) => void;
+  onClearSelection: () => void;
 };
 
 export type DraftMapFeature = {
@@ -31,23 +37,39 @@ export type DraftMapFeature = {
 };
 
 const center: [number, number] = [50.8442, 4.3921];
-const geometryOptions = ["Point", "LineString", "Polygon"] as const;
-const featureTypeOptions = ["objective", "road", "geofence", "workspace", "risk", "custom"] as const;
+const featureTypeOptions = ["objective", "road", "geofence", "workspace", "risk"] as const;
+const geometryByFeatureType: Record<(typeof featureTypeOptions)[number], DraftMapFeature["geometry_type"]> = {
+  objective: "Point",
+  road: "LineString",
+  geofence: "Polygon",
+  workspace: "Polygon",
+  risk: "Polygon",
+};
 
-export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan, plannerState, selectedFeatureId, onCreateFeature, onSelectFeature }: MapViewProps) {
+export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan, plannerState, selectedFeatureId, onCreateFeature, onUpdateFeature, onRemoveFeature, onSetObjective, onAddFeatureToMission, missionComposerActive, onSelectFeature, onClearSelection }: MapViewProps) {
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<LonLat[]>([]);
-  const [geometryType, setGeometryType] = useState<DraftMapFeature["geometry_type"]>("Point");
-  const [featureType, setFeatureType] = useState("objective");
+  const [featureType, setFeatureType] = useState<(typeof featureTypeOptions)[number]>("objective");
   const [featureName, setFeatureName] = useState("");
+  const [redrawFeatureId, setRedrawFeatureId] = useState<string | undefined>();
   const [showOsmRoads, setShowOsmRoads] = useState(true);
   const osmRoadCount = osmRoads?.features.length ?? 0;
+  const geometryType = geometryByFeatureType[featureType];
+  const selectedFeature = features.find((feature) => feature.feature_id === selectedFeatureId);
+  const selectedIsUser = selectedFeature?.properties?.source === "user";
 
   const trajectories = useMemo(() => plannedTrajectories(agents, taskPlan, plannerState, mission?.mission_id), [agents, taskPlan, plannerState, mission?.mission_id]);
   const objectivePoints = useMemo(
     () => mission?.objective.geometries.flatMap((geometryRef) => destinationsForGeometryRef(geometryRef, features, mission.behavior)) ?? [],
     [features, mission],
   );
+
+  useEffect(() => {
+    if (!selectedFeature) return;
+    setFeatureName(selectedFeature.name);
+    const type = selectedFeature.feature_type as (typeof featureTypeOptions)[number];
+    if (featureTypeOptions.includes(type)) setFeatureType(type);
+  }, [selectedFeature?.feature_id]);
 
   function addDraftPoint(point: LonLat) {
     setDraft((points) => (geometryType === "Point" ? [point] : [...points, point]));
@@ -56,54 +78,110 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
   function completeDraft() {
     if (!draftIsComplete(draft, geometryType)) return;
     const coordinates = draftCoordinates(draft, geometryType);
-    onCreateFeature({
+    const feature = {
       name: featureName.trim(),
       feature_type: featureType,
       geometry_type: geometryType,
       coordinates,
       use_as_objective: featureType === "objective",
-    });
+    };
+    if (redrawFeatureId) onUpdateFeature(redrawFeatureId, feature);
+    else onCreateFeature(feature);
     setDraft([]);
     setFeatureName("");
     setDrawing(false);
+    setRedrawFeatureId(undefined);
+  }
+
+  function startRedrawSelectedFeature() {
+    if (!selectedFeature || !selectedIsUser) return;
+    const type = selectedFeature.feature_type as (typeof featureTypeOptions)[number];
+    if (featureTypeOptions.includes(type)) setFeatureType(type);
+    setFeatureName(selectedFeature.name);
+    setDraft([]);
+    setRedrawFeatureId(selectedFeature.feature_id);
+    setDrawing(true);
   }
 
   return (
     <section className="flex min-h-0 flex-1 flex-col border-r border-border bg-panel">
-      <div className="flex h-14 items-center justify-between border-b border-border px-4">
-        <div className="flex items-center gap-2">
+      <div className="flex h-14 items-center justify-between gap-3 border-b border-border px-4">
+        <div className="flex min-w-[150px] items-center gap-2">
           <Hexagon className="h-5 w-5 text-primary" />
-          <div>
-            <h1 className="text-sm font-semibold">C2 iMUGS2 Mission Surface</h1>
-            <p className="text-xs text-muted-foreground">Real map, legacy GeoJSON overlays, planned trajectories, and objective drawing.</p>
-          </div>
+          <h1 className="whitespace-nowrap text-sm font-semibold">C2 iMUGS2</h1>
         </div>
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge tone={drawing ? "warn" : mission ? "ok" : "default"}>{drawing ? `${draft.length} pt` : mission ? "mission loaded" : "no mission"}</Badge>
-          <Button variant={showOsmRoads ? "secondary" : "outline"} size="icon" onClick={() => setShowOsmRoads((value) => !value)} title="Toggle OSM road overlay">
-            <Layers className="h-4 w-4" />
-          </Button>
-          <Badge tone={showOsmRoads && osmRoadCount > 0 ? "ok" : "default"} className="hidden whitespace-nowrap lg:inline-flex">
-            {osmRoadCount > 0 ? `${osmRoadCount} OSM roads` : "roads loading"}
-          </Badge>
-          <select className="h-9 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={geometryType} onChange={(event) => { setGeometryType(event.target.value as DraftMapFeature["geometry_type"]); setDraft([]); }}>
-            {geometryOptions.map((option) => <option key={option}>{option}</option>)}
-          </select>
-          <select className="h-9 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={featureType} onChange={(event) => setFeatureType(event.target.value)}>
-            {featureTypeOptions.map((option) => <option key={option}>{option}</option>)}
-          </select>
-          <input className="h-9 w-32 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={featureName} onChange={(event) => setFeatureName(event.target.value)} placeholder="name" />
-          <Button variant={drawing ? "secondary" : "outline"} size="sm" onClick={() => setDrawing((value) => !value)} title="Draw feature">
-            {drawing ? <MousePointer2 className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
-            Draw
-          </Button>
-          <Button variant="outline" size="icon" onClick={() => setDraft([])} title="Clear draft polygon">
-            <Trash2 className="h-4 w-4" />
-          </Button>
-          <Button variant="default" size="sm" disabled={!draftIsComplete(draft, geometryType)} onClick={completeDraft} title="Add feature">
-            <Check className="h-4 w-4" />
-            Add
-          </Button>
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div className="flex items-center gap-1 rounded-md border border-border bg-background p-1">
+            <Badge tone={drawing ? "warn" : mission ? "ok" : "default"}>{drawing ? `${draft.length} pt` : mission ? "mission" : "empty"}</Badge>
+            <Button variant={showOsmRoads ? "secondary" : "ghost"} size="icon" onClick={() => setShowOsmRoads((value) => !value)} title="Toggle OSM road overlay">
+              <Layers className="h-4 w-4" />
+            </Button>
+            <Badge tone={showOsmRoads && osmRoadCount > 0 ? "ok" : "default"} className="hidden whitespace-nowrap xl:inline-flex">
+              {osmRoadCount > 0 ? `${osmRoadCount} roads` : "roads"}
+            </Badge>
+          </div>
+          {selectedFeature ? (
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border bg-background p-1">
+              <Badge tone={selectedIsUser ? "ok" : "default"} className="max-w-[220px] truncate">{selectedFeature.name}</Badge>
+              <Badge>{selectedFeature.feature_type}</Badge>
+              {selectedIsUser && <input className="h-9 w-32 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={featureName} onChange={(event) => setFeatureName(event.target.value)} placeholder="name" />}
+              {!missionComposerActive && canUseAsNavigationObjective(selectedFeature) && (
+                <Button variant="outline" size="sm" onClick={() => onSetObjective(selectedFeature)} title="Use selected point as navigation objective">
+                  <Target className="h-4 w-4" />
+                  Objective
+                </Button>
+              )}
+              {missionComposerActive && canAddFeatureToMission(selectedFeature) && (
+                <Button variant="default" size="sm" onClick={() => onAddFeatureToMission(selectedFeature)} title={missionFeatureActionTitle(selectedFeature)}>
+                  <Target className="h-4 w-4" />
+                  {missionFeatureActionLabel(selectedFeature)}
+                </Button>
+              )}
+              {selectedIsUser && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => onUpdateFeature(selectedFeature.feature_id, draftFromFeature(selectedFeature, featureName))} title="Save selected asset name">
+                    <Check className="h-4 w-4" />
+                    Save
+                  </Button>
+                  <Button variant={redrawFeatureId === selectedFeature.feature_id ? "secondary" : "outline"} size="sm" onClick={startRedrawSelectedFeature} title="Redraw selected asset geometry">
+                    <Pencil className="h-4 w-4" />
+                    Redraw
+                  </Button>
+                  {redrawFeatureId === selectedFeature.feature_id && (
+                    <Button variant="default" size="sm" disabled={!draftIsComplete(draft, geometryType)} onClick={completeDraft} title="Apply redrawn geometry">
+                      <Check className="h-4 w-4" />
+                      Apply
+                    </Button>
+                  )}
+                  <Button variant="outline" size="icon" onClick={() => onRemoveFeature(selectedFeature)} title="Remove selected asset">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
+              <Button variant="ghost" size="icon" onClick={onClearSelection} title="Clear selection">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border bg-background p-1">
+              <select className="h-9 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={featureType} onChange={(event) => { setFeatureType(event.target.value as (typeof featureTypeOptions)[number]); setDraft([]); }}>
+                {featureTypeOptions.map((option) => <option key={option}>{option}</option>)}
+              </select>
+              <Badge>{geometryType}</Badge>
+              <input className="h-9 w-32 rounded-md border border-border bg-panel px-2 text-xs outline-none focus:ring-2 focus:ring-ring" value={featureName} onChange={(event) => setFeatureName(event.target.value)} placeholder="name" />
+              <Button variant={drawing ? "secondary" : "outline"} size="sm" onClick={() => setDrawing((value) => !value)} title="Draw feature">
+                {drawing ? <MousePointer2 className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
+                Draw
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => setDraft([])} title="Clear draft">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              <Button variant="default" size="sm" disabled={!draftIsComplete(draft, geometryType)} onClick={completeDraft} title="Add feature">
+                <Check className="h-4 w-4" />
+                Add
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -228,6 +306,42 @@ function onEachFeature(feature: Feature, layer: L.Layer, onSelectFeature: (featu
 function onEachOsmRoad(feature: Feature, layer: L.Layer) {
   const name = feature.properties?.name ?? feature.properties?.highway ?? "OSM road";
   layer.bindTooltip(`OSM ${name}`);
+}
+
+function canUseAsNavigationObjective(feature: MapFeature) {
+  return feature.feature_type === "objective" && feature.geometry.type === "Point";
+}
+
+function canAddFeatureToMission(feature: MapFeature) {
+  if (feature.feature_type === "objective") return feature.geometry.type === "Point";
+  if (feature.feature_type === "road") return feature.geometry.type === "LineString";
+  if (feature.feature_type === "geofence" || feature.feature_type === "workspace" || feature.feature_type === "risk") return feature.geometry.type === "Polygon";
+  return false;
+}
+
+function missionFeatureActionLabel(feature: MapFeature) {
+  if (feature.feature_type === "objective") return "Set objective";
+  if (feature.feature_type === "road") return "Use route";
+  if (feature.feature_type === "risk") return "Use LOS";
+  return "Use geofence";
+}
+
+function missionFeatureActionTitle(feature: MapFeature) {
+  if (feature.feature_type === "objective") return "Write this point into objective.geometries";
+  if (feature.feature_type === "road") return "Use this LineString as a route patrol objective";
+  if (feature.feature_type === "risk") return "Write this polygon into objective.line_of_sight";
+  return "Write this polygon into transit.geofence";
+}
+
+function draftFromFeature(feature: MapFeature, name: string): DraftMapFeature {
+  const geometryType = feature.geometry.type as DraftMapFeature["geometry_type"];
+  return {
+    name: name.trim() || feature.name,
+    feature_type: feature.feature_type,
+    geometry_type: geometryType,
+    coordinates: feature.geometry.coordinates as DraftMapFeature["coordinates"],
+    use_as_objective: false,
+  };
 }
 
 function draftIsComplete(draft: LonLat[], geometryType: DraftMapFeature["geometry_type"]) {

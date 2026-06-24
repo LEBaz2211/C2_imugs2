@@ -15,6 +15,14 @@ FEATURE_TYPE_BY_FOLDER = {
     "virtual_geofences": "geofence",
 }
 
+ALLOWED_USER_FEATURE_GEOMETRIES = {
+    "objective": {"Point"},
+    "road": {"LineString"},
+    "geofence": {"Polygon"},
+    "workspace": {"Polygon"},
+    "risk": {"Polygon"},
+}
+
 
 def load_legacy_geojson_map(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
     map_dir = repo_root / "legacy_ros" / "config" / "data" / "map" / map_name
@@ -86,15 +94,40 @@ def delete_user_geojson_feature(repo_root: Path, map_name: str, feature_id: str)
     return True
 
 
+def update_user_geojson_feature(repo_root: Path, map_name: str, feature_id: str, feature: dict[str, Any]) -> dict[str, Any] | None:
+    normalized = normalize_user_geojson_feature(feature)
+    normalized["id"] = feature_id
+    normalized["properties"]["feature_id"] = feature_id
+
+    collection = load_user_geojson_map(repo_root, map_name)
+    features = collection.get("features", [])
+    for index, existing in enumerate(features):
+        existing_id = str((existing.get("properties") or {}).get("feature_id") or existing.get("id"))
+        if existing_id == feature_id:
+            features[index] = normalized
+            path = _user_features_path(repo_root, map_name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(collection, indent=2), encoding="utf-8")
+            return normalized
+    return None
+
+
 def normalize_user_geojson_feature(feature: dict[str, Any]) -> dict[str, Any]:
     if feature.get("type") != "Feature" or not isinstance(feature.get("geometry"), dict):
         raise ValueError("feature must be a GeoJSON Feature with a geometry")
     geometry = feature["geometry"]
-    if geometry.get("type") not in {"Point", "LineString", "Polygon", "MultiPoint", "MultiLineString", "MultiPolygon"}:
+    if geometry.get("type") not in {"Point", "LineString", "Polygon"}:
         raise ValueError("feature geometry type is not supported")
 
     properties = dict(feature.get("properties") or {})
     feature_type = str(properties.get("feature_type") or "custom")
+    if feature_type not in ALLOWED_USER_FEATURE_GEOMETRIES:
+        raise ValueError(f"feature_type must be one of {sorted(ALLOWED_USER_FEATURE_GEOMETRIES)}")
+    geometry_type = str(geometry.get("type"))
+    if geometry_type not in ALLOWED_USER_FEATURE_GEOMETRIES[feature_type]:
+        allowed = ", ".join(sorted(ALLOWED_USER_FEATURE_GEOMETRIES[feature_type]))
+        raise ValueError(f"{feature_type} features must use geometry type: {allowed}")
+
     feature_id = str(properties.get("feature_id") or feature.get("id") or uuid.uuid4())
     name = str(properties.get("name") or f"{feature_type}_{feature_id[:8]}")
     properties.update(

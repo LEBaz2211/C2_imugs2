@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
+import math
 import os
 import uuid
 from pathlib import Path
 from typing import Any
+from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
@@ -13,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .domain import MissionRequest, MissionStatus
-from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, save_user_geojson_feature
+from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, save_user_geojson_feature, update_user_geojson_feature
 from .legacy_rest import LegacyRestClient
 from .mission_config import MissionValidationError, load_and_validate_mission
 from .repositories import read_json
@@ -22,6 +25,8 @@ from .rosbridge import RosbridgeClient
 
 LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
 REPO_ROOT = Path(os.environ.get("C2_IMUGS2_REPO_ROOT", Path(__file__).resolve().parents[2]))
+ROAD_SNAP_MIN_USAGE = float(os.environ.get("C2_IMUGS2_ROAD_SNAP_MIN_USAGE", "0.95"))
+ROAD_SNAP_MAX_METERS = float(os.environ.get("C2_IMUGS2_ROAD_SNAP_MAX_METERS", "120"))
 
 
 def create_app(
@@ -44,6 +49,7 @@ def create_app(
     app.state.missions = {}
     app.state.agent_updates = {}
     app.state.planner_state = {}
+    app.state.forgotten_missions = _load_forgotten_missions(repo_root)
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -73,6 +79,8 @@ def create_app(
             "legacy_rest": {"ok": legacy.ok, "status_code": legacy.status_code},
             "ros": ros,
             "checks": checks,
+            "missions": _visible_missions(app.state.missions, app.state.forgotten_missions),
+            "planner_state": app.state.planner_state,
         }
 
     @app.get("/api/legacy/trace")
@@ -101,7 +109,7 @@ def create_app(
             "steps": steps,
             "legacy_rest": {"ok": legacy.ok, "status_code": legacy.status_code, "body": legacy.body},
             "ros": ros,
-            "missions": list(app.state.missions.values()),
+            "missions": _visible_missions(app.state.missions, app.state.forgotten_missions),
             "agent_updates": list(app.state.agent_updates.values()),
             "planner_state": app.state.planner_state,
         }
@@ -112,6 +120,8 @@ def create_app(
         app.state.missions.clear()
         app.state.agent_updates.clear()
         app.state.planner_state = {}
+        app.state.forgotten_missions.clear()
+        _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
         return result
 
     @app.get("/api/map/features")
@@ -143,6 +153,22 @@ def create_app(
         collection = load_legacy_geojson_map(app.state.repo_root, map)
         return {
             "deleted_feature_id": feature_id,
+            "geojson": collection,
+            "map_features": feature_collection_to_map_features(collection),
+        }
+
+    @app.put("/api/map/features/{feature_id}")
+    async def update_map_feature(feature_id: str, feature: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
+        try:
+            updated = update_user_geojson_feature(app.state.repo_root, map, feature_id, feature)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not updated:
+            raise HTTPException(status_code=404, detail="Only user-created runtime features can be edited")
+        collection = load_legacy_geojson_map(app.state.repo_root, map)
+        return {
+            "feature": updated,
+            "map_feature": feature_collection_to_map_features({"type": "FeatureCollection", "features": [updated]})[0],
             "geojson": collection,
             "map_features": feature_collection_to_map_features(collection),
         }
@@ -192,13 +218,22 @@ def create_app(
             normalized = load_and_validate_mission(mission_config)
         except MissionValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        normalized = _inline_user_feature_refs(normalized, app.state.repo_root)
+        normalized, adapter_adjustments = _snap_road_usage_point_objectives(normalized, app.state.repo_root)
         normalized["mission_id"] = _legacy_uuid(normalized.get("mission_id"))
+        app.state.forgotten_missions.discard(normalized["mission_id"])
+        _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
         response = app.state.rest_client.initialize_mission(normalized)
         app.state.missions[normalized["mission_id"]] = {
             "mission_id": normalized["mission_id"],
             "status": 0,
             "status_name": _mission_status_name(0),
+            "command_phase": "init_acknowledged",
+            "planner_status": "waiting_for_feedback",
+            "initialized_at": _utc_now_iso(),
+            "updated_at": _utc_now_iso(),
             "config": normalized,
+            "adapter_adjustments": adapter_adjustments,
             "legacy_rest": response.__dict__,
         }
         if not response.ok:
@@ -212,6 +247,20 @@ def create_app(
     @app.post("/api/missions/{mission_id}/start")
     async def start_mission(mission_id: str) -> dict[str, Any]:
         return _change_mission_status(app, mission_id, MissionRequest.START, 5)
+
+    @app.delete("/api/missions/{mission_id}")
+    async def forget_mission(mission_id: str) -> dict[str, Any]:
+        app.state.forgotten_missions.add(mission_id)
+        _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
+        removed = app.state.missions.pop(mission_id, None)
+        planner_state = app.state.planner_state
+        if isinstance(planner_state, dict) and planner_state.get("mission_id") == mission_id:
+            app.state.planner_state = {}
+        return {
+            "mission_id": mission_id,
+            "removed": bool(removed),
+            "message": "Removed mission from adapter runtime only. Legacy ROS and MongoDB are unchanged.",
+        }
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -235,13 +284,32 @@ def create_app(
                             app.state.agent_updates[payload["agent_id"]] = payload
                         if event_name == "planner.updated":
                             app.state.planner_state = payload
+                            for planner_mission in _mission_updates_from_planner_state(payload):
+                                mission_id = planner_mission["mission_id"]
+                                if mission_id in app.state.forgotten_missions:
+                                    continue
+                                mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}})
+                                mission.update(planner_mission)
+                                mission["updated_at"] = _utc_now_iso()
+                                yield _sse("mission.updated", mission)
                         if event_name == "mission.updated":
                             mission_id = payload.get("mission_id")
+                            if mission_id in app.state.forgotten_missions:
+                                continue
                             if mission_id:
-                                app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}}).update(payload)
+                                mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}})
+                                mission.update(payload)
+                                mission["planner_status"] = _planner_status_from_mission_payload(payload)
+                                mission["updated_at"] = _utc_now_iso()
                             planned_paths = payload.get("planned_paths")
                             if planned_paths:
-                                planner_payload = {"mission_id": mission_id, "paths": planned_paths, "source": "mission_feedback"}
+                                planner_payload = {
+                                    "mission_id": mission_id,
+                                    "paths": planned_paths,
+                                    "source": "mission_feedback",
+                                    "received_at": _utc_now_iso(),
+                                    "path_summary": _path_summary(planned_paths),
+                                }
                                 app.state.planner_state = planner_payload
                                 yield _sse("planner.updated", planner_payload)
                         yield _sse(event_name, payload)
@@ -253,6 +321,8 @@ def create_app(
                         if app.state.planner_state:
                             yield _sse("planner.updated", app.state.planner_state)
                         for mission in app.state.missions.values():
+                            if mission.get("mission_id") in app.state.forgotten_missions:
+                                continue
                             yield _sse("mission.updated", mission)
             finally:
                 task.cancel()
@@ -270,10 +340,6 @@ def create_app(
 
     return app
 
-
-app = create_app()
-
-
 def _change_mission_status(app: FastAPI, mission_id: str, request: MissionRequest, status: int) -> dict[str, Any]:
     response = app.state.rest_client.change_status(request)
     mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}, "feedback": {}})
@@ -281,6 +347,8 @@ def _change_mission_status(app: FastAPI, mission_id: str, request: MissionReques
     mission["status_name"] = _mission_status_name(status)
     mission["requested_status"] = int(request)
     mission["requested_status_name"] = request.name
+    mission["command_phase"] = request.name.lower()
+    mission["updated_at"] = _utc_now_iso()
     mission["legacy_rest"] = response.__dict__
     if not response.ok:
         raise HTTPException(status_code=502, detail={"message": "legacy REST status change failed", "legacy_rest": response.__dict__})
@@ -303,6 +371,10 @@ def _legacy_uuid(value: Any) -> str:
 
 def _sse(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _trace_step(step_id: str, ok: bool, ok_message: str, fail_message: str | None = None) -> dict[str, str]:
@@ -346,12 +418,14 @@ def _normalize_mission_feedback(msg: dict[str, Any]) -> dict[str, Any]:
     status = _feedback_value(feedback, "status", "Status") if isinstance(feedback, dict) else None
     requested_status = _feedback_value(feedback, "requested_status", "RequestedStatus") if isinstance(feedback, dict) else None
     planned_paths = _planned_paths_from_feedback(feedback) if isinstance(feedback, dict) else {}
+    path_status = "received" if planned_paths else ("missing" if status in (1, 2, "1", "2") else "none")
     return {
         "mission_id": _normalize_uuidish_id(mission_id) if mission_id else "",
         "status": status,
         "status_name": _mission_status_name(status),
         "requested_status": requested_status,
         "planned_paths": planned_paths,
+        "path_status": path_status,
         "feedback": feedback,
         "raw": msg,
     }
@@ -366,7 +440,280 @@ def _feedback_value(feedback: dict[str, Any], *keys: str) -> Any:
 
 def _normalize_planner_state(msg: dict[str, Any]) -> dict[str, Any]:
     data = _json_or_raw(msg.get("data"))
-    return {"state": data, "raw": msg}
+    return {"state": data, "raw": msg, "received_at": _utc_now_iso()}
+
+
+def _planner_status_from_mission_payload(payload: dict[str, Any]) -> str:
+    status = payload.get("status")
+    try:
+        status_id = int(status)
+    except (TypeError, ValueError):
+        return "unknown"
+    if status_id in (1, 2):
+        return "planned"
+    if status_id in (3, 7):
+        return "failed"
+    if status_id == 10:
+        return "completed"
+    if status_id in (4, 5, 6, 8, 9):
+        return "mission_control"
+    return "waiting_for_feedback"
+
+
+def _mission_updates_from_planner_state(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        return []
+    planners = state.get("planners")
+    if not isinstance(planners, list):
+        return []
+
+    updates = []
+    for planner in planners:
+        if not isinstance(planner, dict):
+            continue
+        mission_id = planner.get("mission_id")
+        if not mission_id:
+            continue
+        planner_state = planner.get("state")
+        update: dict[str, Any] = {
+            "mission_id": _normalize_uuidish_id(mission_id),
+            "planner_state": planner_state,
+            "planner_state_name": _planner_state_name(planner_state),
+            "planner_status": _planner_status_from_planner_state(planner_state),
+        }
+        updates.append(update)
+    return updates
+
+
+def _inline_user_feature_refs(mission_config: dict[str, Any], repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
+    """Replace runtime UI feature_id references with inline geometry for the legacy planner.
+
+    The old planner can resolve feature_id values only from its local GeoJSON map folders.
+    UI-created runtime features live in the adapter's user_features file, so they must be
+    sent as literal geometry in mission_config.
+    """
+    normalized = deepcopy(mission_config)
+    user_geometries = _user_feature_geometry_index(repo_root, map_name)
+    if not user_geometries:
+        return normalized
+
+    objective = normalized.get("objective")
+    if isinstance(objective, dict):
+        geometries = objective.get("geometries")
+        if isinstance(geometries, list):
+            objective["geometries"] = [_inline_objective_geometry_ref(item, user_geometries) for item in geometries]
+        for key in ("line_of_sight", "vehicle_orientation_origin"):
+            value = objective.get(key)
+            if isinstance(value, dict):
+                objective[key] = _inline_direct_geometry_ref(value, user_geometries)
+
+    transit = normalized.get("transit")
+    if isinstance(transit, dict) and isinstance(transit.get("geofence"), dict):
+        transit["geofence"] = _inline_direct_geometry_ref(transit["geofence"], user_geometries)
+
+    start = normalized.get("start")
+    if isinstance(start, dict) and isinstance(start.get("geometry"), dict):
+        start["geometry"] = _inline_direct_geometry_ref(start["geometry"], user_geometries)
+
+    return normalized
+
+
+def _user_feature_geometry_index(repo_root: Path, map_name: str) -> dict[str, dict[str, Any]]:
+    geometries: dict[str, dict[str, Any]] = {}
+    for feature in load_user_geojson_map(repo_root, map_name).get("features", []):
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+        feature_id = str(properties.get("feature_id") or feature.get("id") or "")
+        geometry = feature.get("geometry")
+        if feature_id and isinstance(geometry, dict):
+            geometries[feature_id] = {
+                "geometry_type": geometry.get("type"),
+                "coordinates": geometry.get("coordinates"),
+            }
+    return geometries
+
+
+def _inline_objective_geometry_ref(value: Any, user_geometries: dict[str, dict[str, Any]]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    feature_id = str(value.get("feature_id") or "")
+    if feature_id in user_geometries:
+        return {"geometry": deepcopy(user_geometries[feature_id])}
+    return value
+
+
+def _inline_direct_geometry_ref(value: dict[str, Any], user_geometries: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    feature_id = str(value.get("feature_id") or "")
+    if feature_id in user_geometries:
+        return deepcopy(user_geometries[feature_id])
+    geometry = value.get("geometry")
+    if isinstance(geometry, dict):
+        nested_feature_id = str(geometry.get("feature_id") or "")
+        if nested_feature_id in user_geometries:
+            return deepcopy(user_geometries[nested_feature_id])
+    return value
+
+
+def _snap_road_usage_point_objectives(mission_config: dict[str, Any], repo_root: Path, map_name: str = "rma") -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if _road_usage_value(mission_config) < ROAD_SNAP_MIN_USAGE:
+        return mission_config, []
+
+    try:
+        road_vertices = list(_iter_road_vertices(load_osm_roads_overlay(repo_root, map_name)))
+    except FileNotFoundError:
+        return mission_config, []
+    if not road_vertices:
+        return mission_config, []
+
+    snapped = deepcopy(mission_config)
+    adjustments: list[dict[str, Any]] = []
+    objective = snapped.get("objective")
+    geometries = objective.get("geometries") if isinstance(objective, dict) else None
+    if not isinstance(geometries, list):
+        return snapped, adjustments
+
+    for index, geometry_ref in enumerate(geometries):
+        geometry = geometry_ref.get("geometry") if isinstance(geometry_ref, dict) else None
+        if not isinstance(geometry, dict) or geometry.get("geometry_type") != "Point":
+            continue
+        coordinates = geometry.get("coordinates")
+        if not _is_lonlat(coordinates):
+            continue
+        nearest, distance_meters = _nearest_vertex(coordinates, road_vertices)
+        if nearest is None or distance_meters > ROAD_SNAP_MAX_METERS or nearest == coordinates:
+            continue
+        geometry["coordinates"] = nearest
+        adjustments.append(
+            {
+                "type": "road_snap",
+                "field": f"objective.geometries[{index}].geometry.coordinates",
+                "before": coordinates,
+                "after": nearest,
+                "distance_meters": round(distance_meters, 2),
+                "message": "Point objective snapped to nearest OSM road vertex because road_usage is 100%.",
+            }
+        )
+
+    return snapped, adjustments
+
+
+def _road_usage_value(mission_config: dict[str, Any]) -> float:
+    transit = mission_config.get("transit")
+    if not isinstance(transit, dict):
+        return 0.0
+    optimization = transit.get("optimization") or transit.get("optimalization")
+    if not isinstance(optimization, dict):
+        return 0.0
+    try:
+        return float(optimization.get("road_usage") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _iter_road_vertices(collection: dict[str, Any]) -> list[list[float]]:
+    vertices: list[list[float]] = []
+    for feature in collection.get("features", []):
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if not isinstance(geometry, dict):
+            continue
+        geometry_type = geometry.get("type")
+        coordinates = geometry.get("coordinates")
+        if geometry_type == "LineString" and isinstance(coordinates, list):
+            vertices.extend(point for point in coordinates if _is_lonlat(point))
+        elif geometry_type == "MultiLineString" and isinstance(coordinates, list):
+            for line in coordinates:
+                if not isinstance(line, list):
+                    continue
+                vertices.extend(point for point in line if _is_lonlat(point))
+    return vertices
+
+
+def _nearest_vertex(point: Any, vertices: list[list[float]]) -> tuple[list[float] | None, float]:
+    nearest: list[float] | None = None
+    nearest_distance = float("inf")
+    for vertex in vertices:
+        distance = _approx_lonlat_distance_meters(point, vertex)
+        if distance < nearest_distance:
+            nearest = [float(vertex[0]), float(vertex[1])]
+            nearest_distance = distance
+    return nearest, nearest_distance
+
+
+def _approx_lonlat_distance_meters(a: Any, b: Any) -> float:
+    lon_scale = 111_320 * max(0.1, abs(math.cos(math.radians((float(a[1]) + float(b[1])) / 2))))
+    lat_scale = 110_540
+    dx = (float(a[0]) - float(b[0])) * lon_scale
+    dy = (float(a[1]) - float(b[1])) * lat_scale
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _is_lonlat(value: Any) -> bool:
+    return isinstance(value, list) and len(value) >= 2 and _is_number(value[0]) and _is_number(value[1])
+
+
+def _visible_missions(missions: dict[str, dict[str, Any]], forgotten_missions: set[str]) -> list[dict[str, Any]]:
+    return [mission for mission in missions.values() if mission.get("mission_id") not in forgotten_missions]
+
+
+def _forgotten_missions_path(repo_root: Path) -> Path:
+    return repo_root / "data" / "runtime" / "forgotten_missions.json"
+
+
+def _load_forgotten_missions(repo_root: Path) -> set[str]:
+    path = _forgotten_missions_path(repo_root)
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, list):
+        return set()
+    return {str(mission_id) for mission_id in payload if mission_id}
+
+
+def _save_forgotten_missions(repo_root: Path, mission_ids: set[str]) -> None:
+    path = _forgotten_missions_path(repo_root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(sorted(mission_ids), indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _planner_status_from_planner_state(planner_state: Any) -> str:
+    name = _planner_state_name(planner_state)
+    if name == "READY":
+        return "planned"
+    if name == "PLANNING":
+        return "planning"
+    if name == "FAILED":
+        return "failed"
+    return "waiting_for_feedback"
+
+
+def _planner_state_name(planner_state: Any) -> str:
+    try:
+        state_id = int(planner_state)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    return {
+        0: "IDLE",
+        1: "PLANNING",
+        2: "READY",
+        3: "FAILED",
+    }.get(state_id, f"UNKNOWN ({state_id})")
+
+
+def _path_summary(planned_paths: dict[str, list[list[float]]]) -> dict[str, Any]:
+    waypoint_counts = {agent_id: len(path) for agent_id, path in planned_paths.items()}
+    return {
+        "path_count": len(planned_paths),
+        "waypoint_count": sum(waypoint_counts.values()),
+        "waypoints_by_agent": waypoint_counts,
+    }
 
 
 def _planned_paths_from_feedback(feedback: dict[str, Any]) -> dict[str, list[list[float]]]:
@@ -469,6 +816,9 @@ def _reset_legacy_runtime_database(mongodb_url: str) -> dict[str, Any]:
         "restart_required": True,
         "message": "Cleared test mission runtime records. Restart legacy ROS containers to remove already-running mission nodes.",
     }
+
+
+app = create_app()
 
 
 def main() -> None:
