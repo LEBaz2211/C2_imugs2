@@ -10,7 +10,7 @@ export const agents: Agent[] = [
     status: "available",
     current_location: [4.392588, 50.844317],
     constraints: { max_speed: 4.5 },
-    capabilities: ["waypoint_navigation", "coverage"],
+    capabilities: [],
   },
 ];
 

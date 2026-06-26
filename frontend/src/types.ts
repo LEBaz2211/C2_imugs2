@@ -50,7 +50,16 @@ export type Agent = {
   vehicle_type: string;
   status: string;
   current_location: LonLat;
-  constraints: { max_speed?: number };
+  constraints: {
+    max_speed?: number;
+    max_acceleration?: number;
+    max_deceleration?: number;
+    max_jerk?: number;
+    max_straight_slope?: number;
+    max_side_slope?: number;
+    max_weight?: number;
+    max_tilt_angle?: number;
+  };
   capabilities: string[];
 };
 

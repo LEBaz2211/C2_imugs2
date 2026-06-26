@@ -1,7 +1,7 @@
 planner_node:
     ros__parameters:
             mapf: "independent_agents"
-            map_radius: 60.0
+            map_radius: 180.0
             epsg: "epsg:4326"
             initial_position: [50.84421071013057 , 4.39196312480243]
             poly_graph_connect_max_distance: 45.0

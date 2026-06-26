@@ -158,53 +158,11 @@ def load_osm_roads_overlay(repo_root: Path, map_name: str = "rma") -> dict[str, 
         return {"type": "FeatureCollection", "features": []}
 
     west, south, east, north = _expand_bbox(bbox, margin=0.0012)
-    query = f"""
-    [out:json][timeout:10];
-    (
-      way["highway"]({south},{west},{north},{east});
-    );
-    out geom tags;
-    """
-    payload = parse.urlencode({"data": query}).encode("utf-8")
-    overpass = None
-    for url in ("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"):
-        req = request.Request(url, data=payload, method="POST", headers={"User-Agent": "c2-imugs2-ui-adapter/0.1"})
-        try:
-            with request.urlopen(req, timeout=12) as response:
-                overpass = json.loads(response.read().decode("utf-8"))
-                break
-        except (OSError, error.HTTPError, json.JSONDecodeError):
-            continue
+    overpass = _query_overpass_roads((west, south, east, north))
     if overpass is None:
         return _local_road_overlay(collection)
-
-    features = []
-    for element in overpass.get("elements", []):
-        geometry = element.get("geometry")
-        if element.get("type") != "way" or not isinstance(geometry, list) or len(geometry) < 2:
-            continue
-        tags = element.get("tags") if isinstance(element.get("tags"), dict) else {}
-        coordinates = [[float(point["lon"]), float(point["lat"])] for point in geometry if "lon" in point and "lat" in point]
-        if len(coordinates) < 2:
-            continue
-        feature_id = f"osm-way-{element.get('id')}"
-        features.append(
-            {
-                "type": "Feature",
-                "id": feature_id,
-                "properties": {
-                    "feature_id": feature_id,
-                    "feature_type": "osm_road",
-                    "name": tags.get("name") or tags.get("highway") or feature_id,
-                    "highway": tags.get("highway"),
-                    "source": "openstreetmap-overpass",
-                },
-                "geometry": {"type": "LineString", "coordinates": coordinates},
-            }
-        )
-
-    overlay = {"type": "FeatureCollection", "features": features}
-    if not features:
+    overlay = _overpass_roads_to_feature_collection(overpass, feature_type="osm_road")
+    if not overlay.get("features"):
         overlay = _local_road_overlay(collection)
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +170,52 @@ def load_osm_roads_overlay(repo_root: Path, map_name: str = "rma") -> dict[str, 
     except OSError:
         pass
     return overlay
+
+
+def import_osm_roads_as_user_features(
+    repo_root: Path,
+    map_name: str,
+    bbox: tuple[float, float, float, float],
+    max_features: int = 80,
+) -> dict[str, Any]:
+    """Fetch OSM highway LineStrings for a bbox and persist them as runtime road features."""
+    west, south, east, north = _validate_bbox(bbox)
+    overpass = _query_overpass_roads((west, south, east, north))
+    if overpass is None:
+        raise ValueError("OpenStreetMap Overpass query failed")
+
+    collection = _overpass_roads_to_feature_collection(overpass, feature_type="road")
+    imported = []
+    seen_ids = {
+        str((feature.get("properties") or {}).get("feature_id") or feature.get("id"))
+        for feature in load_user_geojson_map(repo_root, map_name).get("features", [])
+    }
+    for feature in collection.get("features", [])[: max(1, max_features)]:
+        properties = dict(feature.get("properties") or {})
+        feature_id = str(properties.get("feature_id") or feature.get("id"))
+        if feature_id in seen_ids:
+            continue
+        properties.update(
+            {
+                "feature_id": feature_id,
+                "feature_type": "road",
+                "import_source": "openstreetmap-overpass",
+                "source_tool": "scenario_lab_osm_import",
+            }
+        )
+        feature["properties"] = properties
+        imported.append(save_user_geojson_feature(repo_root, map_name, feature))
+        seen_ids.add(feature_id)
+
+    full_collection = load_legacy_geojson_map(repo_root, map_name)
+    return {
+        "imported_count": len(imported),
+        "skipped_existing": len(collection.get("features", [])[: max(1, max_features)]) - len(imported),
+        "bbox": [west, south, east, north],
+        "features": imported,
+        "geojson": full_collection,
+        "map_features": feature_collection_to_map_features(full_collection),
+    }
 
 
 def feature_collection_to_map_features(collection: dict[str, Any]) -> list[dict[str, Any]]:
@@ -230,6 +234,65 @@ def feature_collection_to_map_features(collection: dict[str, Any]) -> list[dict[
             }
         )
     return map_features
+
+
+def _query_overpass_roads(bbox: tuple[float, float, float, float]) -> dict[str, Any] | None:
+    west, south, east, north = bbox
+    query = f"""
+    [out:json][timeout:10];
+    (
+      way["highway"]({south},{west},{north},{east});
+    );
+    out geom tags;
+    """
+    payload = parse.urlencode({"data": query}).encode("utf-8")
+    for url in ("https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"):
+        req = request.Request(url, data=payload, method="POST", headers={"User-Agent": "c2-imugs2-ui-adapter/0.1"})
+        try:
+            with request.urlopen(req, timeout=12) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (OSError, error.HTTPError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def _overpass_roads_to_feature_collection(overpass: dict[str, Any], feature_type: str) -> dict[str, Any]:
+    features = []
+    for element in overpass.get("elements", []):
+        geometry = element.get("geometry")
+        if element.get("type") != "way" or not isinstance(geometry, list) or len(geometry) < 2:
+            continue
+        tags = element.get("tags") if isinstance(element.get("tags"), dict) else {}
+        coordinates = [[float(point["lon"]), float(point["lat"])] for point in geometry if "lon" in point and "lat" in point]
+        if len(coordinates) < 2:
+            continue
+        feature_id = f"osm-way-{element.get('id')}"
+        features.append(
+            {
+                "type": "Feature",
+                "id": feature_id,
+                "properties": {
+                    "feature_id": feature_id,
+                    "feature_type": feature_type,
+                    "name": tags.get("name") or tags.get("highway") or feature_id,
+                    "highway": tags.get("highway"),
+                    "source": "openstreetmap-overpass",
+                },
+                "geometry": {"type": "LineString", "coordinates": coordinates},
+            }
+        )
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _validate_bbox(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    west, south, east, north = [float(value) for value in bbox]
+    if not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= 90 and -90 <= north <= 90):
+        raise ValueError("bbox coordinates are outside valid longitude/latitude ranges")
+    if west >= east or south >= north:
+        raise ValueError("bbox must be [west, south, east, north]")
+    if (east - west) * (north - south) > 0.01:
+        raise ValueError("bbox is too large for an interactive OSM import")
+    return west, south, east, north
 
 
 def _user_features_path(repo_root: Path, map_name: str) -> Path:

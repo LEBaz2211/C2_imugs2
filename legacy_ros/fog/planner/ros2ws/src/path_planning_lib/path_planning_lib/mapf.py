@@ -23,6 +23,8 @@ class AStar():
         self.agent = agent 
         self.destination = ordered_destinations[0]
         self.road_usage = self._normalized_preference(road_usage)
+        self.roads_only = self.road_usage >= 0.999
+        self.preferred_road_sources = self._preferred_road_sources() if self.roads_only else None
 
     @staticmethod
     def _normalized_preference(value):
@@ -49,13 +51,20 @@ class AStar():
         else:
             return None
 
-        return min(edges.values(), key=lambda edge: edge.get('length', float('inf')))
+        candidates = list(edges.values())
+        if self.roads_only:
+            road_candidates = [edge for edge in candidates if self.is_allowed_road(edge)]
+            if road_candidates:
+                candidates = road_candidates
+        return min(candidates, key=lambda edge: edge.get('length', float('inf')))
 
     def edge_is_blocked(self, current_node, neighbor_node):
         edge = self.edge_data(current_node, neighbor_node)
         if edge is None:
             return True
-        return bool(edge.get('risk', False))
+        if bool(edge.get('risk', False)):
+            return True
+        return self.roads_only and not self.is_allowed_road(edge)
 
     def step_cost(self, current_node, neighbor_node):
         # Set the cost of a step to a neighbor to its value in the cost graph:
@@ -107,9 +116,9 @@ class AStar():
         low level A* search 
         """
         # start_state= State(0, ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1]))
-        start_node = ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1])
+        start_node = self.nearest_routable_node(self.agent.localization)
         
-        destination_node= ox.nearest_nodes(self.graph,self.destination[0],self.destination[1])
+        destination_node= self.nearest_routable_node(self.destination)
         
         closed_set = set()
         open_set = {start_node}
@@ -178,6 +187,53 @@ class AStar():
                 flush=True,
             )
         return False
+
+    def nearest_routable_node(self, point):
+        if not self.roads_only:
+            return ox.nearest_nodes(self.graph, point[0], point[1])
+
+        road_nodes = self.road_nodes(self.preferred_road_sources)
+        if not road_nodes:
+            return ox.nearest_nodes(self.graph, point[0], point[1])
+
+        return min(
+            road_nodes,
+            key=lambda node: self._squared_coordinate_distance(
+                point,
+                [self.graph.nodes[node]['x'], self.graph.nodes[node]['y']],
+            ),
+        )
+
+    def road_nodes(self, road_sources=None):
+        nodes = set()
+        for u, v, _key, data in self.graph.edges(keys=True, data=True):
+            if not self.is_allowed_road(data, road_sources):
+                continue
+            nodes.add(u)
+            nodes.add(v)
+        return nodes
+
+    def is_allowed_road(self, edge, road_sources=None):
+        if not edge.get('road') or edge.get('risk'):
+            return False
+        sources = self.preferred_road_sources if road_sources is None else road_sources
+        if isinstance(sources, str):
+            sources = {sources}
+        if sources is not None and edge.get('road_source') not in sources:
+            return False
+        return True
+
+    def _preferred_road_sources(self):
+        sources = set()
+        if self.road_nodes("osm"):
+            sources.add("osm")
+        if self.road_nodes("mission_line"):
+            sources.update({"mission_line", "mission_connector"})
+        return sources or None
+
+    @staticmethod
+    def _squared_coordinate_distance(first, second):
+        return ((float(first[0]) - float(second[0])) ** 2) + ((float(first[1]) - float(second[1])) ** 2)
 
 class CBS_Node(object):
     def __init__(self):

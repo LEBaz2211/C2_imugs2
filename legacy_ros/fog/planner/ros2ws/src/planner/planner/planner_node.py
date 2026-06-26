@@ -432,7 +432,7 @@ class PlannerNode(Node):
         
         for line in free_lines:
            line_graph = generate_graph_from_linestring(line)
-           self.mark_graph_edges(line_graph, road=True)
+           self.mark_graph_edges(line_graph, road=True, road_source="legacy_line")
            self.line_graphs.append(line_graph)
 
         # Free Polygons
@@ -495,7 +495,7 @@ class PlannerNode(Node):
         #populate basic graph
         if(self.populate_graph):
             self.G = populate_graph(self.G,self.populate_min_distance)
-        self.mark_graph_edges(self.G, road=True)
+        self.mark_osm_road_edges(self.G)
             
         #connect graphs
         for line_graph in self.line_graphs:
@@ -547,12 +547,59 @@ class PlannerNode(Node):
         self.mr_path_planner = MultiRobotPathPlanning(self.mapf , self.mongodb_url, "MapDB")
         self.mr_path_planner.graph = self.G
         self.mr_path_planner.local_feature_geometries = self.load_local_feature_geometries()
+        self.mr_path_planner.mission_road_connect_max_distance = self.line_G_max_distance
 
     @staticmethod
-    def mark_graph_edges(graph, road):
+    def mark_graph_edges(graph, road, road_source=None):
         for _u, _v, _key, data in graph.edges(keys=True, data=True):
             data["road"] = bool(road)
+            if road_source is not None:
+                data["road_source"] = road_source
         return graph
+
+    @classmethod
+    def mark_osm_road_edges(cls, graph):
+        for _u, _v, _key, data in graph.edges(keys=True, data=True):
+            data["road"] = cls.is_osm_road_edge(data)
+            data["road_source"] = "osm"
+        return graph
+
+    @classmethod
+    def is_osm_road_edge(cls, edge_data):
+        highways = cls._tag_values(edge_data.get("highway"))
+        if not highways:
+            return False
+
+        if highways & {"footway", "path", "pedestrian", "steps", "cycleway", "bridleway", "corridor"}:
+            return False
+
+        road_highways = {
+            "motorway",
+            "trunk",
+            "primary",
+            "secondary",
+            "tertiary",
+            "unclassified",
+            "residential",
+            "living_street",
+            "service",
+            "road",
+        }
+        if not highways & road_highways:
+            return False
+
+        # The RMA mission area uses OSM service roads for internal access.
+        # Treat them as routable roads for the robot instead of applying
+        # public-car access filters such as private/driveway/parking_aisle.
+        return True
+
+    @staticmethod
+    def _tag_values(value):
+        if value is None:
+            return set()
+        if isinstance(value, (list, tuple, set)):
+            return {str(item).lower() for item in value}
+        return {str(value).lower()}
 
 
     def load_local_feature_geometries(self):

@@ -1,9 +1,20 @@
 from pathlib import Path
+import json
 from typing import Any
 
 from fastapi.testclient import TestClient
 
-from c2_imugs2.api import create_app, _inline_user_feature_refs, _load_forgotten_missions, _mission_updates_from_planner_state, _normalize_edge_feedback, _normalize_mission_feedback
+import c2_imugs2.legacy_map as legacy_map
+from c2_imugs2.api import (
+    create_app,
+    _inline_user_feature_refs,
+    _load_forgotten_missions,
+    _mission_state_from_legacy_feedback,
+    _mission_updates_from_planner_state,
+    _normalize_edge_feedback,
+    _normalize_mission_feedback,
+    _planned_paths_from_planning_doc,
+)
 from c2_imugs2.domain import MissionRequest
 from c2_imugs2.legacy_rest import LegacyRestResponse, to_legacy_mission_config
 
@@ -121,6 +132,40 @@ def test_create_map_feature_persists_user_geojson(tmp_path: Path) -> None:
     assert any(item["properties"].get("name") == "drawn point" for item in reloaded["features"])
 
 
+def test_import_osm_roads_persists_as_user_road_features(tmp_path: Path, monkeypatch: Any) -> None:
+    legacy_map_dir = tmp_path / "legacy_ros" / "config" / "data" / "map" / "rma" / "free_polygons"
+    legacy_map_dir.mkdir(parents=True)
+    (legacy_map_dir / "workspace.geojson").write_text(
+        '{"type":"Feature","properties":{"feature_id":"legacy-workspace","feature_type":"workspace","name":"base"},'
+        '"geometry":{"type":"Polygon","coordinates":[[[4.0,50.0],[4.1,50.0],[4.1,50.1],[4.0,50.0]]]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        legacy_map,
+        "_query_overpass_roads",
+        lambda bbox: {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 123,
+                    "tags": {"highway": "service", "name": "Test Service Road"},
+                    "geometry": [{"lon": 4.05, "lat": 50.05}, {"lon": 4.06, "lat": 50.06}],
+                }
+            ]
+        },
+    )
+    client = TestClient(create_app(tmp_path, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+
+    imported = client.post("/api/map/osm-roads/import?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07]}).json()
+    reloaded = client.get("/api/map/features?map=rma").json()
+
+    assert imported["imported_count"] == 1
+    assert imported["features"][0]["properties"]["feature_type"] == "road"
+    assert imported["features"][0]["properties"]["source"] == "user"
+    assert imported["features"][0]["properties"]["import_source"] == "openstreetmap-overpass"
+    assert any(item["properties"].get("feature_id") == "osm-way-123" for item in reloaded["features"])
+
+
 def test_delete_map_feature_removes_only_user_geojson(tmp_path: Path) -> None:
     legacy_map_dir = tmp_path / "legacy_ros" / "config" / "data" / "map" / "rma" / "free_polygons"
     legacy_map_dir.mkdir(parents=True)
@@ -213,6 +258,22 @@ def test_mission_examples_and_legacy_trace() -> None:
     assert "ros" in trace
 
 
+def test_contract_graph_exposes_system_contracts() -> None:
+    client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+
+    graph = client.get("/api/contracts?include_runtime=false").json()
+    node_ids = {node["id"] for node in graph["nodes"]}
+    scenario_ids = {scenario["id"] for scenario in graph["scenarios"]}
+
+    assert graph["summary"]["nodes"] > 20
+    assert "http:POST /api/missions/init" in node_ids
+    assert "ros:service:/multi_robot/planner/create" in node_ids
+    assert "schema:mission_config.schema.json" in node_ids
+    assert "mission_lifecycle" in scenario_ids
+    assert "unsupported_no_planning" in scenario_ids
+    assert graph["source_digest"]
+
+
 def test_init_approve_start_posts_to_legacy_rest() -> None:
     rest = FakeRestClient()
     client = TestClient(create_app(ROOT, rest_client=rest, rosbridge_client=FakeRosbridgeClient()))
@@ -240,6 +301,23 @@ def test_init_approve_start_posts_to_legacy_rest() -> None:
     assert started["status_name"] == "STARTED"
 
 
+def test_get_mission_runtime_state_returns_adapter_record() -> None:
+    client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+    mission = {
+        "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+        "behavior": 0,
+        "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+        "objective": {"geometry": {"geometry_type": "Point", "coordinates": [4.39218, 50.84417]}},
+    }
+
+    initialized = client.post("/api/missions/init", json=mission).json()
+    runtime_state = client.get(f"/api/missions/{initialized['mission_id']}").json()
+
+    assert runtime_state["mission_id"] == initialized["mission_id"]
+    assert runtime_state["status_name"] == "NONE"
+    assert runtime_state["config"]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.39218, 50.84417]
+
+
 def test_init_inlines_user_created_feature_ids_before_legacy_rest(tmp_path: Path) -> None:
     user_features = tmp_path / "data" / "runtime" / "user_features_rma.geojson"
     user_features.parent.mkdir(parents=True)
@@ -258,6 +336,12 @@ def test_init_inlines_user_created_feature_ids_before_legacy_rest(tmp_path: Path
               "id": "runtime-geofence",
               "properties": {"feature_id": "runtime-geofence", "feature_type": "geofence", "source": "user"},
               "geometry": {"type": "Polygon", "coordinates": [[[4.39,50.84],[4.40,50.84],[4.40,50.85],[4.39,50.84]]]}
+            },
+            {
+              "type": "Feature",
+              "id": "runtime-road",
+              "properties": {"feature_id": "runtime-road", "feature_type": "road", "source": "user"},
+              "geometry": {"type": "LineString", "coordinates": [[4.3922,50.8442],[4.3928,50.8450]]}
             }
           ]
         }""",
@@ -272,22 +356,26 @@ def test_init_inlines_user_created_feature_ids_before_legacy_rest(tmp_path: Path
             "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
             "behavior": 0,
             "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
-            "transit": {"geofence": {"feature_id": "runtime-geofence"}},
-            "objective": {"geometries": [{"feature_id": "runtime-objective"}]},
+            "transit": {"geofence": {"feature_id": "runtime-geofence"}, "roads": [{"feature_id": "runtime-road"}]},
+            "objective": {"geometries": [{"feature_id": "runtime-objective"}, {"feature_id": "runtime-road"}]},
         },
     )
 
     assert response.status_code == 200
     assert rest.initialized[0]["objective"]["geometries"] == [
-        {"geometry": {"geometry_type": "Point", "coordinates": [4.39218, 50.84417]}}
+        {"geometry": {"geometry_type": "Point", "coordinates": [4.39218, 50.84417]}},
+        {"geometry": {"geometry_type": "LineString", "coordinates": [[4.3922, 50.8442], [4.3928, 50.8450]]}},
     ]
     assert rest.initialized[0]["transit"]["geofence"] == {
         "geometry_type": "Polygon",
         "coordinates": [[[4.39, 50.84], [4.40, 50.84], [4.40, 50.85], [4.39, 50.84]]],
     }
+    assert rest.initialized[0]["transit"]["roads"] == [
+        {"geometry_type": "LineString", "coordinates": [[4.3922, 50.8442], [4.3928, 50.8450]]}
+    ]
 
 
-def test_init_snaps_full_road_usage_point_objective_to_nearest_osm_road_vertex(tmp_path: Path) -> None:
+def test_init_preserves_full_road_usage_point_objective_coordinates(tmp_path: Path) -> None:
     osm_cache = tmp_path / "data" / "runtime" / "osm_roads_rma.geojson"
     osm_cache.parent.mkdir(parents=True)
     osm_cache.write_text(
@@ -317,9 +405,54 @@ def test_init_snaps_full_road_usage_point_objective_to_nearest_osm_road_vertex(t
         },
     ).json()
 
-    assert rest.initialized[0]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.001, 50.0]
-    assert response["config"]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.001, 50.0]
-    assert response["adapter_adjustments"][0]["type"] == "road_snap"
+    assert rest.initialized[0]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.0009, 50.0]
+    assert response["config"]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.0009, 50.0]
+    assert response["adapter_adjustments"] == []
+
+
+def test_planning_diagnostics_includes_scenario_matrix(tmp_path: Path) -> None:
+    agent_id = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
+    osm_cache = tmp_path / "data" / "runtime" / "osm_roads_rma.geojson"
+    osm_cache.parent.mkdir(parents=True)
+    osm_cache.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "id": "road-a",
+                        "properties": {"feature_id": "road-a", "feature_type": "osm_road", "highway": "residential", "name": "Test Road"},
+                        "geometry": {"type": "LineString", "coordinates": [[4.0, 50.0], [4.001, 50.0], [4.002, 50.0]]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = create_app(tmp_path, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient())
+    app.state.agent_updates[agent_id] = {"current_location": [4.0, 50.0]}
+    client = TestClient(app)
+
+    initialized = client.post(
+        "/api/missions/init",
+        json={
+            "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+            "behavior": 0,
+            "vehicles": [agent_id],
+            "objective": {"geometry": {"geometry_type": "Point", "coordinates": [4.002, 50.0]}},
+        },
+    ).json()
+
+    diagnostics = client.get(f"/api/planning/diagnostics?mission_id={initialized['mission_id']}").json()
+    scenario_analysis = diagnostics["scenario_analysis"]
+    ok_scenarios = [scenario for scenario in scenario_analysis["scenarios"] if scenario["status"] == "ok"]
+
+    assert scenario_analysis["status"] == "ok"
+    assert scenario_analysis["inputs"]["start"] == [4.0, 50.0]
+    assert ok_scenarios
+    assert "planner_like_cost_m" in ok_scenarios[0]["metrics"]
+    assert "total_cost_with_endpoint_penalty_m" in ok_scenarios[0]["metrics"]
 
 
 def test_inline_user_feature_refs_leaves_legacy_feature_ids_alone(tmp_path: Path) -> None:
@@ -376,6 +509,56 @@ def test_ros_feedback_normalizes_legacy_agent_ids_and_planned_paths() -> None:
     assert empty_feedback["status_name"] == "PLANNED"
     assert empty_feedback["path_status"] == "missing"
     assert empty_feedback["planned_paths"] == {}
+
+
+def test_legacy_mongo_feedback_normalizes_planned_paths() -> None:
+    state = _mission_state_from_legacy_feedback(
+        {
+            "_id": "feedback-doc",
+            "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+            "status": 1,
+            "tasks": [
+                {
+                    "vehicle_id": "f9992bb3_9871_451f_90a0_9207eb9fe6c5",
+                    "waypoints": [
+                        {"coordinates": [50.844317, 4.392588]},
+                        {"coordinates": [50.84534, 4.392684]},
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert state["status_name"] == "PLANNED"
+    assert state["path_status"] == "received"
+    assert state["planned_paths"]["f9992bb3-9871-451f-90a0-9207eb9fe6c5"] == [
+        [4.392588, 50.844317],
+        [4.392684, 50.84534],
+    ]
+    assert state["raw"]["source"] == "legacy_mongo"
+
+
+def test_legacy_planning_document_extracts_lonlat_paths() -> None:
+    paths = _planned_paths_from_planning_doc(
+        {
+            "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+            "tasks": {
+                "f9992bb3-9871-451f-90a0-9207eb9fe6c5": {
+                    "objectives": [
+                        {"primitives": [{"parameters": {"coordinates": [4.392095, 50.843586]}}]},
+                        {"primitives": [{"parameters": {"coordinates": [4.392685, 50.845341]}}]},
+                    ]
+                }
+            },
+        }
+    )
+
+    assert paths == {
+        "f9992bb3-9871-451f-90a0-9207eb9fe6c5": [
+            [4.392095, 50.843586],
+            [4.392685, 50.845341],
+        ]
+    }
 
 
 def test_planner_ready_state_does_not_promote_mission_status_without_feedback() -> None:

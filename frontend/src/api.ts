@@ -25,6 +25,20 @@ export type DeletedMapFeature = {
 
 export type UpdatedMapFeature = CreatedMapFeature;
 
+export type OsmRoadImportRequest = {
+  bbox: [number, number, number, number];
+  max_features?: number;
+};
+
+export type ImportedOsmRoads = {
+  imported_count: number;
+  skipped_existing: number;
+  bbox: [number, number, number, number];
+  features: FeatureCollection["features"];
+  geojson: FeatureCollection;
+  map_features: MapFeature[];
+};
+
 export type MissionState = {
   mission_id: string;
   status?: number | string | null;
@@ -66,6 +80,123 @@ export type DiagnosticsState = {
   };
   missions?: MissionState[];
   planner_state?: unknown;
+};
+
+export type PlanningDiagnostics = {
+  mission_id?: string | null;
+  checks: { id: string; status: "ok" | "error"; message: string }[];
+  summary?: Record<string, unknown>;
+  interpretation?: string[];
+  scenario_analysis?: PlanningScenarioAnalysis;
+  adapter?: unknown;
+  legacy_mongo?: unknown;
+};
+
+export type PlanningScenarioAnalysis = {
+  status: string;
+  inputs?: {
+    agent_id?: string;
+    start?: LonLat;
+    objective?: LonLat;
+    map?: string;
+    coordinate_order?: string;
+  };
+  model?: Record<string, unknown>;
+  graph_summaries?: Record<string, unknown>;
+  scenarios?: PlanningScenario[];
+  notes?: string[];
+};
+
+export type PlanningScenario = {
+  id: string;
+  label: string;
+  status: string;
+  parameters?: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
+  selected_nodes?: Record<string, unknown>;
+  route?: LonLat[];
+  segments?: unknown[];
+  notes?: string[];
+};
+
+export type ContractSourceRef = {
+  path: string;
+  line: number;
+};
+
+export type ContractField = {
+  section?: string;
+  type?: string;
+  name: string;
+};
+
+export type ContractNode = {
+  id: string;
+  label: string;
+  kind: string;
+  layer: string;
+  description?: string;
+  source_refs?: ContractSourceRef[];
+  fields?: ContractField[];
+  runtime_status?: string;
+  details?: Record<string, unknown>;
+};
+
+export type ContractEdge = {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  kind: string;
+  layer: string;
+  protocol?: string;
+  direction?: string;
+  contract?: string;
+  method?: string;
+  source_refs?: ContractSourceRef[];
+  fields?: ContractField[];
+  notes?: string[];
+};
+
+export type ContractScenarioStage = {
+  id: string;
+  label: string;
+  component: string;
+  inputs?: string[];
+  outputs?: string[];
+  source_refs?: ContractSourceRef[];
+  notes?: string[];
+};
+
+export type ContractScenario = {
+  id: string;
+  label: string;
+  summary: string;
+  stages: ContractScenarioStage[];
+  risks?: string[];
+};
+
+export type ContractGraph = {
+  generated_at: string;
+  source_digest: string;
+  source_file_count: number;
+  summary: {
+    nodes: number;
+    edges: number;
+    scenarios: number;
+    by_layer?: Record<string, number>;
+    by_kind?: Record<string, number>;
+  };
+  layers: { id: string; label: string }[];
+  nodes: ContractNode[];
+  edges: ContractEdge[];
+  scenarios: ContractScenario[];
+  runtime?: {
+    ros_nodes?: string[];
+    ros_topics?: string[];
+    ros_services?: string[];
+  };
+  adapter_runtime?: Record<string, unknown>;
 };
 
 export type AgentUpdateEvent = {
@@ -126,6 +257,10 @@ export async function getOsmRoads(mapName = "rma"): Promise<FeatureCollection> {
   return getJson(`/api/map/osm-roads?map=${encodeURIComponent(mapName)}`);
 }
 
+export async function importOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<ImportedOsmRoads> {
+  return postJson(`/api/map/osm-roads/import?map=${encodeURIComponent(mapName)}`, request);
+}
+
 export async function createMapFeature(feature: FeatureCollection["features"][number], mapName = "rma"): Promise<CreatedMapFeature> {
   return postJson(`/api/map/features?map=${encodeURIComponent(mapName)}`, feature);
 }
@@ -142,6 +277,15 @@ export async function getDiagnostics(): Promise<DiagnosticsState> {
   return getJson("/api/diagnostics");
 }
 
+export async function getPlanningDiagnostics(missionId?: string): Promise<PlanningDiagnostics> {
+  const suffix = missionId ? `?mission_id=${encodeURIComponent(missionId)}` : "";
+  return getJson(`/api/planning/diagnostics${suffix}`);
+}
+
+export async function getContracts(includeRuntime = true): Promise<ContractGraph> {
+  return getJson(`/api/contracts?include_runtime=${includeRuntime ? "true" : "false"}`);
+}
+
 export async function getMissionExamples(): Promise<{ examples: MissionExample[] }> {
   return getJson("/api/mission-examples");
 }
@@ -156,6 +300,10 @@ export async function resetLegacyRuntime(): Promise<LegacyResetResult> {
 
 export async function initMission(mission: MissionConfig): Promise<MissionState> {
   return postJson("/api/missions/init", mission);
+}
+
+export async function getMissionState(missionId: string): Promise<MissionState> {
+  return getJson(`/api/missions/${encodeURIComponent(missionId)}`);
 }
 
 export async function approveMission(missionId: string): Promise<MissionState> {

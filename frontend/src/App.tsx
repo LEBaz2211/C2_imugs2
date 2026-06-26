@@ -1,28 +1,37 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, Target, Trash2, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { ReactNode, RefObject } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveMission,
   createMapFeature,
   createEventSource,
   deleteMapFeature,
   forgetMission as forgetMissionRecord,
+  getContracts,
   getDiagnostics,
   getLegacyTrace,
+  getMissionState,
   getMissionExamples,
   getOsmRoads,
+  getPlanningDiagnostics,
   getRuntimeBootstrap,
+  importOsmRoads,
   initMission,
   resetLegacyRuntime,
   startMission,
   updateMapFeature,
   type AgentUpdateEvent,
+  type ContractGraph,
   type DiagnosticsState,
   type LegacyResetResult,
   type LegacyTrace,
   type MissionExample,
   type MissionState,
+  type OsmRoadImportRequest,
+  type PlanningDiagnostics,
+  type PlanningScenario,
+  type PlanningScenarioAnalysis,
   type PlannerUpdateEvent,
 } from "./api";
 import { Badge } from "./components/ui/badge";
@@ -31,7 +40,9 @@ import { Tabs } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 import { agents as fallbackAgents, mapFeatures as fallbackFeatures, missionExamples as fallbackMissionExamples } from "./data/demo";
 import { createTaskPlan, normalizeMission, validateMission } from "./mission";
+import { ContractExplorer } from "./ContractExplorer";
 import { MapView, type DraftMapFeature } from "./MapView";
+import { ScenarioLab } from "./ScenarioLab";
 import type { Agent, MapFeature, MissionConfig } from "./types";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
@@ -92,6 +103,12 @@ export default function App() {
   const [showNewMission, setShowNewMission] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState | undefined>();
   const [legacyTrace, setLegacyTrace] = useState<LegacyTrace | undefined>();
+  const [contractGraph, setContractGraph] = useState<ContractGraph | undefined>();
+  const [contractsBusy, setContractsBusy] = useState(false);
+  const [contractsError, setContractsError] = useState("");
+  const [planningDiagnostics, setPlanningDiagnostics] = useState<PlanningDiagnostics | undefined>();
+  const [planningDiagnosticsBusy, setPlanningDiagnosticsBusy] = useState(false);
+  const [selectedPlanningScenarioId, setSelectedPlanningScenarioId] = useState<string | undefined>();
   const [legacyResetResult, setLegacyResetResult] = useState<LegacyResetResult | undefined>();
   const [legacyResetBusy, setLegacyResetBusy] = useState(false);
   const [plannerState, setPlannerState] = useState<PlannerUpdateEvent | undefined>();
@@ -101,6 +118,7 @@ export default function App() {
   const [initRequestedAt, setInitRequestedAt] = useState<number | undefined>();
   const [nowMs, setNowMs] = useState(Date.now());
   const [tab, setTab] = useState("mission");
+  const [workspace, setWorkspace] = useState<"c2" | "scenario" | "contracts">("c2");
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | undefined>();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("Send Themis Fr to the selected objective point using roads.");
@@ -147,6 +165,7 @@ export default function App() {
       })
       .catch(() => setExamples(fallbackMissionExamples));
     getDiagnostics().then(applyDiagnostics).catch(() => undefined);
+    refreshContracts(false);
 
     const source = createEventSource();
     source.addEventListener("diagnostics.updated", (event) => {
@@ -155,9 +174,7 @@ export default function App() {
     });
     source.addEventListener("mission.updated", (event) => {
       const update = JSON.parse((event as MessageEvent).data) as MissionState;
-      const activeMissionId = activeMissionIdRef.current;
-      setMissionStates((current) => ({ ...current, [update.mission_id]: { ...current[update.mission_id], ...update } }));
-      if (activeMissionId && update.mission_id === activeMissionId) setMissionState((current) => ({ ...current, ...update }));
+      applyMissionRuntimeUpdate(update);
     });
     source.addEventListener("planner.updated", (event) => {
       const update = JSON.parse((event as MessageEvent).data) as PlannerUpdateEvent;
@@ -189,14 +206,61 @@ export default function App() {
     return () => source.close();
   }, []);
 
+  useEffect(() => {
+    const missionId = mission?.mission_id ?? missionState?.mission_id;
+    if (!missionId) return;
+    const current = missionState?.mission_id === missionId ? missionState : undefined;
+    if (!shouldPollMissionState(current)) return;
+    const polledMissionId = missionId;
+    let cancelled = false;
+    async function pollMissionState() {
+      try {
+        const update = await getMissionState(polledMissionId);
+        if (!cancelled) applyMissionRuntimeUpdate(update);
+      } catch {
+        // The SSE stream may still deliver the update; keep this fallback quiet.
+      }
+    }
+    pollMissionState();
+    const timer = window.setInterval(pollMissionState, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [mission?.mission_id, missionState?.mission_id, missionState?.status, missionState?.planner_status, missionState?.path_status]);
+
+  function applyMissionRuntimeUpdate(update: MissionState, source = "mission_feedback") {
+    const activeMissionId = activeMissionIdRef.current;
+    setMissionStates((current) => ({ ...current, [update.mission_id]: { ...current[update.mission_id], ...update } }));
+    if (activeMissionId && update.mission_id === activeMissionId) {
+      setMissionState((current) => ({ ...current, ...update }));
+      if (hasPlannedPaths(update.planned_paths)) {
+        setPlannerState({
+          mission_id: update.mission_id,
+          paths: update.planned_paths,
+          source,
+          received_at: update.updated_at,
+        });
+      }
+      if (missionStatusLabel(update) !== "NONE") setCommandFeedback(undefined);
+    }
+  }
+
   function applyDiagnostics(update: DiagnosticsState) {
     setDiagnostics(update);
+    const activeMissionId = activeMissionIdRef.current;
     if (update.missions?.length) {
       setMissionStates((current) => {
         const next = { ...current };
         for (const missionUpdate of update.missions ?? []) next[missionUpdate.mission_id] = { ...next[missionUpdate.mission_id], ...missionUpdate };
         return next;
       });
+      const activeUpdate = activeMissionId ? update.missions.find((item) => item.mission_id === activeMissionId) : undefined;
+      if (activeUpdate) applyMissionRuntimeUpdate(activeUpdate, "diagnostics");
+    }
+    const plannerUpdate = asPlannerUpdate(update.planner_state);
+    if (plannerUpdate && (!plannerUpdate.mission_id || !activeMissionId || plannerUpdate.mission_id === activeMissionId)) {
+      setPlannerState(plannerUpdate);
     }
   }
 
@@ -210,6 +274,10 @@ export default function App() {
   }, [agents, mapFeatures, missionText]);
 
   const taskPlan = useMemo(() => (mission ? createTaskPlan(mission, agents, mapFeatures) : undefined), [agents, mapFeatures, mission]);
+  const mapMission = workspace === "scenario" ? undefined : mission;
+  const mapTaskPlan = workspace === "scenario" ? undefined : taskPlan;
+  const mapPlannerState = workspace === "scenario" ? undefined : plannerState;
+  const applyScenarioAgents = useCallback((nextAgents: Agent[]) => setAgents(nextAgents), []);
 
   function updateMission(next: MissionConfig, focus?: { needle: string; label: string }) {
     activeMissionIdRef.current = next.mission_id;
@@ -264,10 +332,11 @@ export default function App() {
 
   function selectMission(missionId: string) {
     const config = missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config);
+    const state = missionStates[missionId];
     activeMissionIdRef.current = missionId;
     setShowNewMission(false);
-    setMissionState(missionStates[missionId]);
-    setPlannerState(undefined);
+    setMissionState(state);
+    setPlannerState(hasPlannedPaths(state?.planned_paths) ? { mission_id: missionId, paths: state?.planned_paths, source: "adapter_state", received_at: state?.updated_at } : undefined);
     setCommandFeedback(undefined);
     setInitRequestedAt(undefined);
     setTab("mission");
@@ -454,29 +523,32 @@ export default function App() {
       );
       setCommandFeedback({ tone: "ok", message: `Added '${feature.name}' as mission geofence.` });
     } else if (feature.feature_type === "road" && feature.geometry.type === "LineString") {
+      const transit = base.transit ?? {};
+      const roads = Array.isArray(transit["roads"]) ? transit["roads"] : [];
+      const missionRoad = missionGeometryRefFromFeature(feature);
       updateMission(
         {
           ...base,
           mission_id: crypto.randomUUID(),
-          name: `Patrol ${feature.name}`,
-          behavior: 1,
+          name: base.objective.geometries.length ? `${base.name ?? "Mission"} via ${feature.name}` : `Mission with ${feature.name}`,
+          behavior: base.behavior,
           vehicles,
-          transit: {
-            ...base.transit,
-            optimization: {
-              ...((base.transit?.["optimization"] ?? base.transit?.["optimalization"]) as Record<string, unknown> | undefined),
-              road_usage: 1,
-            },
-          },
           objective: {
             ...base.objective,
-            geometries: [missionGeometryRefFromFeature(feature)],
-            maximize_coverage: true,
+            geometries: [...base.objective.geometries, missionRoad],
+          },
+          transit: {
+            ...transit,
+            optimization: {
+              ...((transit["optimization"] ?? transit["optimalization"]) as Record<string, unknown> | undefined),
+              road_usage: 1,
+            },
+            roads: [...roads, directGeometryRefFromFeature(feature)],
           },
         },
-        { needle: '"objective"', label: "route objective" },
+        { needle: '"geometries"', label: "mission road" },
       );
-      setCommandFeedback({ tone: "ok", message: `Added road '${feature.name}' as a route patrol objective.` });
+      setCommandFeedback({ tone: "ok", message: `Added road '${feature.name}' as a routable mission road.` });
     } else if (feature.feature_type === "risk" && feature.geometry.type === "Polygon") {
       updateMission(
         {
@@ -575,6 +647,52 @@ export default function App() {
     setLegacyTrace(await getLegacyTrace());
   }
 
+  async function refreshPlanningDiagnostics() {
+    setApiError("");
+    setPlanningDiagnosticsBusy(true);
+    try {
+      const activeMissionId = activeMissionIdRef.current ?? mission?.mission_id ?? missionState?.mission_id;
+      const result = await getPlanningDiagnostics(activeMissionId);
+      setPlanningDiagnostics(result);
+      setSelectedPlanningScenarioId((current) => {
+        const scenarios = result.scenario_analysis?.scenarios ?? [];
+        if (current && scenarios.some((scenario) => scenario.id === current)) return current;
+        return undefined;
+      });
+      const refreshed = await getDiagnostics();
+      applyDiagnostics(refreshed);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      setCommandFeedback({ tone: "error", message: `Planning diagnostics failed: ${message}` });
+    } finally {
+      setPlanningDiagnosticsBusy(false);
+    }
+  }
+
+  async function importScenarioOsmRoads(request: OsmRoadImportRequest) {
+    const result = await importOsmRoads(request);
+    setGeojson(result.geojson);
+    setMapFeatures(result.map_features);
+    setCommandFeedback({ tone: "ok", message: `Imported ${result.imported_count} OSM road feature${result.imported_count === 1 ? "" : "s"} into runtime map assets.` });
+    return result;
+  }
+
+  async function refreshContracts(showBusy = true) {
+    if (showBusy) setContractsBusy(true);
+    setContractsError("");
+    try {
+      const graph = await getContracts(true);
+      setContractGraph(graph);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setContractsError(message);
+      if (showBusy) setCommandFeedback({ tone: "error", message: `Contract graph refresh failed: ${message}` });
+    } finally {
+      if (showBusy) setContractsBusy(false);
+    }
+  }
+
   async function cleanLegacyRuntimeForExamples() {
     setApiError("");
     setLegacyResetBusy(true);
@@ -632,6 +750,41 @@ export default function App() {
       state: missionStates[missionId],
     }));
   }, [hiddenMissionIds, missionConfigs, missionStates]);
+  const selectedPlanningScenario = useMemo(
+    () => planningDiagnostics?.scenario_analysis?.scenarios?.find((scenario) => scenario.id === selectedPlanningScenarioId),
+    [planningDiagnostics, selectedPlanningScenarioId],
+  );
+
+  if (workspace === "contracts") {
+    return (
+      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-background text-foreground">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-panel px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Workflow className="h-5 w-5 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">Contract Explorer</h2>
+              <p className="truncate text-xs text-muted-foreground">Generated source graph, runtime ROS visibility, and scenario traces.</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Tabs
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              items={[
+                { value: "c2", label: "C2" },
+                { value: "scenario", label: "Scenario" },
+                { value: "contracts", label: "Contracts" },
+              ]}
+            />
+            <Badge tone={contractsError ? "error" : "ok"}>{contractGraph ? `${contractGraph.summary.nodes} nodes` : "graph"}</Badge>
+          </div>
+        </header>
+        <section className="min-h-0 flex-1 overflow-auto p-4">
+          <ContractExplorer graph={contractGraph} busy={contractsBusy} error={contractsError} onRefresh={() => refreshContracts()} />
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="flex h-screen min-h-[720px] overflow-hidden bg-background text-foreground">
@@ -640,9 +793,10 @@ export default function App() {
         features={mapFeatures}
         geojson={geojson}
         osmRoads={osmRoads}
-        mission={mission}
-        taskPlan={taskPlan}
-        plannerState={plannerState}
+        mission={mapMission}
+        taskPlan={mapTaskPlan}
+        plannerState={mapPlannerState}
+        planningScenario={selectedPlanningScenario}
         selectedFeatureId={selectedFeatureId}
         onCreateFeature={(feature) => createDrawnFeature(feature).catch((error) => setApiError(String(error)))}
         onUpdateFeature={(featureId, feature) => updateDrawnFeature(featureId, feature).catch((error) => setApiError(String(error)))}
@@ -654,93 +808,126 @@ export default function App() {
         onClearSelection={() => setSelectedFeatureId(undefined)}
       />
 
-      <aside className="flex w-[500px] shrink-0 flex-col border-l border-border bg-background">
+      <aside className={`flex shrink-0 flex-col border-l border-border bg-background ${workspace === "scenario" ? "w-[860px]" : "w-[500px]"}`}>
         <header className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
-            <FileJson className="h-5 w-5 text-primary" />
+            {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
             <div>
-              <h2 className="text-sm font-semibold">Mission Definition</h2>
-              <p className="text-xs text-muted-foreground">UI to adapter to old REST/ROS.</p>
+              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "Scenario Lab" : "Mission Definition"}</h2>
+              <p className="text-xs text-muted-foreground">{workspace === "scenario" ? "Situation, vehicles, and map assets." : "UI to adapter to old REST/ROS."}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {mission && <PlannerProgressTag mission={mission} missionState={missionState} plannerState={plannerState} busyCommand={busyCommand} initRequestedAt={initRequestedAt} nowMs={nowMs} />}
-            {!hasSelectedMission ? <Badge>empty</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>}
+            <Tabs
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              items={[
+                { value: "c2", label: "C2" },
+                { value: "scenario", label: "Scenario" },
+                { value: "contracts", label: "Contracts" },
+              ]}
+            />
+            {workspace === "c2" && mission && <PlannerProgressTag mission={mission} missionState={missionState} plannerState={plannerState} busyCommand={busyCommand} initRequestedAt={initRequestedAt} nowMs={nowMs} />}
+            {workspace === "c2" ? (
+              !hasSelectedMission ? <Badge>empty</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
+            ) : (
+              <Badge tone="ok">builder</Badge>
+            )}
           </div>
         </header>
 
-        <div className="space-y-3 border-b border-border px-4 py-3">
-          <div className="flex items-center justify-between">
-            <Tabs
-              value={tab}
-              onValueChange={setTab}
-              items={[
-                { value: "mission", label: "Mission" },
-                { value: "plan", label: "Plan" },
-                { value: "assets", label: "Assets" },
-                { value: "diagnostics", label: "Diagnostics" },
-              ]}
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)}>
-              <ShieldCheck className="h-4 w-4" />
-              {busyCommand === "init" ? "Initializing" : "Init"}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => sendApproveMission().catch(() => undefined)} disabled={!canApproveMission || Boolean(busyCommand)} title={canApproveMission ? "Approve planned mission" : "Wait until the legacy mission status is PLANNED"}>
-              <CheckCircle2 className="h-4 w-4" />
-              {busyCommand === "approve" ? "Approving" : "Approve"}
-            </Button>
-            <Button size="sm" onClick={() => sendStartMission().catch(() => undefined)} disabled={!canStartMission || Boolean(busyCommand)} title={canStartMission ? "Start accepted mission" : "Wait until the legacy mission status is ACCEPTED"}>
-              <Play className="h-4 w-4" />
-              {busyCommand === "start" ? "Starting" : "Start"}
-            </Button>
-          </div>
-          {commandFeedback && (
-            <div className="flex items-start gap-2 rounded-md border border-border bg-panel px-3 py-2 text-xs">
-              <Badge tone={commandFeedback.tone}>{commandFeedback.tone === "warn" ? "sending" : commandFeedback.tone}</Badge>
-              <span className="leading-6">{commandFeedback.message}</span>
+        {workspace === "c2" && (
+          <div className="space-y-3 border-b border-border px-4 py-3">
+            <div className="flex items-center justify-between">
+              <Tabs
+                value={tab}
+                onValueChange={setTab}
+                items={[
+                  { value: "mission", label: "Mission" },
+                  { value: "plan", label: "Plan" },
+                  { value: "assets", label: "Assets" },
+                  { value: "diagnostics", label: "Diagnostics" },
+                ]}
+              />
             </div>
-          )}
-          {apiError && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{apiError}</div>}
-        </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)}>
+                <ShieldCheck className="h-4 w-4" />
+                {busyCommand === "init" ? "Initializing" : "Init"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => sendApproveMission().catch(() => undefined)} disabled={!canApproveMission || Boolean(busyCommand)} title={canApproveMission ? "Approve planned mission" : "Wait until the legacy mission status is PLANNED"}>
+                <CheckCircle2 className="h-4 w-4" />
+                {busyCommand === "approve" ? "Approving" : "Approve"}
+              </Button>
+              <Button size="sm" onClick={() => sendStartMission().catch(() => undefined)} disabled={!canStartMission || Boolean(busyCommand)} title={canStartMission ? "Start accepted mission" : "Wait until the legacy mission status is ACCEPTED"}>
+                <Play className="h-4 w-4" />
+                {busyCommand === "start" ? "Starting" : "Start"}
+              </Button>
+            </div>
+            {commandFeedback && (
+              <div className="flex items-start gap-2 rounded-md border border-border bg-panel px-3 py-2 text-xs">
+                <Badge tone={commandFeedback.tone}>{commandFeedback.tone === "warn" ? "sending" : commandFeedback.tone}</Badge>
+                <span className="leading-6">{commandFeedback.message}</span>
+              </div>
+            )}
+            {apiError && <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{apiError}</div>}
+          </div>
+        )}
 
         <section className="min-h-0 flex-1 overflow-auto p-4">
-          {tab === "mission" && (
-            <MissionPanel
-              examples={examples}
-              mission={mission}
-              missionText={missionText}
-              missionState={missionState}
-              missionList={missionList}
-              showNewMission={showNewMission}
-              validation={validation}
-              onLoadExample={loadExample}
-              onSelectMission={selectMission}
-              onNewMission={startNewMission}
-              onCloseComposer={closeMissionComposer}
-              onForgetMission={(missionId) => forgetMission(missionId).catch((error) => setApiError(String(error)))}
-              onMissionTextChange={updateMissionText}
-              missionJsonRef={missionJsonRef}
-              jsonFocusLabel={jsonFocus?.label}
-              onClear={clearMission}
+          {workspace === "c2" ? (
+            <>
+              {tab === "mission" && (
+                <MissionPanel
+                  examples={examples}
+                  mission={mission}
+                  missionText={missionText}
+                  missionState={missionState}
+                  missionList={missionList}
+                  showNewMission={showNewMission}
+                  validation={validation}
+                  onLoadExample={loadExample}
+                  onSelectMission={selectMission}
+                  onNewMission={startNewMission}
+                  onCloseComposer={closeMissionComposer}
+                  onForgetMission={(missionId) => forgetMission(missionId).catch((error) => setApiError(String(error)))}
+                  onMissionTextChange={updateMissionText}
+                  missionJsonRef={missionJsonRef}
+                  jsonFocusLabel={jsonFocus?.label}
+                  onClear={clearMission}
+                />
+              )}
+
+              {tab === "plan" && <PlanPanel taskPlan={taskPlan} />}
+
+              {tab === "assets" && <AssetsPanel agents={agents} mapFeatures={mapFeatures} mission={mission} selectedFeatureId={selectedFeatureId} onSetObjective={setFeatureAsObjective} onRemoveFeature={(feature) => removeFeature(feature).catch((error) => setApiError(String(error)))} />}
+
+              {tab === "diagnostics" && (
+                <DiagnosticsPanel
+                  diagnostics={diagnostics}
+                  legacyTrace={legacyTrace}
+                  plannerState={plannerState}
+                  planningDiagnostics={planningDiagnostics}
+                  planningDiagnosticsBusy={planningDiagnosticsBusy}
+                  selectedPlanningScenarioId={selectedPlanningScenarioId}
+                  legacyResetBusy={legacyResetBusy}
+                  legacyResetResult={legacyResetResult}
+                  onRefreshLegacyTrace={() => refreshLegacyTrace().catch((error) => setApiError(String(error)))}
+                  onRefreshPlanningDiagnostics={() => refreshPlanningDiagnostics()}
+                  onSelectPlanningScenario={(scenarioId) => setSelectedPlanningScenarioId((current) => (current === scenarioId ? undefined : scenarioId))}
+                  onCleanLegacyRuntime={() => cleanLegacyRuntimeForExamples()}
+                />
+              )}
+            </>
+          ) : (
+            <ScenarioLab
+              agents={agents}
+              mapFeatures={mapFeatures}
+              selectedFeatureId={selectedFeatureId}
+              onScenarioAgentsChange={applyScenarioAgents}
+              onSelectFeature={selectMapFeature}
+              onImportOsmRoads={importScenarioOsmRoads}
             />
-          )}
-
-          {tab === "plan" && <PlanPanel taskPlan={taskPlan} />}
-
-          {tab === "assets" && <AssetsPanel agents={agents} mapFeatures={mapFeatures} mission={mission} selectedFeatureId={selectedFeatureId} onSetObjective={setFeatureAsObjective} onRemoveFeature={(feature) => removeFeature(feature).catch((error) => setApiError(String(error)))} />}
-
-          {tab === "diagnostics" && (
-            <DiagnosticsPanel
-              diagnostics={diagnostics}
-              legacyTrace={legacyTrace}
-              plannerState={plannerState}
-              legacyResetBusy={legacyResetBusy}
-              legacyResetResult={legacyResetResult}
-              onRefreshLegacyTrace={() => refreshLegacyTrace().catch((error) => setApiError(String(error)))}
-              onCleanLegacyRuntime={() => cleanLegacyRuntimeForExamples()}
-      />
           )}
         </section>
       </aside>
@@ -823,6 +1010,16 @@ function plannerPathSummary(plannerState?: PlannerUpdateEvent) {
   if (!plannerState?.paths) return undefined;
   const paths = Object.values(plannerState.paths);
   return { pathCount: paths.length, waypointCount: paths.reduce((sum, path) => sum + path.length, 0) };
+}
+
+function hasPlannedPaths(paths?: Record<string, [number, number][]>) {
+  return Boolean(paths && Object.values(paths).some((path) => Array.isArray(path) && path.length > 0));
+}
+
+function shouldPollMissionState(state?: MissionState) {
+  if (!state) return true;
+  const status = missionStatusLabel(state);
+  return status === "NONE" || state.planner_status === "waiting_for_feedback" || state.path_status === "missing";
 }
 
 function formatDuration(totalSeconds: number) {
@@ -1226,23 +1423,37 @@ function DiagnosticsPanel({
   diagnostics,
   legacyTrace,
   plannerState,
+  planningDiagnostics,
+  planningDiagnosticsBusy,
+  selectedPlanningScenarioId,
   legacyResetBusy,
   legacyResetResult,
   onRefreshLegacyTrace,
+  onRefreshPlanningDiagnostics,
+  onSelectPlanningScenario,
   onCleanLegacyRuntime,
 }: {
   diagnostics?: DiagnosticsState;
   legacyTrace?: LegacyTrace;
   plannerState?: PlannerUpdateEvent;
+  planningDiagnostics?: PlanningDiagnostics;
+  planningDiagnosticsBusy: boolean;
+  selectedPlanningScenarioId?: string;
   legacyResetBusy: boolean;
   legacyResetResult?: LegacyResetResult;
   onRefreshLegacyTrace: () => void;
+  onRefreshPlanningDiagnostics: () => void;
+  onSelectPlanningScenario: (scenarioId: string) => void;
   onCleanLegacyRuntime: () => void;
 }) {
   if (!diagnostics) return <div className="text-sm text-muted-foreground">Waiting for diagnostics...</div>;
   return (
     <div className="space-y-3">
       <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={onRefreshPlanningDiagnostics} disabled={planningDiagnosticsBusy} title="Compare planner parameter scenarios and legacy mission output">
+          <Route className="h-4 w-4" />
+          {planningDiagnosticsBusy ? "Checking" : "Scenario Debug"}
+        </Button>
         <Button size="sm" variant="outline" onClick={onCleanLegacyRuntime} disabled={legacyResetBusy} title="Test-only: clear old mission configs, plans, feedback, and logs from MongoDB">
           <Trash2 className="h-4 w-4" />
           {legacyResetBusy ? "Cleaning" : "Clean Test DB"}
@@ -1257,6 +1468,29 @@ function DiagnosticsPanel({
           <div className="font-medium">{legacyResetResult.message}</div>
           <div className="mt-1 text-amber-900">Preserved: {legacyResetResult.preserved.join(", ")}</div>
           <Textarea className="mt-2 h-24 resize-none bg-background" value={JSON.stringify({ deleted: legacyResetResult.deleted, restart_required: legacyResetResult.restart_required }, null, 2)} readOnly />
+        </div>
+      )}
+      {planningDiagnostics && (
+        <div className="space-y-2 rounded-md border border-border bg-panel p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-medium">Planning Diagnostic</div>
+            <Badge tone={planningDiagnostics.checks.every((check) => check.status === "ok") ? "ok" : "warn"}>{planningDiagnostics.mission_id ? shortId(planningDiagnostics.mission_id) : "none"}</Badge>
+          </div>
+          {planningDiagnostics.interpretation?.map((note) => (
+            <div key={note} className="rounded-sm border border-border bg-background px-2 py-1 text-xs text-muted-foreground">
+              {note}
+            </div>
+          ))}
+          <div className="grid grid-cols-2 gap-2">
+            {planningDiagnostics.checks.map((check) => (
+              <div key={check.id} className="flex items-center justify-between gap-2 rounded-sm border border-border bg-background px-2 py-1 text-xs">
+                <span className="truncate">{check.id}</span>
+                <Badge tone={check.status === "ok" ? "ok" : "error"}>{check.status}</Badge>
+              </div>
+            ))}
+          </div>
+          <PlanningScenarioMatrix analysis={planningDiagnostics.scenario_analysis} selectedScenarioId={selectedPlanningScenarioId} onSelectScenario={onSelectPlanningScenario} />
+          <Textarea className="h-64 resize-none" value={JSON.stringify(planningDiagnostics, null, 2)} readOnly spellCheck={false} />
         </div>
       )}
       {legacyTrace && (
@@ -1307,6 +1541,102 @@ function DiagnosticsPanel({
       <Textarea className="h-[280px] resize-none" value={JSON.stringify(diagnostics.ros ?? {}, null, 2)} readOnly />
     </div>
   );
+}
+
+function PlanningScenarioMatrix({
+  analysis,
+  selectedScenarioId,
+  onSelectScenario,
+}: {
+  analysis?: PlanningScenarioAnalysis;
+  selectedScenarioId?: string;
+  onSelectScenario: (scenarioId: string) => void;
+}) {
+  if (!analysis) return null;
+  const scenarios = analysis.scenarios ?? [];
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-border bg-background p-3">
+        <div className="flex items-center justify-between gap-3">
+          <SectionTitle icon={<Route className="h-4 w-4" />} label="Scenario Matrix" />
+          <Badge tone={analysis.status === "ok" ? "ok" : "warn"}>{analysis.status}</Badge>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <InfoTile label="Start" value={formatCoordinates(analysis.inputs?.start)} />
+          <InfoTile label="Objective" value={formatCoordinates(analysis.inputs?.objective)} />
+          <InfoTile label="Agent" value={shortId(analysis.inputs?.agent_id)} />
+          <InfoTile label="Map" value={analysis.inputs?.map ?? "unknown"} />
+        </div>
+        {analysis.model?.legacy_planner_issue_to_watch ? <div className="mt-2 rounded-sm border border-border bg-panel px-2 py-1 text-xs text-muted-foreground">{String(analysis.model.legacy_planner_issue_to_watch)}</div> : null}
+        {analysis.notes?.map((note) => (
+          <div key={note} className="mt-2 rounded-sm border border-border bg-panel px-2 py-1 text-xs text-muted-foreground">
+            {note}
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {scenarios.map((scenario) => (
+          <PlanningScenarioCard key={scenario.id} scenario={scenario} selected={scenario.id === selectedScenarioId} onSelect={() => onSelectScenario(scenario.id)} />
+        ))}
+      </div>
+      {analysis.graph_summaries && (
+        <div className="rounded-md border border-border bg-background p-3">
+          <div className="font-medium">Graph Summaries</div>
+          <Textarea className="mt-2 h-28 resize-none" value={JSON.stringify(analysis.graph_summaries, null, 2)} readOnly spellCheck={false} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanningScenarioCard({ scenario, selected, onSelect }: { scenario: PlanningScenario; selected: boolean; onSelect: () => void }) {
+  const metrics = scenario.metrics ?? {};
+  const route = scenario.route ?? [];
+  return (
+    <div className={`rounded-md border bg-background p-3 ${selected ? "border-primary shadow-sm" : "border-border"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{scenario.label}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{scenario.id}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {route.length > 0 && (
+            <Button size="sm" variant={selected ? "secondary" : "outline"} onClick={onSelect} title={selected ? "Hide this scenario on the map" : "Show this scenario route on the map"}>
+              <MapPinned className="h-4 w-4" />
+              {selected ? "Shown" : "Map"}
+            </Button>
+          )}
+          <Badge tone={scenarioTone(scenario.status)}>{scenario.status}</Badge>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <InfoTile label="Road filter" value={String(scenario.parameters?.road_filter ?? scenario.parameters?.source ?? "n/a")} />
+        <InfoTile label="Candidates" value={String(scenario.parameters?.candidate_count ?? "n/a")} />
+        <InfoTile label="Endpoint penalty" value={String(scenario.parameters?.endpoint_penalty ?? "n/a")} />
+        <InfoTile label="Points" value={String(metrics.point_count ?? route.length ?? "0")} />
+        <InfoTile label="Graph length" value={formatMeters(metrics.graph_length_m)} />
+        <InfoTile label="Visible length" value={formatMeters(metrics.visible_length_m)} />
+        <InfoTile label="Start snap" value={formatMeters(metrics.start_snap_m ?? metrics.start_gap_to_current_start_m)} />
+        <InfoTile label="End snap" value={formatMeters(metrics.end_snap_m ?? metrics.end_gap_to_objective_m)} />
+        <InfoTile label="Planner-like cost" value={formatMeters(metrics.planner_like_cost_m)} />
+        <InfoTile label="Cost with endpoint" value={formatMeters(metrics.total_cost_with_endpoint_penalty_m)} />
+      </div>
+      {route.length > 0 && <div className="mt-2 rounded-sm border border-border bg-panel px-2 py-1 text-xs text-muted-foreground">{formatCoordinates(route[0])} to {formatCoordinates(route[route.length - 1])}</div>}
+      {scenario.notes?.map((note) => (
+        <div key={note} className="mt-2 rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+          {note}
+        </div>
+      ))}
+      {scenario.segments && scenario.segments.length > 0 && <Textarea className="mt-2 h-24 resize-none" value={JSON.stringify({ selected_nodes: scenario.selected_nodes, segments: scenario.segments }, null, 2)} readOnly spellCheck={false} />}
+    </div>
+  );
+}
+
+function scenarioTone(status: string): "default" | "ok" | "warn" | "error" {
+  if (status === "ok") return "ok";
+  if (status === "no_route" || status === "no_graph" || status === "missing") return "warn";
+  if (status === "error") return "error";
+  return "default";
 }
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
@@ -1372,6 +1702,11 @@ function objectiveDetails(objective?: MissionConfig["objective"]["geometries"][n
   return `${objective.geometry.geometry_type ?? objective.geometry.type ?? "geometry"} ${formatCoordinates(objective.geometry.coordinates)}`;
 }
 
+function asPlannerUpdate(value: unknown): PlannerUpdateEvent | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return value as PlannerUpdateEvent;
+}
+
 function asMissionConfig(value: unknown): MissionConfig | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Partial<MissionConfig>;
@@ -1385,6 +1720,12 @@ function asMissionConfig(value: unknown): MissionConfig | undefined {
 function formatPercent(value: unknown) {
   if (typeof value !== "number") return "default";
   return `${Math.round(value * 100)}%`;
+}
+
+function formatMeters(value: unknown) {
+  if (typeof value !== "number") return "n/a";
+  if (value >= 1000) return `${(value / 1000).toFixed(2)} km`;
+  return `${value.toFixed(value >= 100 ? 0 : 1)} m`;
 }
 
 function formatTime(value?: string) {
@@ -1441,9 +1782,7 @@ function commandLabel(command: "init" | "approve" | "start") {
 
 function commandSuccessMessage(command: "init" | "approve" | "start", state: MissionState) {
   const status = missionStatusLabel(state);
-  const adjustment = state.adapter_adjustments?.find((item) => item.type === "road_snap");
-  const adjustmentText = adjustment ? ` ${adjustment.message ?? "Adapter adjusted the mission before legacy dispatch."}` : "";
-  if (command === "init") return `Init accepted by legacy REST. Current status: ${status}. Wait for PLANNED before approving.${adjustmentText}`;
+  if (command === "init") return `Init accepted by legacy REST. Current status: ${status}. Wait for PLANNED before approving.`;
   if (command === "approve") return `Approve accepted by legacy REST. Current status: ${status}. Wait for ACCEPTED before starting.`;
   return `Start accepted by legacy REST. Current status: ${status}.`;
 }

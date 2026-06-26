@@ -5,7 +5,7 @@ import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polygon, Polyline, P
 import L from "leaflet";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
-import type { PlannerUpdateEvent } from "./api";
+import type { PlannerUpdateEvent, PlanningScenario } from "./api";
 import type { Agent, LonLat, MapFeature, MissionConfig, TaskPlan } from "./types";
 import { destinationsForGeometryRef } from "./mission";
 
@@ -17,6 +17,7 @@ type MapViewProps = {
   mission?: MissionConfig;
   taskPlan?: TaskPlan;
   plannerState?: PlannerUpdateEvent;
+  planningScenario?: PlanningScenario;
   selectedFeatureId?: string;
   onCreateFeature: (feature: DraftMapFeature) => void;
   onUpdateFeature: (featureId: string, feature: DraftMapFeature) => void;
@@ -46,7 +47,7 @@ const geometryByFeatureType: Record<(typeof featureTypeOptions)[number], DraftMa
   risk: "Polygon",
 };
 
-export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan, plannerState, selectedFeatureId, onCreateFeature, onUpdateFeature, onRemoveFeature, onSetObjective, onAddFeatureToMission, missionComposerActive, onSelectFeature, onClearSelection }: MapViewProps) {
+export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan, plannerState, planningScenario, selectedFeatureId, onCreateFeature, onUpdateFeature, onRemoveFeature, onSetObjective, onAddFeatureToMission, missionComposerActive, onSelectFeature, onClearSelection }: MapViewProps) {
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<LonLat[]>([]);
   const [featureType, setFeatureType] = useState<(typeof featureTypeOptions)[number]>("objective");
@@ -59,6 +60,7 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
   const selectedIsUser = selectedFeature?.properties?.source === "user";
 
   const trajectories = useMemo(() => plannedTrajectories(agents, taskPlan, plannerState, mission?.mission_id), [agents, taskPlan, plannerState, mission?.mission_id]);
+  const scenarioRoute = useMemo(() => (planningScenario?.route ?? []).filter(isLonLat), [planningScenario]);
   const objectivePoints = useMemo(
     () => mission?.objective.geometries.flatMap((geometryRef) => destinationsForGeometryRef(geometryRef, features, mission.behavior)) ?? [],
     [features, mission],
@@ -237,6 +239,12 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
             );
           })}
 
+          {planningScenario && scenarioRoute.length > 1 && (
+            <Pane name="planning-scenario-debug" style={{ zIndex: 620 }}>
+              <ScenarioRouteOverlay scenario={planningScenario} route={scenarioRoute} />
+            </Pane>
+          )}
+
           {agents.map((agent) => (
             <Marker key={agent.agent_id} position={toLatLng(agent.current_location)} icon={agentIcon("#1f2937")}>
               <Popup>
@@ -251,6 +259,41 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
         </MapContainer>
       </div>
     </section>
+  );
+}
+
+function ScenarioRouteOverlay({ scenario, route }: { scenario: PlanningScenario; route: LonLat[] }) {
+  const hasSelectedNodes = Boolean(scenario.selected_nodes) && route.length >= 3;
+  const graphRoute = hasSelectedNodes ? route.slice(1, -1) : route;
+  const startSnap = hasSelectedNodes ? route.slice(0, 2) : [];
+  const endSnap = hasSelectedNodes ? route.slice(-2) : [];
+  const metrics = scenario.metrics ?? {};
+  return (
+    <Fragment>
+      {startSnap.length === 2 && (
+        <Polyline positions={startSnap.map(toLatLng)} pathOptions={{ color: "#dc2626", weight: 6, opacity: 0.9, dashArray: "8 7", lineCap: "round", lineJoin: "round" }}>
+          <Tooltip sticky>{`Start snap ${formatDebugMeters(metrics.start_snap_m)}`}</Tooltip>
+        </Polyline>
+      )}
+      {graphRoute.length > 1 && (
+        <Polyline positions={graphRoute.map(toLatLng)} pathOptions={{ color: "#7c3aed", weight: 6, opacity: 0.82, lineCap: "round", lineJoin: "round" }}>
+          <Tooltip sticky>{`${scenario.label}: graph ${formatDebugMeters(metrics.graph_length_m ?? metrics.visible_length_m)}`}</Tooltip>
+        </Polyline>
+      )}
+      {endSnap.length === 2 && (
+        <Polyline positions={endSnap.map(toLatLng)} pathOptions={{ color: "#dc2626", weight: 6, opacity: 0.9, dashArray: "8 7", lineCap: "round", lineJoin: "round" }}>
+          <Tooltip sticky>{`End snap ${formatDebugMeters(metrics.end_snap_m)}`}</Tooltip>
+        </Polyline>
+      )}
+      {route.map((point, index) => {
+        const endpoint = index === 0 || index === route.length - 1;
+        return (
+          <CircleMarker key={`scenario-${scenario.id}-${index}`} center={toLatLng(point)} radius={endpoint ? 7 : 4} pathOptions={{ color: endpoint ? "#111827" : "#7c3aed", fillColor: endpoint ? "#f97316" : "#ffffff", fillOpacity: 0.95, weight: 2 }}>
+            <Tooltip>{endpoint ? (index === 0 ? "Scenario start" : "Scenario objective") : `Scenario graph node ${index}`}</Tooltip>
+          </CircleMarker>
+        );
+      })}
+    </Fragment>
   );
 }
 
@@ -385,6 +428,10 @@ function toLatLng(point: LonLat): [number, number] {
 
 function isLonLat(value: unknown): value is LonLat {
   return Array.isArray(value) && value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number";
+}
+
+function formatDebugMeters(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)} m` : "n/a";
 }
 
 function normalizeUuidish(value: string) {

@@ -1,4 +1,5 @@
 import json
+import networkx as nx
 from shapely.geometry import shape
 import geopandas as gpd
 
@@ -6,6 +7,7 @@ from .models import *
 from .mapf import *
 from .task_allocation import *
 from .max_coverage import *
+from .utils import add_edge_lengths, distance_between_coordinates
 
 class MultiRobotPathPlanning:
     def __init__(self , mapf , mongodb_url , db):
@@ -20,6 +22,7 @@ class MultiRobotPathPlanning:
         self.mongodb_url = mongodb_url
         self.db = db
         self.local_feature_geometries = {}
+        self.mission_road_connect_max_distance = 45.0
 
     def update_mission(self, mission_id, mission_str, map_feature_collection):
         """
@@ -50,9 +53,25 @@ class MultiRobotPathPlanning:
                 else:
                     print(f"Could not resolve feature_id '{feature_id}' to geometry.")
 
+        transit = data.get("transit") or {}
+        roads = transit.get("roads") if isinstance(transit, dict) else None
+        if isinstance(roads, list):
+            transit["roads"] = [self._resolved_geometry_ref(road, map_feature_collection) for road in roads]
+
         self.missions[mission_id] = data
 
     def solve_mission(self, mission_id, agents_to_plan):
+        if mission_id not in self.missions:
+            raise ValueError(f"Mission ID {mission_id} not found.")
+
+        base_graph = self.graph
+        self.graph = self._graph_with_mission_roads(self.missions[mission_id])
+        try:
+            return self._solve_mission_with_graph(mission_id, agents_to_plan)
+        finally:
+            self.graph = base_graph
+
+    def _solve_mission_with_graph(self, mission_id, agents_to_plan):
         # Check mission exists
         if mission_id not in self.missions:
             raise ValueError(f"Mission ID {mission_id} not found.")
@@ -215,6 +234,159 @@ class MultiRobotPathPlanning:
             return [list(agent.localization)]
         return path
 
+    def _graph_with_mission_roads(self, mission):
+        road_geometries = self._mission_road_geometries(mission)
+        if not road_geometries:
+            return self.graph
+
+        augmented = self.graph.copy()
+        for index, coordinates in enumerate(road_geometries):
+            line_graph = self._mission_line_graph(coordinates, index, augmented)
+            if line_graph is None:
+                continue
+            mission_nodes = set(line_graph.nodes)
+            existing_road_nodes = [node for node in augmented.nodes if self._node_has_road_edge(augmented, node)]
+            augmented = nx.compose(augmented, line_graph)
+            connector_count = 0
+            for mission_node in mission_nodes:
+                mission_lat = augmented.nodes[mission_node]["y"]
+                mission_lon = augmented.nodes[mission_node]["x"]
+                for graph_node in existing_road_nodes:
+                    graph_lat = augmented.nodes[graph_node]["y"]
+                    graph_lon = augmented.nodes[graph_node]["x"]
+                    if distance_between_coordinates(mission_lat, mission_lon, graph_lat, graph_lon) <= self.mission_road_connect_max_distance:
+                        augmented.add_edge(
+                            mission_node,
+                            graph_node,
+                            road=True,
+                            road_source="mission_connector",
+                            risk=False,
+                            feature_id=f"mission-road-{index}-connector",
+                        )
+                        connector_count += 1
+            add_edge_lengths(augmented)
+            print(
+                f"Added mission road {index} with {line_graph.number_of_edges()} edge(s) and {connector_count} connector(s).",
+                flush=True,
+            )
+        return augmented
+
+    def _mission_road_geometries(self, mission):
+        candidates = []
+        transit = mission.get("transit") or {}
+        roads = transit.get("roads") if isinstance(transit, dict) else None
+        if isinstance(roads, dict):
+            roads = [roads]
+        if isinstance(roads, list):
+            candidates.extend(roads)
+
+        objective = mission.get("objective") or {}
+        objective_geometries = objective.get("geometries") if isinstance(objective, dict) else None
+        if isinstance(objective_geometries, list):
+            candidates.extend(objective_geometries)
+
+        geometries = []
+        seen = set()
+        for candidate in candidates:
+            clean_coordinates = self._line_coordinates_from_geometry_ref(candidate)
+            if not clean_coordinates:
+                continue
+            key = tuple((round(point[0], 9), round(point[1], 9)) for point in clean_coordinates)
+            if key in seen:
+                continue
+            seen.add(key)
+            geometries.append(clean_coordinates)
+        return geometries
+
+    @staticmethod
+    def _line_coordinates_from_geometry_ref(geometry_ref):
+        geometry = geometry_ref.get("geometry") if isinstance(geometry_ref, dict) and isinstance(geometry_ref.get("geometry"), dict) else geometry_ref
+        if not isinstance(geometry, dict):
+            return None
+        geometry_type = geometry.get("geometry_type") or geometry.get("type")
+        coordinates = geometry.get("coordinates")
+        if geometry_type != "LineString" or not isinstance(coordinates, list) or len(coordinates) < 2:
+            return None
+
+        clean_coordinates = []
+        for point in coordinates:
+            if isinstance(point, list) and len(point) >= 2:
+                try:
+                    clean_coordinates.append([float(point[0]), float(point[1])])
+                except (TypeError, ValueError):
+                    return None
+        return clean_coordinates if len(clean_coordinates) >= 2 else None
+
+    def _mission_line_graph(self, coordinates, index, graph):
+        graph_nodes = [node for node in graph.nodes if isinstance(node, int)]
+        next_node_id = (min(graph_nodes) if graph_nodes else 0) - 1
+        line_graph = nx.MultiDiGraph()
+        previous_node = None
+        for coordinate in coordinates:
+            node = next_node_id
+            next_node_id -= 1
+            line_graph.add_node(node, x=float(coordinate[0]), y=float(coordinate[1]))
+            if previous_node is not None:
+                line_graph.add_edge(
+                    previous_node,
+                    node,
+                    road=True,
+                    road_source="mission_line",
+                    risk=False,
+                    feature_id=f"mission-road-{index}",
+                )
+            previous_node = node
+        if line_graph.number_of_edges() == 0:
+            return None
+        add_edge_lengths(line_graph)
+        return line_graph
+
+    def _node_has_road_edge(self, graph, node):
+        neighbor_nodes = set(graph.neighbors(node))
+        if hasattr(graph, "predecessors"):
+            neighbor_nodes |= set(graph.predecessors(node))
+        for neighbor in neighbor_nodes:
+            edge = self._best_edge_data_in_graph(graph, node, neighbor)
+            if edge is not None and edge.get("road") and not edge.get("risk"):
+                return True
+        return False
+
+    def _best_edge_data_in_graph(self, graph, current_node, neighbor_node):
+        if graph.has_edge(current_node, neighbor_node):
+            edges = graph.get_edge_data(current_node, neighbor_node)
+        elif graph.has_edge(neighbor_node, current_node):
+            edges = graph.get_edge_data(neighbor_node, current_node)
+        else:
+            return None
+        return min(edges.values(), key=lambda edge: edge.get("length", float("inf")))
+
+    def _resolved_geometry_ref(self, geometry_ref, map_feature_collection):
+        if not isinstance(geometry_ref, dict):
+            return geometry_ref
+        if isinstance(geometry_ref.get("geometry"), dict):
+            return geometry_ref["geometry"]
+        if geometry_ref.get("geometry_type") or geometry_ref.get("type"):
+            return geometry_ref
+
+        feature_id = str(geometry_ref.get("feature_id") or "")
+        if not feature_id:
+            return geometry_ref
+
+        geometry = self.local_feature_geometries.get(feature_id)
+        if geometry is None:
+            fetched_features = self.read_features_from_db(
+                feature_collection=map_feature_collection,
+                feature_id=feature_id,
+                crs="epsg:4326",
+            )
+            if fetched_features:
+                geometry = fetched_features[0].geometry.iloc[0]
+
+        if geometry is not None:
+            return self._to_mission_geometry(geometry)
+        print(f"Could not resolve mission road feature_id '{feature_id}' to geometry.", flush=True)
+        return geometry_ref
+
     def _path_to_point(self, agent, destination, road_usage=0.5, log_failure=False):
         if not destination:
             return None
@@ -228,9 +400,18 @@ class MultiRobotPathPlanning:
         for state in route:
             node = state.get_node()
             path.append([self.graph.nodes[node]['x'], self.graph.nodes[node]['y']])
-        if path and path[-1] != destination:
+        start = list(agent.localization)
+        if path and self._points_differ(start, path[0]):
+            path.insert(0, start)
+        if path and self._points_differ(path[-1], destination):
             path.append(destination)
         return path
+
+    @staticmethod
+    def _points_differ(first, second, tolerance=1e-9):
+        if not first or not second or len(first) < 2 or len(second) < 2:
+            return True
+        return abs(float(first[0]) - float(second[0])) > tolerance or abs(float(first[1]) - float(second[1])) > tolerance
 
     def _first_reachable_path(self, agent, candidate_points, road_usage=0.5, max_candidates=75):
         candidate_points = self._sort_points_by_agent_distance(agent, candidate_points)
