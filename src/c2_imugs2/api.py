@@ -18,11 +18,12 @@ from fastapi.responses import StreamingResponse
 
 from .contracts import build_contract_graph
 from .domain import MissionRequest, MissionStatus
-from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, import_osm_roads_as_user_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, save_user_geojson_feature, update_user_geojson_feature
+from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, import_osm_roads_as_user_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
 from .legacy_rest import LegacyRestClient
 from .mission_config import MissionValidationError, load_and_validate_mission
 from .repositories import read_json
 from .rosbridge import RosbridgeClient
+from .scenario_launch import launch_scenario
 
 
 LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
@@ -43,6 +44,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.state.repo_root = repo_root
+    app.state.host_repo_root = Path(os.environ.get("C2_IMUGS2_HOST_REPO_ROOT", repo_root))
     app.state.rest_client = rest_client or LegacyRestClient(os.environ.get("C2_IMUGS2_LEGACY_REST_URL", "http://localhost:5001/mission_control"))
     app.state.rosbridge_client = rosbridge_client or RosbridgeClient(os.environ.get("C2_IMUGS2_ROSBRIDGE_URL", "ws://localhost:9090"))
     app.state.mongodb_url = os.environ.get("C2_IMUGS2_MONGODB_URL", os.environ.get("MONGODB_CONNSTRING", "mongodb://127.0.0.1:27017"))
@@ -209,6 +211,44 @@ def create_app(
                 map,
                 (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
                 max_features=int(payload.get("max_features") or 80),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/map/osm-roads/query")
+    async def query_osm_roads(payload: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
+        polygon = payload.get("polygon")
+        if isinstance(polygon, list) and polygon:
+            try:
+                return query_osm_roads_for_polygon(
+                    app.state.repo_root,
+                    map,
+                    polygon,
+                    max_features=int(payload.get("max_features") or 50000),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        bbox = payload.get("bbox")
+        if not isinstance(bbox, list | tuple) or len(bbox) != 4:
+            raise HTTPException(status_code=422, detail="polygon is required, or bbox must be [west, south, east, north]")
+        try:
+            return query_osm_roads_for_bbox(
+                app.state.repo_root,
+                map,
+                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+                max_features=int(payload.get("max_features") or 160),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/scenarios/launch")
+    async def launch_scenario_runtime(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return launch_scenario(
+                app.state.repo_root,
+                payload,
+                host_repo_root=app.state.host_repo_root,
+                docker_socket=os.environ.get("C2_IMUGS2_DOCKER_SOCKET", "/var/run/docker.sock"),
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

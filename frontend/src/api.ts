@@ -27,16 +27,57 @@ export type UpdatedMapFeature = CreatedMapFeature;
 
 export type OsmRoadImportRequest = {
   bbox: [number, number, number, number];
+  polygon?: LonLat[];
   max_features?: number;
 };
 
 export type ImportedOsmRoads = {
   imported_count: number;
   skipped_existing: number;
+  available_count?: number;
   bbox: [number, number, number, number];
   features: FeatureCollection["features"];
   geojson: FeatureCollection;
   map_features: MapFeature[];
+};
+
+export type QueriedOsmRoads = {
+  feature_count: number;
+  source_way_count?: number;
+  bbox: [number, number, number, number];
+  polygon?: LonLat[];
+  clipped_to_polygon?: boolean;
+  features: FeatureCollection["features"];
+  geojson: FeatureCollection;
+  map: string;
+  persisted: false;
+};
+
+export type ScenarioLaunchRequest = {
+  scenario_id: string;
+  name: string;
+  map: string;
+  notes?: string;
+  agents: Agent[];
+  feature_ids: string[];
+  road_imports?: unknown[];
+};
+
+export type ScenarioLaunchResult = {
+  status: "generated" | "started" | string;
+  message: string;
+  docker_started: boolean;
+  agent_count: number;
+  containers: {
+    agent_id: string;
+    name: string;
+    topic_prefix: string;
+    container_name: string;
+  }[];
+  compose_file?: string;
+  host_command?: string;
+  started_containers?: string[];
+  docker_error?: string;
 };
 
 export type MissionState = {
@@ -259,6 +300,14 @@ export async function getOsmRoads(mapName = "rma"): Promise<FeatureCollection> {
 
 export async function importOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<ImportedOsmRoads> {
   return postJson(`/api/map/osm-roads/import?map=${encodeURIComponent(mapName)}`, request);
+}
+
+export async function queryOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<QueriedOsmRoads> {
+  return postJson(`/api/map/osm-roads/query?map=${encodeURIComponent(mapName)}`, request);
+}
+
+export async function launchScenario(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
+  return postJson("/api/scenarios/launch", request);
 }
 
 export async function createMapFeature(feature: FeatureCollection["features"][number], mapName = "rma"): Promise<CreatedMapFeature> {

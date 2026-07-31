@@ -14,6 +14,24 @@ services:
       retries: 5
       start_period: 5s
 
+  mongo-express:
+    image: mongo-express:1.0.2-20
+    container_name: c2-imugs2-mongo-express
+    profiles:
+      - tools
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://host.docker.internal:27017
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_BASICAUTH: "false"
+      PORT: 8081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
   centralized-coordination:
     build:
       context: ./legacy_ros

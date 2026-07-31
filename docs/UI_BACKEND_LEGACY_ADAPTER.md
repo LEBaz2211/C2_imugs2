@@ -2,6 +2,8 @@
 
 This phase keeps the old ROS stack as the execution engine and places a stable FastAPI adapter between the browser UI and legacy ROS.
 
+Compatibility rules and project priorities are in [PROJECT_PLANNING.md](../PROJECT_PLANNING.md).
+
 ## Runtime Shape
 
 ```text
@@ -20,17 +22,25 @@ The UI does not construct ROS messages and does not connect to rosbridge directl
 ## Backend API
 
 ```text
-GET  /api/health
-GET  /api/diagnostics
-GET  /api/legacy/trace
-GET  /api/map/features?map=rma
-GET  /api/agents
-GET  /api/mission-examples
-POST /api/missions/init
-POST /api/missions/{mission_id}/approve
-POST /api/missions/{mission_id}/start
-GET  /api/events
-GET  /api/runtime/bootstrap?map=rma
+GET    /api/health
+GET    /api/diagnostics
+GET    /api/planning/diagnostics
+GET    /api/contracts
+GET    /api/legacy/trace
+GET    /api/runtime/bootstrap?map=rma
+GET    /api/map/features?map=rma
+POST   /api/map/features?map=rma
+PUT    /api/map/features/{feature_id}?map=rma
+DELETE /api/map/features/{feature_id}?map=rma
+GET    /api/map/osm-roads?map=rma
+GET    /api/agents
+GET    /api/mission-examples
+POST   /api/missions/init
+GET    /api/missions/{mission_id}
+POST   /api/missions/{mission_id}/approve
+POST   /api/missions/{mission_id}/start
+DELETE /api/missions/{mission_id}
+GET    /api/events
 ```
 
 `/api/missions/init` validates and normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge.
@@ -48,6 +58,8 @@ Start   backend posts action=change_status with legacy requested_state=2
 
 The app opens without a selected mission. Mission JSON comes from an explicit example selection, drawing on the map, pasting JSON, or the local drafting helper.
 
+Deleting a mission removes it from adapter/UI runtime only. It does not delete old ROS or MongoDB records.
+
 `/api/events` is SSE. It emits:
 
 ```text
@@ -64,6 +76,8 @@ The event source reads rosbridge topics:
 /multi_robot/edge/feedback
 /multi_robot/planner/state
 ```
+
+Planner `READY` is only node readiness. The adapter reports a usable path only after mission feedback contains non-empty waypoint tasks.
 
 ## Legacy Smoke Test
 

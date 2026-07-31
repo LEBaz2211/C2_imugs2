@@ -17,6 +17,7 @@ from c2_imugs2.api import (
 )
 from c2_imugs2.domain import MissionRequest
 from c2_imugs2.legacy_rest import LegacyRestResponse, to_legacy_mission_config
+from c2_imugs2.scenario_launch import launch_scenario
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -164,6 +165,115 @@ def test_import_osm_roads_persists_as_user_road_features(tmp_path: Path, monkeyp
     assert imported["features"][0]["properties"]["source"] == "user"
     assert imported["features"][0]["properties"]["import_source"] == "openstreetmap-overpass"
     assert any(item["properties"].get("feature_id") == "osm-way-123" for item in reloaded["features"])
+
+    repeated = client.post("/api/map/osm-roads/import?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07]}).json()
+    assert repeated["imported_count"] == 0
+    assert repeated["skipped_existing"] == 1
+    assert repeated["available_count"] == 1
+    assert repeated["features"][0]["properties"]["feature_id"] == "osm-way-123"
+
+
+def test_query_osm_roads_returns_scenario_overlay_without_persisting(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        legacy_map,
+        "_query_overpass_roads",
+        lambda bbox: {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 321,
+                    "tags": {"highway": "residential", "name": "Scenario Road"},
+                    "geometry": [{"lon": 4.05, "lat": 50.05}, {"lon": 4.06, "lat": 50.06}],
+                }
+            ]
+        },
+    )
+    client = TestClient(create_app(tmp_path, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+
+    payload = client.post("/api/map/osm-roads/query?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07]}).json()
+
+    assert payload["persisted"] is False
+    assert payload["feature_count"] == 1
+    assert payload["features"][0]["properties"]["feature_type"] == "scenario_osm_road"
+    assert payload["features"][0]["properties"]["source_tool"] == "scenario_lab_osm_section"
+    assert not (tmp_path / "data" / "runtime" / "user_features_rma.geojson").exists()
+
+
+def test_query_osm_roads_for_polygon_clips_to_geofence(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        legacy_map,
+        "_query_overpass_roads",
+        lambda bbox: {
+            "elements": [
+                {
+                    "type": "way",
+                    "id": 411,
+                    "tags": {"highway": "residential", "name": "Inside Road"},
+                    "geometry": [{"lon": 4.05, "lat": 50.05}, {"lon": 4.06, "lat": 50.06}],
+                },
+                {
+                    "type": "way",
+                    "id": 412,
+                    "tags": {"highway": "service", "name": "Outside Road"},
+                    "geometry": [{"lon": 4.10, "lat": 50.05}, {"lon": 4.11, "lat": 50.06}],
+                },
+                {
+                    "type": "way",
+                    "id": 413,
+                    "tags": {"highway": "path", "name": "Crossing Path"},
+                    "geometry": [{"lon": 4.03, "lat": 50.05}, {"lon": 4.08, "lat": 50.05}],
+                },
+            ]
+        },
+    )
+    client = TestClient(create_app(tmp_path, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+    polygon = [[4.04, 50.04], [4.07, 50.04], [4.07, 50.07], [4.04, 50.07], [4.04, 50.04]]
+
+    payload = client.post("/api/map/osm-roads/query?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07], "polygon": polygon}).json()
+
+    names = {feature["properties"]["name"] for feature in payload["features"]}
+    assert payload["persisted"] is False
+    assert payload["clipped_to_polygon"] is True
+    assert payload["feature_count"] == 2
+    assert payload["source_way_count"] == 2
+    assert names == {"Inside Road", "Crossing Path"}
+    for feature in payload["features"]:
+        assert feature["properties"]["source_tool"] == "scenario_lab_osm_polygon"
+        for lon, lat in feature["geometry"]["coordinates"]:
+            assert 4.04 - 1e-7 <= lon <= 4.07 + 1e-7
+            assert 50.04 - 1e-7 <= lat <= 50.07 + 1e-7
+    assert not (tmp_path / "data" / "runtime" / "user_features_rma.geojson").exists()
+
+
+def test_launch_scenario_generates_legacy_edge_configs_without_docker(tmp_path: Path) -> None:
+    payload = {
+        "scenario_id": "Scenario One",
+        "name": "Scenario One",
+        "agents": [
+            {
+                "agent_id": "11111111-2222-4333-8444-555555555555",
+                "name": "Scout 1",
+                "vehicle_type": "UGV",
+                "current_location": [4.123456, 50.654321],
+                "constraints": {"max_speed": 3.2, "max_acceleration": 6.5, "max_weight": 20, "max_tilt_angle": 1.1},
+            }
+        ],
+    }
+
+    result = launch_scenario(tmp_path, payload, host_repo_root=tmp_path, docker_socket=str(tmp_path / "missing-docker.sock"))
+
+    assert result["status"] == "generated"
+    assert result["docker_started"] is False
+    assert result["agent_count"] == 1
+    assert "Docker socket is not available" in result["message"]
+    container = result["containers"][0]
+    autonomy_config = Path(container["autonomy_config"]).read_text(encoding="utf-8")
+    compose = (tmp_path / "data" / "runtime" / "scenario_launches" / "scenario-one" / "docker-compose.scenario.yml").read_text(encoding="utf-8")
+    assert "start_location: [4.1234560, 50.6543210]" in autonomy_config
+    assert "max_speed: 3.2" in autonomy_config
+    assert "sensors" not in autonomy_config
+    assert "c2-imugs2/edge-agent-sim:local" in compose
+    assert "AUTONOMY_TOPIC_PREFIX: Scout_1" in compose
 
 
 def test_delete_map_feature_removes_only_user_geojson(tmp_path: Path) -> None:

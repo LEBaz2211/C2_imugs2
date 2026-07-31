@@ -6,11 +6,13 @@ services:
     network_mode: host
     environment:
       C2_IMUGS2_REPO_ROOT: /app
+      C2_IMUGS2_HOST_REPO_ROOT: ${PWD}
       C2_IMUGS2_LEGACY_REST_URL: http://localhost:5001/mission_control
       C2_IMUGS2_ROSBRIDGE_URL: ws://localhost:9090
     volumes:
       - ./data/runtime:/app/data/runtime
       - ./legacy_ros/config/data/map:/app/legacy_ros/config/data/map:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     command: ["c2-imugs2-api"]
 
   c2-imugs2-ui:

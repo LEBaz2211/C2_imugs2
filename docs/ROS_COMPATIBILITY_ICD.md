@@ -2,6 +2,8 @@
 
 This document maps the old multi-agent framework ROS interfaces that must stay compatible while `c2_imugs2` is rebuilt. The runnable source of truth is the vendored old ROS code in `legacy_ros/`, especially the embedded message packages under each fog/planner/edge package.
 
+The preservation rules in [PROJECT_PLANNING.md](../PROJECT_PLANNING.md) apply to every interface listed here.
+
 ## Runtime Approach
 
 Run the actual old ROS stack through Docker from this repository:
@@ -126,16 +128,15 @@ The old planner algorithms should be wrapped behind `PlannerPort`, not imported 
 
 | Algorithm area | Legacy source |
 | --- | --- |
-| Mission interpretation and feature lookup | `submodules/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/multi_robot_path_planning.py` |
-| A*/CBS/risk-weighted graph search | `path_planning_lib/mapf.py` |
-| Graph utilities | `path_planning_lib/graph.py`, `path_planning_lib/utils.py` |
-| Hungarian / mTSP allocation | `path_planning_lib/task_allocation.py` |
-| Coverage spread | `path_planning_lib/max_coverage.py` |
-| Older algorithm sketches | `planner/tools/a_star.py`, `hungarian.py`, `bresenham.py`, `rdp.py`, `geographic_computation.py` |
-| Edge task execution model | `agent_tasks_supervisor_node.cpp` |
+| Mission interpretation and feature lookup | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/multi_robot_path_planning.py` |
+| A*/CBS/risk-weighted graph search | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/mapf.py` |
+| Graph utilities | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/graph.py`, `utils.py` |
+| Hungarian / mTSP allocation | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/task_allocation.py` |
+| Coverage spread | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/max_coverage.py` |
+| Edge task execution model | `legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/agent_tasks_supervisor_node.cpp` |
 
 ## Compatibility Notes
 
 - Active embedded message packages differ from root `custom-msgs` in places. Prefer the message packages colocated with `centralized_coordination`, `planner`, and `agent_tasks_supervisor`.
-- The old planner depends on MongoDB map collections. The new replacement defaults to fixture-backed map repositories; a Mongo adapter should be added behind `MapRepositoryPort`.
+- The current legacy compose config loads baseline map features from local GeoJSON; the planner can also use MongoDB map collections in other deployments.
 - `docker-compose.legacy-ros.yml` intentionally runs the old ROS code as-is. Any failures there are real legacy build/runtime problems to fix in the old package or in a copied/ported ROS workspace, not hidden by a compatibility simulator.

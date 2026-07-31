@@ -1,5 +1,7 @@
 # Legacy ROS Mission Flow Diagram
 
+For per-node contracts, inputs/outputs, internal behavior, and concrete workflow examples, see [legacy_nodes/README.md](legacy_nodes/README.md).
+
 ## System View
 
 ```mermaid

@@ -1,24 +1,34 @@
 import { Check, Hexagon, Layers, MousePointer2, Pencil, Target, Trash2, X } from "lucide-react";
 import type { Feature, FeatureCollection } from "geojson";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polygon, Polyline, Popup, TileLayer, Tooltip, useMapEvents } from "react-leaflet";
+import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polygon, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
 import type { PlannerUpdateEvent, PlanningScenario } from "./api";
 import type { Agent, LonLat, MapFeature, MissionConfig, TaskPlan } from "./types";
-import { destinationsForGeometryRef } from "./mission";
+import { missionDestinationPoints } from "./mission";
 
 type MapViewProps = {
   agents: Agent[];
   features: MapFeature[];
   geojson?: FeatureCollection;
   osmRoads?: FeatureCollection;
+  scenarioRoads?: FeatureCollection;
   mission?: MissionConfig;
   taskPlan?: TaskPlan;
   plannerState?: PlannerUpdateEvent;
   planningScenario?: PlanningScenario;
   selectedFeatureId?: string;
+  focusFeatureIds?: string[];
+  focusPoints?: LonLat[];
+  focusNonce?: number;
+  focusPointsNonce?: number;
+  focusView?: { view: MapViewport; nonce: number };
+  resetDraftNonce?: number;
+  placingAgentName?: string;
+  onPlaceAgent?: (point: LonLat) => void;
+  onViewportChange?: (view: MapViewport) => void;
   onCreateFeature: (feature: DraftMapFeature) => void;
   onUpdateFeature: (featureId: string, feature: DraftMapFeature) => void;
   onRemoveFeature: (feature: MapFeature) => void;
@@ -37,6 +47,11 @@ export type DraftMapFeature = {
   use_as_objective: boolean;
 };
 
+type MapViewport = {
+  center: LonLat;
+  zoom: number;
+};
+
 const center: [number, number] = [50.8442, 4.3921];
 const featureTypeOptions = ["objective", "road", "geofence", "workspace", "risk"] as const;
 const geometryByFeatureType: Record<(typeof featureTypeOptions)[number], DraftMapFeature["geometry_type"]> = {
@@ -46,25 +61,72 @@ const geometryByFeatureType: Record<(typeof featureTypeOptions)[number], DraftMa
   workspace: "Polygon",
   risk: "Polygon",
 };
+const OSM_ROAD_PANE_Z_INDEX = 320;
+const MAP_ROAD_FEATURE_PANE_Z_INDEX = 340;
+const MAP_FEATURE_PANE_Z_INDEX = 460;
+const OSM_ROAD_STYLE = {
+  majorColor: "#424d50",
+  minorColor: "#90adb3",
+  opacity: 0.38,
+  importedOpacity: 0.92,
+  scenarioOpacity: 0.82,
+  haloColor: "#0f172a",
+  haloOpacity: 0.16,
+};
+const OSM_ROAD_STYLE_KEY = Object.values(OSM_ROAD_STYLE).join("-");
 
-export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan, plannerState, planningScenario, selectedFeatureId, onCreateFeature, onUpdateFeature, onRemoveFeature, onSetObjective, onAddFeatureToMission, missionComposerActive, onSelectFeature, onClearSelection }: MapViewProps) {
+export function MapView({
+  agents,
+  features,
+  geojson,
+  osmRoads,
+  scenarioRoads,
+  mission,
+  taskPlan,
+  plannerState,
+  planningScenario,
+  selectedFeatureId,
+  focusFeatureIds,
+  focusPoints,
+  focusNonce,
+  focusPointsNonce,
+  focusView,
+  resetDraftNonce,
+  placingAgentName,
+  onPlaceAgent,
+  onViewportChange,
+  onCreateFeature,
+  onUpdateFeature,
+  onRemoveFeature,
+  onSetObjective,
+  onAddFeatureToMission,
+  missionComposerActive,
+  onSelectFeature,
+  onClearSelection,
+}: MapViewProps) {
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<LonLat[]>([]);
   const [featureType, setFeatureType] = useState<(typeof featureTypeOptions)[number]>("objective");
   const [featureName, setFeatureName] = useState("");
   const [redrawFeatureId, setRedrawFeatureId] = useState<string | undefined>();
   const [showOsmRoads, setShowOsmRoads] = useState(true);
+  const [featurePicker, setFeaturePicker] = useState<{ position: L.LatLng; features: MapFeature[] } | undefined>();
   const osmRoadCount = osmRoads?.features.length ?? 0;
+  const scenarioRoadCount = scenarioRoads?.features.length ?? 0;
   const geometryType = geometryByFeatureType[featureType];
   const selectedFeature = features.find((feature) => feature.feature_id === selectedFeatureId);
   const selectedIsUser = selectedFeature?.properties?.source === "user";
+  const placingVehicle = Boolean(onPlaceAgent);
 
   const trajectories = useMemo(() => plannedTrajectories(agents, taskPlan, plannerState, mission?.mission_id), [agents, taskPlan, plannerState, mission?.mission_id]);
   const scenarioRoute = useMemo(() => (planningScenario?.route ?? []).filter(isLonLat), [planningScenario]);
-  const objectivePoints = useMemo(
-    () => mission?.objective.geometries.flatMap((geometryRef) => destinationsForGeometryRef(geometryRef, features, mission.behavior)) ?? [],
-    [features, mission],
-  );
+  const objectivePoints = useMemo(() => (mission ? missionDestinationPoints(mission, features) : []), [features, mission]);
+  const roadGeojson = useMemo(() => filterGeojsonFeatures(geojson, isRoadFeature), [geojson]);
+  const foregroundGeojson = useMemo(() => filterGeojsonFeatures(geojson, (feature) => !isRoadFeature(feature)), [geojson]);
+  const geojsonRenderKey = useMemo(() => {
+    const ids = geojson?.features.map((feature) => String(feature.properties?.feature_id ?? feature.id ?? "")).join("|") ?? "empty";
+    return `${ids}-${selectedFeatureId ?? "none"}-${OSM_ROAD_STYLE_KEY}`;
+  }, [geojson, selectedFeatureId]);
 
   useEffect(() => {
     if (!selectedFeature) return;
@@ -72,6 +134,20 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
     const type = selectedFeature.feature_type as (typeof featureTypeOptions)[number];
     if (featureTypeOptions.includes(type)) setFeatureType(type);
   }, [selectedFeature?.feature_id]);
+
+  useEffect(() => {
+    setDrawing(false);
+    setDraft([]);
+    setRedrawFeatureId(undefined);
+  }, [resetDraftNonce]);
+
+  useEffect(() => {
+    if (!placingVehicle) return;
+    setDrawing(false);
+    setDraft([]);
+    setRedrawFeatureId(undefined);
+    setFeaturePicker(undefined);
+  }, [placingVehicle]);
 
   function addDraftPoint(point: LonLat) {
     setDraft((points) => (geometryType === "Point" ? [point] : [...points, point]));
@@ -105,8 +181,13 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
     setDrawing(true);
   }
 
+  function selectFeatureFromStack(featureId: string) {
+    onSelectFeature(featureId);
+    setFeaturePicker(undefined);
+  }
+
   return (
-    <section className="flex min-h-0 flex-1 flex-col border-r border-border bg-panel">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-border bg-panel">
       <div className="flex h-14 items-center justify-between gap-3 border-b border-border px-4">
         <div className="flex min-w-[150px] items-center gap-2">
           <Hexagon className="h-5 w-5 text-primary" />
@@ -114,12 +195,15 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
         </div>
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           <div className="flex items-center gap-1 rounded-md border border-border bg-background p-1">
-            <Badge tone={drawing ? "warn" : mission ? "ok" : "default"}>{drawing ? `${draft.length} pt` : mission ? "mission" : "empty"}</Badge>
+            <Badge tone={placingVehicle || drawing ? "warn" : mission ? "ok" : "default"}>
+              {placingVehicle ? "placing" : drawing ? `${draft.length} pt` : mission ? "mission" : "empty"}
+            </Badge>
+            {placingVehicle && placingAgentName && <Badge className="hidden max-w-[180px] truncate whitespace-nowrap xl:inline-flex">{placingAgentName}</Badge>}
             <Button variant={showOsmRoads ? "secondary" : "ghost"} size="icon" onClick={() => setShowOsmRoads((value) => !value)} title="Toggle OSM road overlay">
               <Layers className="h-4 w-4" />
             </Button>
-            <Badge tone={showOsmRoads && osmRoadCount > 0 ? "ok" : "default"} className="hidden whitespace-nowrap xl:inline-flex">
-              {osmRoadCount > 0 ? `${osmRoadCount} roads` : "roads"}
+            <Badge tone={showOsmRoads && (osmRoadCount > 0 || scenarioRoadCount > 0) ? "ok" : "default"} className="hidden whitespace-nowrap xl:inline-flex">
+              {scenarioRoadCount > 0 ? `${scenarioRoadCount} section roads` : osmRoadCount > 0 ? `${osmRoadCount} roads` : "roads"}
             </Badge>
           </div>
           {selectedFeature ? (
@@ -191,21 +275,72 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
         <MapContainer center={center} zoom={18} className="h-full w-full" scrollWheelZoom>
           <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           {showOsmRoads && osmRoads && (
-            <Pane name="osm-road-reference" style={{ zIndex: 360 }}>
-              <GeoJSON key={`osm-halo-${osmRoads.features.length}`} data={osmRoads} style={styleOsmRoadHalo} interactive={false} />
-              <GeoJSON key={`osm-center-${osmRoads.features.length}`} data={osmRoads} style={styleOsmRoad} onEachFeature={onEachOsmRoad} />
+            <Pane name="osm-road-reference" style={{ zIndex: OSM_ROAD_PANE_Z_INDEX }}>
+              <GeoJSON key={`osm-halo-${osmRoads.features.length}-${OSM_ROAD_STYLE_KEY}`} data={osmRoads} style={styleOsmRoadHalo} interactive={false} />
+              <GeoJSON key={`osm-center-${osmRoads.features.length}-${OSM_ROAD_STYLE_KEY}`} data={osmRoads} style={styleOsmRoad} interactive={false} onEachFeature={onEachOsmRoad} />
             </Pane>
           )}
-          {geojson && (
-            <GeoJSON
-              key={`${JSON.stringify(geojson).length}-${selectedFeatureId ?? "none"}`}
-              data={geojson}
-              style={(feature) => styleFeature(feature, selectedFeatureId)}
-              pointToLayer={(feature, latlng) => pointToLayer(feature, latlng, selectedFeatureId)}
-              onEachFeature={(feature, layer) => onEachFeature(feature, layer, onSelectFeature)}
-            />
+          {roadGeojson && (
+            <Pane name="map-road-features" style={{ zIndex: MAP_ROAD_FEATURE_PANE_Z_INDEX }}>
+              <GeoJSON
+                key={`road-${geojsonRenderKey}`}
+                data={roadGeojson}
+                style={(feature) => styleFeature(feature, selectedFeatureId)}
+                pointToLayer={(feature, latlng) => pointToLayer(feature, latlng, selectedFeatureId)}
+                onEachFeature={onEachFeature}
+              />
+            </Pane>
           )}
-          <DraftClickLayer enabled={drawing} onAddPoint={addDraftPoint} />
+          {foregroundGeojson && (
+            <Pane name="map-features" style={{ zIndex: MAP_FEATURE_PANE_Z_INDEX }}>
+              <GeoJSON
+                key={`foreground-${geojsonRenderKey}`}
+                data={foregroundGeojson}
+                style={(feature) => styleFeature(feature, selectedFeatureId)}
+                pointToLayer={(feature, latlng) => pointToLayer(feature, latlng, selectedFeatureId)}
+                onEachFeature={onEachFeature}
+              />
+            </Pane>
+          )}
+          {showOsmRoads && scenarioRoads && scenarioRoads.features.length > 0 && (
+            <Pane name="scenario-road-section" style={{ zIndex: MAP_ROAD_FEATURE_PANE_Z_INDEX }}>
+              <GeoJSON key={`scenario-roads-${scenarioRoads.features.length}-${OSM_ROAD_STYLE_KEY}`} data={scenarioRoads} style={styleScenarioRoad} onEachFeature={onEachScenarioRoad} />
+            </Pane>
+          )}
+          <MapViewportBridge focusView={focusView} onViewportChange={onViewportChange} />
+          <FitFeatureBounds features={features} focusFeatureIds={focusFeatureIds} focusPoints={focusPoints} focusNonce={focusNonce} focusPointsNonce={focusPointsNonce} />
+          <PlaceAgentClickLayer enabled={placingVehicle} onPlaceAgent={onPlaceAgent ?? noopPlaceAgent} />
+          <FeatureClickLayer
+            enabled={!drawing && !placingVehicle}
+            features={features}
+            onSingleFeature={selectFeatureFromStack}
+            onFeatureStack={(position, stack) => setFeaturePicker({ position, features: stack })}
+            onEmpty={() => setFeaturePicker(undefined)}
+          />
+          <DraftClickLayer enabled={drawing && !placingVehicle} onAddPoint={addDraftPoint} />
+
+          {featurePicker && (
+            <Popup position={featurePicker.position} eventHandlers={{ remove: () => setFeaturePicker(undefined) }}>
+              <div className="w-56 space-y-2 text-xs">
+                <div className="font-semibold">Select feature</div>
+                <div className="max-h-56 space-y-1 overflow-auto">
+                  {featurePicker.features.map((feature) => (
+                    <button
+                      key={feature.feature_id}
+                      className={`w-full rounded-sm border px-2 py-1.5 text-left hover:bg-muted ${feature.feature_id === selectedFeatureId ? "border-primary bg-muted" : "border-border"}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        selectFeatureFromStack(feature.feature_id);
+                      }}
+                    >
+                      <div className="truncate font-medium">{feature.name}</div>
+                      <div className="truncate text-muted-foreground">{feature.feature_type} · {feature.geometry.type}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Popup>
+          )}
 
           {draft.length === 1 && geometryType === "Point" && (
             <CircleMarker center={toLatLng(draft[0])} radius={7} pathOptions={{ color: "#0f766e", fillColor: "#14b8a6", fillOpacity: 0.9, weight: 2 }}>
@@ -262,6 +397,74 @@ export function MapView({ agents, features, geojson, osmRoads, mission, taskPlan
   );
 }
 
+function FitFeatureBounds({
+  features,
+  focusFeatureIds,
+  focusPoints,
+  focusNonce,
+  focusPointsNonce,
+}: {
+  features: MapFeature[];
+  focusFeatureIds?: string[];
+  focusPoints?: LonLat[];
+  focusNonce?: number;
+  focusPointsNonce?: number;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    if (!focusNonce && !focusPointsNonce) return;
+    const focusIds = new Set(focusFeatureIds ?? []);
+    const points = focusPoints?.length
+      ? focusPoints
+      : features
+          .filter((feature) => focusIds.has(feature.feature_id))
+          .flatMap((feature) => flattenLonLatPoints(feature.geometry.coordinates));
+    if (!points.length) return;
+    if (points.length === 1) {
+      map.flyTo(toLatLng(points[0]), Math.max(map.getZoom(), 18), { duration: 0.35 });
+      return;
+    }
+    const bounds = L.latLngBounds(points.map(toLatLng));
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [44, 44], maxZoom: 19, animate: true, duration: 0.35 });
+  }, [features, focusFeatureIds, focusNonce, focusPoints, focusPointsNonce, map]);
+  return null;
+}
+
+function MapViewportBridge({
+  focusView,
+  onViewportChange,
+}: {
+  focusView?: { view: MapViewport; nonce: number };
+  onViewportChange?: (view: MapViewport) => void;
+}) {
+  const map = useMap();
+
+  function publishViewport() {
+    if (!onViewportChange) return;
+    const mapCenter = map.getCenter();
+    onViewportChange({
+      center: [Number(mapCenter.lng.toFixed(7)), Number(mapCenter.lat.toFixed(7))],
+      zoom: map.getZoom(),
+    });
+  }
+
+  useEffect(() => {
+    publishViewport();
+  }, [map, onViewportChange]);
+
+  useEffect(() => {
+    if (!focusView) return;
+    map.flyTo(toLatLng(focusView.view.center), focusView.view.zoom, { duration: 0.35 });
+  }, [focusView?.nonce, map]);
+
+  useMapEvents({
+    moveend: publishViewport,
+    zoomend: publishViewport,
+  });
+
+  return null;
+}
+
 function ScenarioRouteOverlay({ scenario, route }: { scenario: PlanningScenario; route: LonLat[] }) {
   const hasSelectedNodes = Boolean(scenario.selected_nodes) && route.length >= 3;
   const graphRoute = hasSelectedNodes ? route.slice(1, -1) : route;
@@ -307,11 +510,68 @@ function DraftClickLayer({ enabled, onAddPoint }: { enabled: boolean; onAddPoint
   return null;
 }
 
+function PlaceAgentClickLayer({ enabled, onPlaceAgent }: { enabled: boolean; onPlaceAgent: (point: LonLat) => void }) {
+  useMapEvents({
+    click(event) {
+      if (!enabled) return;
+      onPlaceAgent([Number(event.latlng.lng.toFixed(7)), Number(event.latlng.lat.toFixed(7))]);
+    },
+  });
+  return null;
+}
+
+function FeatureClickLayer({
+  enabled,
+  features,
+  onSingleFeature,
+  onFeatureStack,
+  onEmpty,
+}: {
+  enabled: boolean;
+  features: MapFeature[];
+  onSingleFeature: (featureId: string) => void;
+  onFeatureStack: (position: L.LatLng, features: MapFeature[]) => void;
+  onEmpty: () => void;
+}) {
+  const map = useMapEvents({
+    click(event) {
+      if (!enabled) return;
+      const hits = featuresAtLatLng(features, event.latlng, map);
+      if (hits.length === 0) {
+        onEmpty();
+        return;
+      }
+      if (hits.length === 1) {
+        onSingleFeature(hits[0].feature_id);
+        return;
+      }
+      onFeatureStack(event.latlng, hits);
+    },
+  });
+  return null;
+}
+
+function noopPlaceAgent() {
+  // React-Leaflet hooks need a stable callable even while placement is inactive.
+}
+
+function filterGeojsonFeatures(collection: FeatureCollection | undefined, predicate: (feature: Feature) => boolean): FeatureCollection | undefined {
+  if (!collection) return undefined;
+  const features = collection.features.filter(predicate);
+  return features.length ? { ...collection, features } : undefined;
+}
+
+function isRoadFeature(feature: Feature) {
+  return String(feature.properties?.feature_type ?? "") === "road";
+}
+
 function styleFeature(feature?: Feature, selectedFeatureId?: string): L.PathOptions {
   const type = String(feature?.properties?.feature_type ?? "custom");
   const selected = selectedFeatureId && String(feature?.properties?.feature_id ?? feature?.id ?? "") === selectedFeatureId;
+  const importedOsmRoad = feature?.properties?.import_source === "openstreetmap-overpass";
   if (selected) return { color: "#0f172a", fillColor: "#fde047", fillOpacity: 0.34, weight: 7 };
   if (type === "risk") return { color: "#b91c1c", fillColor: "#ef4444", fillOpacity: 0.22, weight: 2 };
+  if (type === "road" && importedOsmRoad) return { color: OSM_ROAD_STYLE.majorColor, weight: 6, opacity: OSM_ROAD_STYLE.importedOpacity, lineCap: "round", lineJoin: "round" };
   if (type === "road") return { color: "#5b6472", weight: 5, opacity: 0.82 };
   if (type === "objective") return { color: "#b45309", fillColor: "#f59e0b", fillOpacity: 0.22, weight: 3 };
   if (type === "workspace" || type === "geofence") return { color: "#047857", fillColor: "#10b981", fillOpacity: 0.14, weight: 2 };
@@ -321,13 +581,19 @@ function styleFeature(feature?: Feature, selectedFeatureId?: string): L.PathOpti
 function styleOsmRoad(feature?: Feature): L.PathOptions {
   const highway = String(feature?.properties?.highway ?? "");
   const major = /primary|secondary|tertiary|trunk/.test(highway);
-  return { color: major ? "#0891b2" : "#06b6d4", weight: major ? 4 : 3, opacity: 0.38, dashArray: "8 7", lineCap: "round", lineJoin: "round" };
+  return { color: major ? OSM_ROAD_STYLE.majorColor : OSM_ROAD_STYLE.minorColor, weight: major ? 4 : 3, opacity: OSM_ROAD_STYLE.opacity, dashArray: "8 7", lineCap: "round", lineJoin: "round" };
 }
 
 function styleOsmRoadHalo(feature?: Feature): L.PathOptions {
   const highway = String(feature?.properties?.highway ?? "");
   const major = /primary|secondary|tertiary|trunk/.test(highway);
-  return { color: "#0f172a", weight: major ? 7 : 5, opacity: 0.16, lineCap: "round", lineJoin: "round" };
+  return { color: OSM_ROAD_STYLE.haloColor, weight: major ? 7 : 5, opacity: OSM_ROAD_STYLE.haloOpacity, lineCap: "round", lineJoin: "round" };
+}
+
+function styleScenarioRoad(feature?: Feature): L.PathOptions {
+  const highway = String(feature?.properties?.highway ?? "");
+  const major = /primary|secondary|tertiary|trunk/.test(highway);
+  return { color: major ? OSM_ROAD_STYLE.majorColor : OSM_ROAD_STYLE.minorColor, weight: major ? 5 : 4, opacity: OSM_ROAD_STYLE.scenarioOpacity, lineCap: "round", lineJoin: "round" };
 }
 
 function pointToLayer(feature: Feature, latlng: L.LatLng, selectedFeatureId?: string) {
@@ -336,19 +602,20 @@ function pointToLayer(feature: Feature, latlng: L.LatLng, selectedFeatureId?: st
   return L.circleMarker(latlng, { ...options, radius: selected ? 10 : 7 });
 }
 
-function onEachFeature(feature: Feature, layer: L.Layer, onSelectFeature: (featureId: string) => void) {
+function onEachFeature(feature: Feature, layer: L.Layer) {
   const name = feature.properties?.name ?? feature.properties?.feature_id ?? "feature";
   const type = feature.properties?.feature_type ?? "custom";
-  const featureId = String(feature.properties?.feature_id ?? feature.id ?? "");
   layer.bindTooltip(`${name} (${type})`);
-  if (featureId) {
-    layer.on("click", () => onSelectFeature(featureId));
-  }
 }
 
 function onEachOsmRoad(feature: Feature, layer: L.Layer) {
   const name = feature.properties?.name ?? feature.properties?.highway ?? "OSM road";
   layer.bindTooltip(`OSM ${name}`);
+}
+
+function onEachScenarioRoad(feature: Feature, layer: L.Layer) {
+  const name = feature.properties?.name ?? feature.properties?.highway ?? "road";
+  layer.bindTooltip(`${name} (scenario road section)`);
 }
 
 function canUseAsNavigationObjective(feature: MapFeature) {
@@ -428,6 +695,96 @@ function toLatLng(point: LonLat): [number, number] {
 
 function isLonLat(value: unknown): value is LonLat {
   return Array.isArray(value) && value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number";
+}
+
+function flattenLonLatPoints(value: unknown): LonLat[] {
+  if (!Array.isArray(value)) return [];
+  if (isLonLat(value)) return [[value[0], value[1]]];
+  return value.flatMap((item) => flattenLonLatPoints(item));
+}
+
+function featuresAtLatLng(features: MapFeature[], latlng: L.LatLng, map: L.Map) {
+  const point = map.latLngToLayerPoint(latlng);
+  const lonlat: LonLat = [latlng.lng, latlng.lat];
+  return features
+    .filter((feature) => featureContainsPoint(feature, lonlat, point, map))
+    .sort((left, right) => featurePickPriority(left) - featurePickPriority(right));
+}
+
+function featureContainsPoint(feature: MapFeature, lonlat: LonLat, point: L.Point, map: L.Map) {
+  if (feature.geometry.type === "Point") {
+    const coordinate = feature.geometry.coordinates;
+    if (!isLonLat(coordinate)) return false;
+    return point.distanceTo(map.latLngToLayerPoint(toLatLng(coordinate))) <= 14;
+  }
+  if (feature.geometry.type === "LineString") {
+    const points = flattenLonLatPoints(feature.geometry.coordinates);
+    return lineStringsFromPoints(points).some((line) => pointNearLine(point, line, map, 12));
+  }
+  if (feature.geometry.type === "Polygon") {
+    return polygonsFromCoordinates(feature.geometry.coordinates).some((polygon) => pointInPolygon(lonlat, polygon) || pointNearPolygonBoundary(point, polygon, map, 10));
+  }
+  return false;
+}
+
+function lineStringsFromPoints(points: LonLat[]) {
+  return points.length >= 2 ? [points] : [];
+}
+
+function polygonsFromCoordinates(value: unknown): LonLat[][] {
+  if (!Array.isArray(value)) return [];
+  if (value.length > 0 && Array.isArray(value[0]) && isLonLat(value[0][0])) {
+    return [value[0] as LonLat[]];
+  }
+  return [];
+}
+
+function pointNearLine(point: L.Point, line: LonLat[], map: L.Map, tolerancePx: number) {
+  for (let index = 0; index < line.length - 1; index += 1) {
+    const start = map.latLngToLayerPoint(toLatLng(line[index]));
+    const end = map.latLngToLayerPoint(toLatLng(line[index + 1]));
+    if (distanceToSegment(point, start, end) <= tolerancePx) return true;
+  }
+  return false;
+}
+
+function pointNearPolygonBoundary(point: L.Point, polygon: LonLat[], map: L.Map, tolerancePx: number) {
+  if (polygon.length < 2) return false;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    if (distanceToSegment(point, map.latLngToLayerPoint(toLatLng(start)), map.latLngToLayerPoint(toLatLng(end))) <= tolerancePx) return true;
+  }
+  return false;
+}
+
+function distanceToSegment(point: L.Point, start: L.Point, end: L.Point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (dx === 0 && dy === 0) return point.distanceTo(start);
+  const ratio = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
+  const projection = L.point(start.x + ratio * dx, start.y + ratio * dy);
+  return point.distanceTo(projection);
+}
+
+function pointInPolygon(point: LonLat, polygon: LonLat[]) {
+  let inside = false;
+  const [lon, lat] = point;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const [lon1, lat1] = polygon[index];
+    const [lon2, lat2] = polygon[previous];
+    if ((lat1 > lat) !== (lat2 > lat)) {
+      const intersectLon = ((lon2 - lon1) * (lat - lat1)) / ((lat2 - lat1) || 1e-12) + lon1;
+      if (lon < intersectLon) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function featurePickPriority(feature: MapFeature) {
+  const geometryPriority = feature.geometry.type === "Point" ? 0 : feature.geometry.type === "LineString" ? 10 : 20;
+  const typePriority = feature.feature_type === "objective" ? 0 : feature.feature_type === "road" ? 1 : feature.feature_type === "risk" ? 2 : feature.feature_type === "geofence" ? 3 : 4;
+  return geometryPriority + typePriority;
 }
 
 function formatDebugMeters(value: unknown) {

@@ -186,14 +186,18 @@ def import_osm_roads_as_user_features(
 
     collection = _overpass_roads_to_feature_collection(overpass, feature_type="road")
     imported = []
-    seen_ids = {
-        str((feature.get("properties") or {}).get("feature_id") or feature.get("id"))
+    available = []
+    existing_by_id = {
+        str((feature.get("properties") or {}).get("feature_id") or feature.get("id")): feature
         for feature in load_user_geojson_map(repo_root, map_name).get("features", [])
     }
-    for feature in collection.get("features", [])[: max(1, max_features)]:
+    selected_features = collection.get("features", [])[: max(1, max_features)]
+    for feature in selected_features:
         properties = dict(feature.get("properties") or {})
         feature_id = str(properties.get("feature_id") or feature.get("id"))
-        if feature_id in seen_ids:
+        existing = existing_by_id.get(feature_id)
+        if existing:
+            available.append(existing)
             continue
         properties.update(
             {
@@ -204,17 +208,118 @@ def import_osm_roads_as_user_features(
             }
         )
         feature["properties"] = properties
-        imported.append(save_user_geojson_feature(repo_root, map_name, feature))
-        seen_ids.add(feature_id)
+        saved = save_user_geojson_feature(repo_root, map_name, feature)
+        imported.append(saved)
+        available.append(saved)
+        existing_by_id[feature_id] = saved
 
     full_collection = load_legacy_geojson_map(repo_root, map_name)
     return {
         "imported_count": len(imported),
-        "skipped_existing": len(collection.get("features", [])[: max(1, max_features)]) - len(imported),
+        "skipped_existing": len(selected_features) - len(imported),
+        "available_count": len(available),
         "bbox": [west, south, east, north],
-        "features": imported,
+        "features": available,
         "geojson": full_collection,
         "map_features": feature_collection_to_map_features(full_collection),
+    }
+
+
+def query_osm_roads_for_bbox(
+    repo_root: Path,
+    map_name: str,
+    bbox: tuple[float, float, float, float],
+    max_features: int = 160,
+) -> dict[str, Any]:
+    """Fetch OSM highway LineStrings for a bbox without persisting runtime map assets."""
+    west, south, east, north = _validate_bbox(bbox)
+    overpass = _query_overpass_roads((west, south, east, north))
+    if overpass is None:
+        raise ValueError("OpenStreetMap Overpass query failed")
+
+    collection = _overpass_roads_to_feature_collection(overpass, feature_type="scenario_osm_road")
+    features = collection.get("features", [])[: max(1, max_features)]
+    for feature in features:
+        properties = dict(feature.get("properties") or {})
+        properties.update(
+            {
+                "feature_type": "scenario_osm_road",
+                "source": "openstreetmap-overpass",
+                "source_tool": "scenario_lab_osm_section",
+            }
+        )
+        feature["properties"] = properties
+    geojson = {"type": "FeatureCollection", "features": features}
+    return {
+        "feature_count": len(features),
+        "bbox": [west, south, east, north],
+        "features": features,
+        "geojson": geojson,
+        "map": map_name,
+        "persisted": False,
+    }
+
+
+def query_osm_roads_for_polygon(
+    repo_root: Path,
+    map_name: str,
+    polygon: list[list[float]],
+    max_features: int = 50000,
+) -> dict[str, Any]:
+    """Fetch OSM highway ways for a polygon and return only the parts inside it."""
+    ring = _validate_polygon_ring(polygon)
+    west, south, east, north = _validate_bbox(_bbox_from_points(ring))
+    overpass = _query_overpass_roads(_expand_bbox((west, south, east, north), margin=0.00008))
+    if overpass is None:
+        raise ValueError("OpenStreetMap Overpass query failed")
+
+    collection = _overpass_roads_to_feature_collection(overpass, feature_type="scenario_osm_road")
+    features: list[dict[str, Any]] = []
+    source_way_count = 0
+    for feature in collection.get("features", []):
+        geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+        coordinates = geometry.get("coordinates")
+        if not isinstance(coordinates, list):
+            continue
+        clipped_lines = _clip_linestring_to_polygon(coordinates, ring)
+        if not clipped_lines:
+            continue
+        source_way_count += 1
+        for index, line in enumerate(clipped_lines):
+            if len(features) >= max(1, max_features):
+                break
+            clipped = json.loads(json.dumps(feature))
+            feature_id = str((clipped.get("properties") or {}).get("feature_id") or clipped.get("id"))
+            if len(clipped_lines) > 1:
+                feature_id = f"{feature_id}-clip-{index + 1}"
+            properties = dict(clipped.get("properties") or {})
+            properties.update(
+                {
+                    "feature_id": feature_id,
+                    "feature_type": "scenario_osm_road",
+                    "source": "openstreetmap-overpass",
+                    "source_tool": "scenario_lab_osm_polygon",
+                    "clip": "polygon",
+                }
+            )
+            clipped["id"] = feature_id
+            clipped["properties"] = properties
+            clipped["geometry"] = {"type": "LineString", "coordinates": line}
+            features.append(clipped)
+        if len(features) >= max(1, max_features):
+            break
+
+    geojson = {"type": "FeatureCollection", "features": features}
+    return {
+        "feature_count": len(features),
+        "source_way_count": source_way_count,
+        "bbox": [west, south, east, north],
+        "polygon": ring,
+        "features": features,
+        "geojson": geojson,
+        "map": map_name,
+        "persisted": False,
+        "clipped_to_polygon": True,
     }
 
 
@@ -282,6 +387,172 @@ def _overpass_roads_to_feature_collection(overpass: dict[str, Any], feature_type
             }
         )
     return {"type": "FeatureCollection", "features": features}
+
+
+def _validate_polygon_ring(polygon: list[list[float]]) -> list[list[float]]:
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        raise ValueError("polygon must contain at least three [lon, lat] points")
+    ring = []
+    for point in polygon:
+        if not isinstance(point, list | tuple) or len(point) < 2:
+            raise ValueError("polygon points must be [lon, lat]")
+        lon = float(point[0])
+        lat = float(point[1])
+        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+            raise ValueError("polygon coordinates are outside valid longitude/latitude ranges")
+        ring.append([lon, lat])
+    if ring[0] != ring[-1]:
+        ring.append(list(ring[0]))
+    if len(ring) < 4:
+        raise ValueError("polygon must contain at least three distinct points")
+    return ring
+
+
+def _bbox_from_points(points: list[list[float]]) -> tuple[float, float, float, float]:
+    lons = [point[0] for point in points]
+    lats = [point[1] for point in points]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _clip_linestring_to_polygon(coordinates: list[Any], polygon: list[list[float]]) -> list[list[list[float]]]:
+    points = [point for point in (_lonlat_or_none(value) for value in coordinates) if point is not None]
+    if len(points) < 2:
+        return []
+    if all(_point_in_or_on_polygon(point, polygon) for point in points):
+        return [_dedupe_points(points)]
+
+    clipped: list[list[list[float]]] = []
+    current: list[list[float]] = []
+    for start, end in zip(points, points[1:]):
+        cuts = _segment_polygon_cut_ratios(start, end, polygon)
+        for first_ratio, second_ratio in zip(cuts, cuts[1:]):
+            if second_ratio - first_ratio <= 1e-10:
+                continue
+            midpoint = _interpolate_point(start, end, (first_ratio + second_ratio) / 2)
+            if _point_in_or_on_polygon(midpoint, polygon):
+                first = _interpolate_point(start, end, first_ratio)
+                second = _interpolate_point(start, end, second_ratio)
+                if not current or current[-1] != first:
+                    current.append(first)
+                if current[-1] != second:
+                    current.append(second)
+            elif current:
+                if len(current) >= 2:
+                    clipped.append(_dedupe_points(current))
+                current = []
+    if len(current) >= 2:
+        clipped.append(_dedupe_points(current))
+    return [line for line in clipped if len(line) >= 2]
+
+
+def _segment_polygon_cut_ratios(start: list[float], end: list[float], polygon: list[list[float]]) -> list[float]:
+    ratios = [0.0, 1.0]
+    for first, second in zip(polygon, polygon[1:]):
+        ratios.extend(_segment_intersection_ratios(start, end, first, second))
+    unique_ratios: list[float] = []
+    for ratio in sorted(max(0.0, min(1.0, value)) for value in ratios):
+        if not unique_ratios or abs(unique_ratios[-1] - ratio) > 1e-9:
+            unique_ratios.append(ratio)
+    return unique_ratios
+
+
+def _segment_intersection_ratios(start: list[float], end: list[float], first: list[float], second: list[float]) -> list[float]:
+    x1, y1 = start
+    x2, y2 = end
+    x3, y3 = first
+    x4, y4 = second
+    rx = x2 - x1
+    ry = y2 - y1
+    sx = x4 - x3
+    sy = y4 - y3
+    denominator = rx * sy - ry * sx
+    qpx = x3 - x1
+    qpy = y3 - y1
+    if abs(denominator) <= 1e-12:
+        if abs(qpx * ry - qpy * rx) > 1e-12:
+            return []
+        ratios = []
+        for point in (first, second):
+            ratio = _point_ratio_on_segment(point, start, end)
+            if ratio is not None:
+                ratios.append(ratio)
+        if _point_on_segment(start, first, second):
+            ratios.append(0.0)
+        if _point_on_segment(end, first, second):
+            ratios.append(1.0)
+        return ratios
+    ratio = (qpx * sy - qpy * sx) / denominator
+    other_ratio = (qpx * ry - qpy * rx) / denominator
+    if -1e-10 <= ratio <= 1 + 1e-10 and -1e-10 <= other_ratio <= 1 + 1e-10:
+        return [ratio]
+    return []
+
+
+def _point_ratio_on_segment(point: list[float], start: list[float], end: list[float]) -> float | None:
+    if not _point_on_segment(point, start, end):
+        return None
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    if abs(dx) >= abs(dy) and abs(dx) > 1e-12:
+        return (point[0] - start[0]) / dx
+    if abs(dy) > 1e-12:
+        return (point[1] - start[1]) / dy
+    return 0.0
+
+
+def _lonlat_or_none(value: Any) -> list[float] | None:
+    if isinstance(value, list | tuple) and len(value) >= 2 and isinstance(value[0], int | float) and isinstance(value[1], int | float):
+        return [round(float(value[0]), 7), round(float(value[1]), 7)]
+    return None
+
+
+def _interpolate_point(start: list[float], end: list[float], ratio: float) -> list[float]:
+    return [
+        round(start[0] + (end[0] - start[0]) * ratio, 7),
+        round(start[1] + (end[1] - start[1]) * ratio, 7),
+    ]
+
+
+def _dedupe_points(points: list[list[float]]) -> list[list[float]]:
+    deduped: list[list[float]] = []
+    for point in points:
+        if not deduped or deduped[-1] != point:
+            deduped.append(point)
+    return deduped
+
+
+def _point_in_or_on_polygon(point: list[float], polygon: list[list[float]]) -> bool:
+    if _point_on_polygon_boundary(point, polygon):
+        return True
+    lon, lat = point
+    inside = False
+    for first, second in zip(polygon, polygon[1:]):
+        lon1, lat1 = first
+        lon2, lat2 = second
+        crosses = (lat1 > lat) != (lat2 > lat)
+        if crosses:
+            intersect_lon = (lon2 - lon1) * (lat - lat1) / ((lat2 - lat1) or 1e-12) + lon1
+            if lon < intersect_lon:
+                inside = not inside
+    return inside
+
+
+def _point_on_polygon_boundary(point: list[float], polygon: list[list[float]]) -> bool:
+    return any(_point_on_segment(point, first, second) for first, second in zip(polygon, polygon[1:]))
+
+
+def _point_on_segment(point: list[float], first: list[float], second: list[float]) -> bool:
+    lon, lat = point
+    lon1, lat1 = first
+    lon2, lat2 = second
+    cross = (lat - lat1) * (lon2 - lon1) - (lon - lon1) * (lat2 - lat1)
+    if abs(cross) > 1e-10:
+        return False
+    dot = (lon - lon1) * (lon2 - lon1) + (lat - lat1) * (lat2 - lat1)
+    if dot < -1e-10:
+        return False
+    squared_len = (lon2 - lon1) ** 2 + (lat2 - lat1) ** 2
+    return dot <= squared_len + 1e-10
 
 
 def _validate_bbox(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:

@@ -99,7 +99,7 @@ export function validateMission(mission: MissionConfig, agents: Agent[], feature
 
 export function createTaskPlan(mission: MissionConfig, agents: Agent[], features: MapFeature[]): TaskPlan {
   const selected = agents.filter((agent) => mission.vehicles.includes(agent.agent_id));
-  const targets = mission.objective.geometries.flatMap((geometryRef) => destinationsForGeometryRef(geometryRef, features, mission.behavior));
+  const targets = missionDestinationPoints(mission, features);
   const speed = speedForMission(mission, selected);
   const tasks: TaskPlan["tasks"] = {};
 
@@ -151,13 +151,32 @@ export function createTaskPlan(mission: MissionConfig, agents: Agent[], features
   return { mission_id: mission.mission_id, tasks };
 }
 
+export function missionDestinationPoints(mission: MissionConfig, features: MapFeature[]): LonLat[] {
+  const geometries = mission.objective.geometries ?? [];
+  const destinationGeometries =
+    mission.behavior === 0 && geometries.some((geometryRef) => isPointDestinationRef(geometryRef, features))
+      ? geometries.filter((geometryRef) => isPointDestinationRef(geometryRef, features))
+      : geometries;
+  return destinationGeometries.flatMap((geometryRef) => destinationsForGeometryRef(geometryRef, features, mission.behavior));
+}
+
 export function destinationsForGeometryRef(ref: GeometryRef, features: MapFeature[], behavior: number): LonLat[] {
-  const geometry = (ref.feature_id ? features.find((feature) => feature.feature_id === ref.feature_id)?.geometry : ref.geometry) as GeometryLiteral | undefined;
+  const geometry = geometryForRef(ref, features);
   if (!geometry) return [];
   const type = geometryType(geometry);
   const coords = geometry.coordinates;
   if (type === "MultiPoint" && Array.isArray(coords) && behavior === 0) return coords as LonLat[];
   return [representativePoint(geometry)];
+}
+
+function isPointDestinationRef(ref: GeometryRef, features: MapFeature[]) {
+  const geometry = geometryForRef(ref, features);
+  const type = geometry ? geometryType(geometry) : undefined;
+  return type === "Point" || type === "MultiPoint";
+}
+
+function geometryForRef(ref: GeometryRef, features: MapFeature[]): GeometryLiteral | undefined {
+  return (ref.feature_id ? features.find((feature) => feature.feature_id === ref.feature_id)?.geometry : ref.geometry) as GeometryLiteral | undefined;
 }
 
 export function representativePoint(geometry: GeometryLiteral): LonLat {

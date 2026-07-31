@@ -127,8 +127,11 @@ def distance_between_coordinates(lat1, lon1, lat2, lon2):
     # Earth's radius in kilometers
     R = 6371
 
-    # Calculate the angular separation
-    delta_sigma = math.acos(math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1))
+    # Calculate the angular separation. Floating point rounding can push this
+    # value just outside [-1, 1] for nearly identical coordinates.
+    cosine_delta = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
+    cosine_delta = max(-1.0, min(1.0, cosine_delta))
+    delta_sigma = math.acos(cosine_delta)
 
     # Calculate the distance
     distance = R * delta_sigma

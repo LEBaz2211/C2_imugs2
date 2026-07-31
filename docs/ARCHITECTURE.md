@@ -1,21 +1,27 @@
 # Architecture
 
-C2 iMUGS2 is organized around ports and adapters so the current simple implementation can be replaced module by module.
+C2 iMUGS2 uses a stable adapter boundary around the actual legacy ROS runtime. The long-term replacement code remains modular, but compatibility work must not require the browser to understand ROS or the core domain to depend on legacy infrastructure.
 
-## Dependency Direction
+Read [PROJECT_PLANNING.md](../PROJECT_PLANNING.md) before changing these boundaries.
+
+## Runtime Layers
 
 ```text
-UI / CLI / ROS2 nodes / HTTP API
-  -> MissionService
-  -> ports: PlannerPort, repositories, EdgeDispatcherPort
-  -> adapters: file repositories, simple planner, future ROS/Mongo/actual planner clients
+React/Vite/Leaflet UI
+  -> FastAPI JSON + SSE adapter
+     -> legacy REST client for mission commands
+     -> rosbridge client for ROS diagnostics and live reads
+     -> legacy map/runtime-file adapters
+  -> Dockerized legacy ROS stack
+     -> C2 -> interface -> orchestrator -> mission manager
+     -> planner -> fleet manager -> edge supervisor -> autonomy sim
 ```
 
-Core modules do not depend on ROS 2, MongoDB, a web UI, or a specific planner.
+The UI never constructs ROS messages or connects directly to rosbridge. The backend owns validation, legacy alias translation, coordinate conversion, feature inlining, and feedback normalization.
 
-## Core Ports
+## Replacement Core
 
-Defined in `src/c2_imugs2/ports.py`:
+The independent core is organized around ports in `src/c2_imugs2/ports.py`:
 
 - `PlannerPort`
 - `AgentRepositoryPort`
@@ -24,94 +30,61 @@ Defined in `src/c2_imugs2/ports.py`:
 - `PlanRepositoryPort`
 - `EdgeDispatcherPort`
 
-Anything that implements these method signatures can be swapped in.
+`MissionService` orchestrates these ports. `SimplePlanner` and the file-backed repositories are development implementations, not substitutes for the real legacy runtime during compatibility testing.
 
-## Planner Swap
-
-The current planner is `SimplePlanner`. It preserves the old planner contract:
+Any future planner adapter should preserve the logical boundary:
 
 ```text
-mission_config + selected agents -> task_plan JSON
+mission_config + selected agents -> validated task_plan
 ```
 
-To use the actual planner later, implement:
+## Code Ownership
 
-```python
-class ActualPlanner:
-    def create_plan(self, mission_config, agents):
-        ...
-        return task_plan
-```
+| Area | Main files | Responsibility |
+| --- | --- | --- |
+| UI | `frontend/src/App.tsx`, `MapView.tsx`, `api.ts` | Operator workflow, map rendering, API/SSE consumption |
+| Compatibility API | `src/c2_imugs2/api.py` | Stable UI endpoints and normalized runtime state |
+| Legacy command adapter | `legacy_rest.py` | Old REST actions and canonical-to-legacy field translation |
+| ROS read adapter | `rosbridge.py` | Diagnostics and topic subscriptions |
+| Map adapter | `legacy_map.py` | Legacy GeoJSON, runtime features, OSM road overlay |
+| Domain contracts | `domain.py`, `mission_config.py`, `task_plan.py`, `schemas/` | Enums, normalization, and validation |
+| Modular core | `mission_service.py`, `ports.py`, `repositories.py`, `planner.py` | Replaceable non-ROS orchestration |
+| Legacy runtime | `legacy_ros/` | Actual old nodes and embedded ROS interfaces |
 
-Then pass it into `MissionService` instead of `SimplePlanner`. The adapter should validate output with `validate_task_plan`.
+## Compatibility Boundary
 
-Good future adapters:
-
-- direct Python import adapter
-- ROS 2 service adapter for `/multi_robot/planner/create` and `/multi_robot/planner/get_plan`
-- HTTP adapter
-- subprocess/container adapter
-
-## UI/API Boundary
-
-The current UI lives in `frontend/`. It is a React/Vite/shadcn-style client that uses fixture data and mirrors the core mission/task-plan contracts for visualization and editing.
-
-It should stay a client adapter. When the backend API is added, the UI should call an API layer that wraps `MissionService`; it should not call repositories or planner code directly.
-
-Suggested future API endpoints:
+Canonical data stays clean inside the UI/backend, while adapters preserve the old external contract. For example:
 
 ```text
-POST /missions/init
-POST /missions/{mission_id}/status
-GET  /missions/{mission_id}
-GET  /missions/{mission_id}/plan
-GET  /agents
-GET  /map/features
+canonical transit.optimization
+  -> legacy_rest.py
+  -> legacy transit.optimalization
 ```
 
-Because `MissionService` is already independent from CLI and ROS, the same service can back:
+Runtime user features are also converted at this boundary: the UI may refer to a saved feature, but the adapter sends inline geometry when the old planner cannot resolve that runtime `feature_id`.
 
-- CLI
-- FastAPI/Flask UI backend
-- ROS 2 node
-- later LLM benchmark harness
+Do not change message layouts, enum values, topic/service names, or mission/task JSON structures as an architectural shortcut. Add or replace an adapter instead.
 
-Current frontend modules:
+## Live State
 
-`frontend/src/App.tsx`
-: page composition, mission editor, task-plan preview, asset panel, and quiet LLM-assistant placeholder.
+`GET /api/events` emits normalized SSE events:
 
-`frontend/src/MapView.tsx`
-: fictive map, UGV motion playback, planned trajectories, objective markers, and polygon drawing.
+```text
+diagnostics.updated
+mission.updated
+agent.updated
+planner.updated
+```
 
-`frontend/src/mission.ts`
-: frontend contract normalization, legacy ICD aliases, validation, and task-plan preview generation.
+Mission status and path availability are separate. Planner readiness is not evidence of a route; a usable route comes from mission feedback containing waypoint tasks.
 
-`frontend/src/types.ts`
-: TypeScript mission, map, agent, and task-plan contract shapes.
+## Replacement Strategy
 
-## Module Boundaries
+Replace one boundary at a time:
 
-`domain.py`
-: enums and domain dataclasses.
+1. Define and test the stable input/output contract.
+2. Add the new implementation behind the existing port or adapter.
+3. Compare it with the legacy runtime.
+4. Switch callers only after compatibility is verified.
 
-`mission_config.py`
-: mission normalization and validation.
-
-`planner.py`
-: current simple planner adapter.
-
-`planner_adapters.py`
-: adapter helpers for external planners.
-
-`repositories.py`
-: file-backed adapter implementations.
-
-`mission_service.py`
-: mission lifecycle and orchestration.
-
-`task_plan.py`
-: task-plan creation and validation helpers.
-
-`cli.py`
-: thin command-line adapter.
+This lets the planner, ROS transport, storage, UI, and later LLM tooling evolve independently without a broad legacy rewrite.
