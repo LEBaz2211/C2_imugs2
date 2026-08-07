@@ -1,0 +1,38 @@
+{
+    "_id": {
+        "$oid": "637f7de6f808c16555096a52"
+    },
+    "behavior": 0,
+    "mission_id": "00000000-0000-0000-0000-000000000000",
+    "objective": {
+        "arrival_time": {
+            "earliest": "2022-11-24T13:46:25Z",
+            "latest": "2022-11-24T13:46:25Z",
+            "target": "2022-11-24T13:46:25Z"
+        },
+        "geometry": {
+            "coordinates": [
+                48.7868642807,
+                2.1004700661
+            ],
+            "geometry_type": "Point"
+        },
+        "maximize_coverage": false,
+        "vehicle_formation": 1
+    },
+    "transit": {
+        "desired_vehicle_constraints": {
+            "max_speed": 4
+        },
+        "optimalization": {
+            "energy": 2,
+            "road_usgae": 0
+        },
+        "vehicle_formation": 1
+    },
+    "vehicles": [
+        "F9992BB3-9871-451F-90A0-9207EB9FE6C5",
+        "4DD12623-3FB6-4AE4-91C2-1F4B10D2327D",
+        "2B4A887B-95AF-451D-BD85-E0DCACB72524"
+    ]
+}

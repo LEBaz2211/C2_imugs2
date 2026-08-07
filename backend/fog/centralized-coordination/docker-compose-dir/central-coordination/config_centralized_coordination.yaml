@@ -1,0 +1,7 @@
+fleet_manager_node:
+    ros__parameters:
+        # High-level collision avoidance
+        use_high_level_collision_avoidance: True
+        vicinity_radius: 30.0
+        tolerance_distance: 15.0
+        max_deceleration_factor: 0.10

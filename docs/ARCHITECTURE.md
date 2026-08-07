@@ -17,7 +17,7 @@ React/Vite/Leaflet UI
      -> planner -> fleet manager -> edge supervisor -> autonomy sim
 ```
 
-The UI never constructs ROS messages or connects directly to rosbridge. The backend owns validation, legacy alias translation, coordinate conversion, feature inlining, and feedback normalization.
+The UI never constructs ROS messages or connects directly to rosbridge. The backend owns partial structural validation, legacy alias translation, coordinate conversion, feature inlining, and feedback normalization. The canonical JSON Schemas are currently design contracts rather than validators executed by the mission endpoint.
 
 ## Replacement Core
 
@@ -62,6 +62,8 @@ canonical transit.optimization
 ```
 
 Runtime user features are also converted at this boundary: the UI may refer to a saved feature, but the adapter sends inline geometry when the old planner cannot resolve that runtime `feature_id`.
+
+The old REST status command is stateful: its body has no mission id and `/c2_node` targets the last mission it initialized. FastAPI's mission-specific approve/start URLs do not remove that legacy limitation. Likewise, an HTTP success is only command acceptance; ROS mission feedback is the authoritative state.
 
 Do not change message layouts, enum values, topic/service names, or mission/task JSON structures as an architectural shortcut. Add or replace an adapter instead.
 

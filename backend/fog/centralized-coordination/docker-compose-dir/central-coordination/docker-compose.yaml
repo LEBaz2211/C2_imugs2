@@ -1,0 +1,64 @@
+version: '3.5'
+
+services:
+    # Centralized Coordination Executable
+    centralized_coordination:
+        image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/centralized-coordination:humble_cyclone_1.0
+        container_name: centralized_coordination
+        environment: 
+            - MONGODB_CONNSTRING=mongodb://127.0.0.1:27017
+            - C2_INTERFACE_AVOID_ROS_PREFIX=TRUE
+            - ROS_DOMAIN_ID=112
+            - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+        command: ros2 run centralized_coordination centralized_coordination_executable --ros-args --params-file /app/config.yaml
+        volumes:
+            - type: bind
+              source: ./config_centralized_coordination.yaml
+              target: /app/config.yaml
+        network_mode: host
+        # networks:
+            # - multi_robot_network
+        # restart: always
+        # depends_on:
+        #     - mongodb
+
+# networks:
+#   multi_robot_network:
+#     name: multi_robot_network
+
+
+
+    # Test/Simulation Services
+    #-------------------------
+    # To test with simulators of swarm_planner and c2, uncomment following services and run "docker-compose up"
+    # To have the C2 control, in another terminal: "docker-compose run --rm c2_sim "
+
+    # swarm_planner_sim:
+    #     image: gitlab.cylab.be:8081/rma-ras/imugs/centralized_coordination:1.0.6
+    #     container_name: swarm_planner_sim
+    #     command: ros2 run centralized_coordination test_planner_sim
+    #     volumes:
+    #         - type: bind
+    #           source: ../../test
+    #           target: /app/centralized_coordination/test
+    #     network_mode: host
+    #     networks:
+    #         - multi_robot_network
+
+    # c2_sim:
+    #     image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/fog-module/centralized-coordination:humble_cyclone_1.0
+    #     container_name: c2_sim
+    #     command: ros2 run centralized_coordination test_c2_sim
+    #     environment:
+    #         - C2_INTERFACE_AVOID_ROS_PREFIX=TRUE
+    #         - ROS_DOMAIN_ID=112
+    #         - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    #         - MISSION_ID=fe454a5d-afaa-0221-b563-c9a70578a4b1
+    #     volumes:
+    #         - type: bind
+    #           source: ../../test
+    #           target: /app/centralized_coordination/test
+    #     network_mode: host
+        # networks:
+        #     - multi_robot_network
+

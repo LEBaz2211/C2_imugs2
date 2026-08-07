@@ -1,0 +1,11 @@
+build/*
+install/*
+log/*
+site/*
+src/build/*
+src/install/*
+src/log/*
+.vscode/*
+*.orig
+*.bag
+

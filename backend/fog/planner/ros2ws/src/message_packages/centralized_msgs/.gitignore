@@ -1,0 +1,8 @@
+**/__pycache__
+/venv
+
+build/
+install/
+log/
+obj-x86_64-linux-gnu/
+debian/

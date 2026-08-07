@@ -1,0 +1,33 @@
+{
+    "behavior": 0,
+    "transit": {
+      "desired_vehicle_constraints": {
+        "max_speed": 3
+      }
+    },
+    "vehicles": [
+      "4dd12623-3fb6-4ae4-91c2-1f4b10d2327d",
+      "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
+    ],
+    "objective": {
+      "geometry": {
+        "geometry_type": "MultiPoint",
+        "coordinates": [
+          [
+            40.448188, 
+            -3.394524
+          ],
+          [
+            40.4479715, 
+            -3.3944156
+          ]
+        ]
+      },
+      "arrival_time": {
+        "latest": "2023-11-22T11:02:54.674Z",
+        "target": "2023-11-22T11:02:54.674Z",
+        "earliest": "2021-11-22T11:02:54.674Z"
+      }
+    },
+    "name": "Start garage"
+  }

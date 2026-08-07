@@ -2,15 +2,17 @@
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.legacy-ros.yml}"
-ROS_CONTAINER="${ROS_CONTAINER:-c2-imugs2-centralized-coordination}"
+STACK_PREFIX="${STACK_PREFIX:-c2-imugs2}"
+STACK_LABEL="${STACK_LABEL:-Legacy}"
+ROS_CONTAINER="${ROS_CONTAINER:-${STACK_PREFIX}-centralized-coordination}"
 
 required_containers=(
-  c2-imugs2-mongodb
-  c2-imugs2-centralized-coordination
-  c2-imugs2-planner
-  c2-imugs2-c2-ros-rest
-  c2-imugs2-rosbridge
-  c2-imugs2-edge-agent-sim-1
+  "${STACK_PREFIX}-mongodb"
+  "${STACK_PREFIX}-centralized-coordination"
+  "${STACK_PREFIX}-planner"
+  "${STACK_PREFIX}-c2-ros-rest"
+  "${STACK_PREFIX}-rosbridge"
+  "${STACK_PREFIX}-edge-agent-sim-1"
 )
 
 required_nodes=(
@@ -55,7 +57,7 @@ has_line() {
   grep -Fxq "$needle" <<< "$haystack"
 }
 
-echo "Legacy compose status:"
+echo "$STACK_LABEL compose status:"
 docker compose -f "$COMPOSE_FILE" ps
 echo
 
@@ -103,8 +105,8 @@ PY
 
 echo
 if [ "$failures" -eq 0 ]; then
-  echo "Legacy ROS stack smoke test passed."
+  echo "$STACK_LABEL ROS stack smoke test passed."
 else
-  echo "Legacy ROS stack smoke test failed with $failures issue(s)."
+  echo "$STACK_LABEL ROS stack smoke test failed with $failures issue(s)."
   exit 1
 fi

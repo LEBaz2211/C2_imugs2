@@ -1,0 +1,119 @@
+name: c2-imugs2-backend
+
+# Editable fork of docker-compose.legacy-ros.yml. It deliberately preserves
+# the ROS graph and host endpoints so the existing FastAPI adapter can use it.
+services:
+  mongodb:
+    image: mongo:7
+    container_name: c2-imugs2-backend-mongodb
+    network_mode: host
+    volumes:
+      - ./data/backend-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  mongo-express:
+    image: mongo-express:1.0.2-20
+    container_name: c2-imugs2-backend-mongo-express
+    profiles:
+      - tools
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://host.docker.internal:27017
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_BASICAUTH: "false"
+      PORT: 8081
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  centralized-coordination:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.centralized
+    image: c2-imugs2/backend-centralized-coordination:local
+    container_name: c2-imugs2-backend-centralized-coordination
+    network_mode: host
+    env_file:
+      - ./backend/.env.ros
+    environment:
+      MONGODB_CONNSTRING: mongodb://127.0.0.1:27017
+    volumes:
+      - ./backend/config/config_centralized_coordination.yaml:/app/config.yaml:ro
+    command: ros2 run centralized_coordination centralized_coordination_executable --ros-args --params-file /app/config.yaml
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  planner:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.planner
+    image: c2-imugs2/backend-planner:local
+    container_name: c2-imugs2-backend-planner
+    network_mode: host
+    env_file:
+      - ./backend/.env.ros
+    volumes:
+      - ./backend/config/config_planner.yaml:/app/config.yaml:ro
+      - ./backend/config/data/map:/data/map:ro
+      - ./data/backend-planresults:/app/data/.planresults
+    command: ros2 run planner planner_node --ros-args --params-file /app/config.yaml
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  c2-ros-rest:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.c2_ros
+    image: c2-imugs2/backend-c2-ros-rest:local
+    container_name: c2-imugs2-backend-c2-ros-rest
+    network_mode: host
+    env_file:
+      - ./backend/.env.ros
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 run c2_ros2_rest_api c2_ros2_rest_api"
+    depends_on:
+      - centralized-coordination
+
+  rosbridge:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.c2_ros
+    image: c2-imugs2/backend-rosbridge:local
+    container_name: c2-imugs2-backend-rosbridge
+    network_mode: host
+    env_file:
+      - ./backend/.env.ros
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/backend/ros2-rest-api/ros2_ws/install/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+    depends_on:
+      - centralized-coordination
+
+  edge-agent-sim-1:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.edge
+    image: c2-imugs2/backend-edge-agent-sim:local
+    container_name: c2-imugs2-backend-edge-agent-sim-1
+    network_mode: host
+    env_file:
+      - ./backend/.env.ros
+    environment:
+      AGENT_ID: f9992bb3_9871_451f_90a0_9207eb9fe6c5
+      AUTONOMY_TOPIC_PREFIX: Themis_Fr
+    volumes:
+      - ./backend/config/config_agent-tasks-supervisor.yaml:/app/config.yaml:ro
+      - ./backend/config/config_autonomy.yaml:/app/autonomy_config.yaml:ro
+      - ./backend/config/launch_agent_tasks_supervisor.sh:/app/launch_agent_tasks_supervisor.sh:ro
+      - ./backend/config/launch_autonomy_sim.sh:/app/launch_autonomy_sim.sh:ro
+      - ./backend/config/launch_edge_with_autonomy_sim.sh:/app/launch_edge_with_autonomy_sim.sh:ro
+    command: bash -lc "bash /app/launch_edge_with_autonomy_sim.sh"
+    depends_on:
+      - centralized-coordination

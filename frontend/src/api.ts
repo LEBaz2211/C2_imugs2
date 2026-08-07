@@ -217,6 +217,102 @@ export type ContractScenario = {
   risks?: string[];
 };
 
+export type ContractEvidenceRef = ContractSourceRef & {
+  symbol?: string;
+  claim?: string;
+  verification?: "source" | "runtime" | "documented" | "inferred";
+};
+
+export type ContractAtlasZone = {
+  id: string;
+  label: string;
+  eyebrow: string;
+  description: string;
+  tone: string;
+  order: number;
+};
+
+export type ContractAtlasComponent = {
+  id: string;
+  label: string;
+  short_label?: string;
+  zone: string;
+  kind: string;
+  description: string;
+  runtime_name?: string;
+  container?: string;
+  responsibilities: string[];
+  tags: string[];
+  source_refs: ContractEvidenceRef[];
+  runtime_status?: "visible" | "not_seen" | "not_checked" | "dynamic";
+};
+
+export type ContractAtlasInteraction = {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  channel: string;
+  protocol: string;
+  interface?: string;
+  contract?: string;
+  direction?: string;
+  description: string;
+  phases: string[];
+  fields?: ContractField[];
+  request_fields?: ContractField[];
+  response_fields?: ContractField[];
+  source_refs: ContractEvidenceRef[];
+  notes: string[];
+  runtime_status?: "visible" | "not_seen" | "not_checked" | "dynamic";
+};
+
+export type ContractAtlasWorkflowStep = {
+  id: string;
+  number: number;
+  title: string;
+  summary: string;
+  phase: string;
+  actor_ids: string[];
+  interaction_ids: string[];
+  input?: unknown;
+  output?: unknown;
+  transformations: string[];
+  source_refs: ContractEvidenceRef[];
+  notes: string[];
+};
+
+export type ContractAtlasWorkflow = {
+  id: string;
+  label: string;
+  summary: string;
+  example: Record<string, unknown>;
+  steps: ContractAtlasWorkflowStep[];
+};
+
+export type ContractAtlas = {
+  title: string;
+  scope: string;
+  verification: {
+    status: string;
+    method: string;
+    source_evidence_count: number;
+    runtime_status: string;
+    caveats: string[];
+  };
+  zones: ContractAtlasZone[];
+  components: ContractAtlasComponent[];
+  interactions: ContractAtlasInteraction[];
+  workflow: ContractAtlasWorkflow;
+  contract_gaps: {
+    id: string;
+    severity: string;
+    title: string;
+    description: string;
+    source_refs: ContractEvidenceRef[];
+  }[];
+};
+
 export type ContractGraph = {
   generated_at: string;
   source_digest: string;
@@ -228,10 +324,17 @@ export type ContractGraph = {
     by_layer?: Record<string, number>;
     by_kind?: Record<string, number>;
   };
+  catalog?: {
+    status: string;
+    authoritative_view: string;
+    description: string;
+    limitations?: string[];
+  };
   layers: { id: string; label: string }[];
   nodes: ContractNode[];
   edges: ContractEdge[];
   scenarios: ContractScenario[];
+  atlas: ContractAtlas;
   runtime?: {
     ros_nodes?: string[];
     ros_topics?: string[];

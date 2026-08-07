@@ -1,0 +1,12 @@
+# Goal Definition
+autonomy_msgs/AutonomyObjective objective  # Objective to execute
+bool null_objective                        # If true, cancel the objective
+
+---
+# Result (final status)
+bool success                               # Whether the objective was successfully executed
+string message                             # Additional result message
+
+---
+# Feedback (real-time progress updates)
+autonomy_msgs/AutonomyStatus status_update  # Status update, including active primitives

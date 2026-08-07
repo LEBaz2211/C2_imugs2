@@ -1,0 +1,22 @@
+{
+  "agent_id": "f17d27fc_50f6_11ec_bf63_0242ac130000",
+  "fuel_status_pct": 95,
+  "fuel_hours": 3.55,
+  "battery_status_pct": 85,
+  "battery_hours": 6.23,
+  "sensor_list":[
+    {
+    "type": 2,
+    "status": 1,
+    "field_of_view":[50 , 3.14]
+    },
+    {
+      "type": 3,
+      "status": 2,
+      "field_of_view":[50 , 1.6]
+      }
+  ],
+  "vehicle_dimensions": [0.720 , 0.614 , 0.416]
+}
+
+  

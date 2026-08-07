@@ -1,0 +1,7 @@
+string id
+uint8 priority
+Agent[] agents
+string config
+---
+string id
+uint8 state

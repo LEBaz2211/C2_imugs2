@@ -1,0 +1,24 @@
+FROM ros:humble-ros-core-jammy
+
+SHELL ["/bin/bash", "-c"]
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+WORKDIR /app
+
+COPY fog/command-control/install_ros_dependencies.sh /tmp/install_ros_dependencies.sh
+RUN chmod +x /tmp/install_ros_dependencies.sh && /tmp/install_ros_dependencies.sh
+
+COPY fog/command-control/src/backend/ros2-rest-api /app/backend/ros2-rest-api
+COPY fog/centralized-coordination/src/message_packages/c2_msgs /app/backend/ros2-rest-api/ros2_ws/src/message_packages/c2_msgs
+COPY fog/centralized-coordination/src/message_packages/centralized_msgs /app/backend/ros2-rest-api/ros2_ws/src/message_packages/centralized_msgs
+COPY fog/centralized-coordination/src/message_packages/environment_msgs /app/backend/ros2-rest-api/ros2_ws/src/message_packages/environment_msgs
+COPY fog/centralized-coordination/src/message_packages/autonomy_msgs /app/backend/ros2-rest-api/ros2_ws/src/message_packages/autonomy_msgs
+COPY fog/centralized-coordination/src/message_packages/task_msgs /app/backend/ros2-rest-api/ros2_ws/src/message_packages/task_msgs
+
+RUN source /opt/ros/humble/setup.bash && \
+    cd /app/backend/ros2-rest-api/ros2_ws && \
+    colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+COPY docker/entrypoint-c2-ros.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

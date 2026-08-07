@@ -22,16 +22,27 @@ Do not edit `legacy_ros/` unless the task explicitly asks for a legacy-code chan
 
 Preserve message and service structures, topic and service names, numeric enums, mission and task-plan shapes, and coordinate conventions. Keep legacy normalization and ROS behavior in the backend. Any necessary contract migration requires documentation, compatibility handling, tests, and user approval. Explicit legacy changes should be minimal and verified against the actual Dockerized stack.
 
-## Priority Objectives
+## ZE Plan
 
-- [x] Run the actual vendored legacy ROS fog, planner, fleet, edge, and autonomy components in Docker.
+- [x] Run the actual legacy ROS fog, planner, fleet, edge, and autonomy components in Docker.
 - [x] Provide a map-based UI and FastAPI compatibility adapter around the legacy runtime.
 - [ ] Complete and verify a reliable multi-robot mission flow with a clear UI, diagnostics, and modular backend boundaries.
-- [ ] Preserve and test all mission, task, map, agent, REST, and ROS contracts.
-- [ ] Give the LLM compact, source-labelled operational and contract context.
-- [ ] Convert natural-language requests into validated mission definitions that require operator approval.
-- [ ] Create representative single-robot and multi-robot evaluation scenarios.
-- [ ] Build a repeatable benchmark for mission correctness, feasibility, safety, quality, latency, and cost.
-- [ ] Far future: allow permissioned LLM control of the wider system only after reliability and safety are demonstrated.
+- [ ] Update the backend to adapt to STANAG 4817, and make sure all features tested and working.
+- [ ] Integrate with MQTT system.
+- [ ] Create context retrieval to provide to LLM
+- [ ] NL to Mission description generation and pipeline.
+- [ ] Test for small reapetable mission.
+- [ ] Create large level scenarios for benchmarking.
 
-## Session Problem Log
+## Refactor Legacy backend
+
+This is the subtasks of task 3 of ZE Plan
+
+- [x] Create new backend that is the copy of the legacy, but that we will modify to adapt to our needs. This totally is a place holder as there might be some architectural changes.
+- [x] List out all the present feature and different use cases (examples of workflows), detailed with code block explanation. One document with first the list of features and list of possible workflows/use cases and when we click it goes to the specific explanation. Also need a short review of the architecturein general, and how it is done in ros.
+- [ ] We select and think of different behaviour of different elements to our needs. Maybe architectural changes.
+- [ ] We implement the changes one by one and test them, with unit tests where possible.
+- [ ] Test with the UI.
+
+
+## ZE Log

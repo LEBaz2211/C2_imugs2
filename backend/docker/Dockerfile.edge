@@ -1,0 +1,19 @@
+FROM ros:humble-ros-core-jammy
+
+SHELL ["/bin/bash", "-c"]
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+WORKDIR /app
+
+COPY edge/agent-tasks-supervisor/.config/install-dependencies.sh /tmp/install-dependencies.sh
+RUN chmod +x /tmp/install-dependencies.sh && /tmp/install-dependencies.sh
+
+COPY edge/agent-tasks-supervisor/ros2ws/src /app/ros2ws/src
+
+RUN source /opt/ros/humble/setup.bash && \
+    cd /app/ros2ws && \
+    colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+COPY docker/entrypoint-edge.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

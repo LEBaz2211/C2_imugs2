@@ -1,0 +1,34 @@
+planner_node:
+    ros__parameters:
+            mapf: "cbs"
+            map_radius: 60.0
+            epsg: "epsg:4326"
+            initial_position: [50.84421071013057 , 4.39196312480243]
+            poly_graph_connect_max_distance: 15.0
+            line_graph_connect_max_distance: 15.0
+            merge_nodes: True
+            merge_nodes_max_distance: 1.0
+            populate_graph: False
+            populate_min_distance: 20.0
+            points_in_polygon_dist: 5.0
+            map_folder: "/data/map/rma"
+            load_map_from_database: True
+            load_map_from_local_folder: False
+            mongodb_url: "mongodb://localhost:27017/"
+
+
+# Estonia:
+# planner_node:
+#     ros__parameters:
+#             mapf: "cbs"
+#             map_radius: 600.0
+#             epsg: "epsg:4326"
+#             initial_position: [59.44110222943638,25.863652970602914]
+#             poly_graph_connect_max_distance: 45.0
+#             line_graph_connect_max_distance: 45.0
+#             merge_nodes: True
+#             merge_nodes_max_distance: 1.0
+#             populate_graph: False
+#             populate_min_distance: 50.0
+#             points_in_polygon_dist: 15.0
+#             map_folder: "/map/estonia"

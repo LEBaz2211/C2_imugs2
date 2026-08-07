@@ -1,0 +1,2 @@
+unique_identifier_msgs/UUID mission_id
+uint8 mission_request_status

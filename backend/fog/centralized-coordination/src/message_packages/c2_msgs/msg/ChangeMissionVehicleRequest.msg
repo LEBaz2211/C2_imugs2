@@ -1,0 +1,3 @@
+unique_identifier_msgs/UUID mission_id
+string[] vehicule_id_list
+uint8 vehicle_changes

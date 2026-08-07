@@ -43,9 +43,11 @@ DELETE /api/missions/{mission_id}
 GET    /api/events
 ```
 
-`/api/missions/init` validates and normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge.
+`/api/missions/init` performs partial handwritten structural validation, normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge. The canonical JSON Schema is not currently executed by this handler.
 
 `/api/missions/{id}/approve` and `/start` post `action=change_status` to the old REST bridge using the legacy numeric mission request values.
+
+The old status envelope contains no mission id. `/c2_node` applies it to the last mission initialized through that bridge, so the path parameter does not provide reliable concurrent-mission targeting. The adapter also reports `ACCEPTED`/`STARTED` optimistically after HTTP success; ROS feedback is the authoritative confirmation.
 
 The UI command buttons mean:
 

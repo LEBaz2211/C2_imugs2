@@ -1,0 +1,508 @@
+/** 
+* Paste one or more documents here
+*/
+{
+    "mission_id": "ac19d601-9473-4bca-a029-e39861a21b1d",
+    "tasks": {
+      "2b4a887b-95af-451d-bd85-e0dcacb72524": {
+        "objectives": [
+          {
+            "objective_id": "69c84ac0-b18a-488f-b00d-65e0aff19324",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.392496962100267,
+                    50.8441633735402
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          },
+          {
+            "objective_id": "86164a9e-7154-449f-b7c3-752f9d60e75e",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.39246091991663,
+                    50.844093087757585
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          },
+          {
+            "objective_id": "43b3d5c8-56eb-4aa9-bb03-519a82892f95",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.392355810850859,
+                    50.84387386741497
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          },
+          {
+            "objective_id": "8b144c93-7ca3-41ba-858e-f063610b4ac1",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391815345734358,
+                    50.84397643852918
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          },
+          {
+            "objective_id": "c12e06d1-b77a-44ca-8998-fc242802bb75",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391880241288778,
+                    50.844069470150345
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          },
+          {
+            "objective_id": "f485ff76-d68f-4bff-9e33-26a8b1d0fc19",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391880241288778,
+                    50.844119470150346
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73"
+              }
+            ]
+          }
+        ],
+        "primitives": [
+          {
+            "completion": {
+              "ends_objective": true,
+              "ends_task": false,
+              "followed_by_primitives": [],
+              "inherit_other_primitives": false,
+              "resume_after": false
+            },
+            "primitive_id": "4e17e198-be90-446f-a5cc-113059087d73",
+            "primitive_inputs": [],
+            "primitive_outputs": [],
+            "primitive_type": "waypoint"
+          }
+        ],
+        "task_id": "c33db00a-85fe-4a5e-8e35-89757c363ac9"
+      },
+      "4dd12623-3fb6-4ae4-91c2-1f4b10d2327d": {
+        "objectives": [
+          {
+            "objective_id": "c374d1c5-b243-4eaa-9dad-d9d49ca1d9ca",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3925979,
+                    50.8443434
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "fdacd5a2-b7ac-4d93-b97c-a81c94233738",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3923482,
+                    50.8438647
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "28b6ce36-451f-4bde-8a4c-f5f801527924",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.392355810850859,
+                    50.84387386741497
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "0e695328-e282-4dcd-b99d-4ca56e288c2c",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391815345734358,
+                    50.84397643852918
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "c290a2e2-40cd-4ab1-8b47-8934b73640b4",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391930241288778,
+                    50.844069470150345
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "c812ce97-a3e1-45a4-9815-d3406ddbd18e",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391959682106972,
+                    50.844110870917405
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "c13bf140-3ba3-4a5b-a9e9-3c2cd8994adf",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3920302412887775,
+                    50.84421947015035
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "483c1cc5-6c39-4ae4-8ac2-9e8727a1b768",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3920302412887775,
+                    50.84426947015035
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          },
+          {
+            "objective_id": "634f4936-16c3-40d3-aff8-b391c1651c9c",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3920302412887775,
+                    50.84431947015035
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438"
+              }
+            ]
+          }
+        ],
+        "primitives": [
+          {
+            "completion": {
+              "ends_objective": true,
+              "ends_task": false,
+              "followed_by_primitives": [],
+              "inherit_other_primitives": false,
+              "resume_after": false
+            },
+            "primitive_id": "d292bd39-70fd-4b66-acd4-4c933e9f1438",
+            "primitive_inputs": [],
+            "primitive_outputs": [],
+            "primitive_type": "waypoint"
+          }
+        ],
+        "task_id": "a4271a5e-5519-4e15-a854-273ccecb6460"
+      },
+      "f9992bb3-9871-451f-90a0-9207eb9fe6c5": {
+        "objectives": [
+          {
+            "objective_id": "f1e39158-a3e5-418d-9323-0e1ebf654e9f",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3925979,
+                    50.8443434
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "63bf2b19-f1b2-4995-8f8d-a21c6e67b29b",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.3923482,
+                    50.8438647
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "ed19a0e5-8ac6-4d6c-b41d-8b3496041cf5",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.392355810850859,
+                    50.84387386741497
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "b1a679d6-f72a-4ea9-85ef-29a404248304",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391815345734358,
+                    50.84397643852918
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "d1fca721-40ab-4b24-8c59-617715d7acc7",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391780241288778,
+                    50.844069470150345
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "c7588453-36d8-40a8-aaf1-fb10bab42d6f",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391758684068918,
+                    50.84415723412366
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          },
+          {
+            "objective_id": "3cdbc9fc-5a07-4033-bbde-8e92039384bc",
+            "objective_type": "combined_primitives",
+            "parallel_execution": true,
+            "primitives": [
+              {
+                "parameters": {
+                  "coordinates": [
+                    4.391730241288778,
+                    50.84426947015035
+                  ],
+                  "max_speed": 2,
+                  "mobility_profile": 0,
+                  "speed": 2,
+                  "wait_time": 0
+                },
+                "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814"
+              }
+            ]
+          }
+        ],
+        "primitives": [
+          {
+            "completion": {
+              "ends_objective": true,
+              "ends_task": false,
+              "followed_by_primitives": [],
+              "inherit_other_primitives": false,
+              "resume_after": false
+            },
+            "primitive_id": "ff96b8ec-0100-429d-aa52-8788d3f96814",
+            "primitive_inputs": [],
+            "primitive_outputs": [],
+            "primitive_type": "waypoint"
+          }
+        ],
+        "task_id": "3b7a8ed4-656e-4a39-9da4-94e68847982d"
+      }
+    }
+  }

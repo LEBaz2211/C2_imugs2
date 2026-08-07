@@ -1,0 +1,66 @@
+version: '3.5'
+
+services:
+    
+    # ROS2 
+    agent_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_1
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=97ebe7c2_012a_4a3d_b6a5_0e1a355543d0
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+            - ROS_DOMAIN_ID=112
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: unless-stopped
+      networks:
+            - swarming_network
+    
+    agent_2:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_2
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=88fda1d0_7c6a_44a7_9e64_c923a1a5c091
+            - AUTONOMY_TOPIC_PREFIX=Themis_Ge
+            - ROS_DOMAIN_ID=112
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: unless-stopped
+      networks:
+            - swarming_network
+
+    agent_3:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_3
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=2f773e13_5bd9_4829_9816_4c93c0df8b4b
+            - AUTONOMY_TOPIC_PREFIX=Themis_Es
+            - ROS_DOMAIN_ID=112
+      volumes:
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+      restart: unless-stopped
+      networks:
+            - swarming_network
+
+networks:
+  swarming_network:
+    name: swarming_network
+

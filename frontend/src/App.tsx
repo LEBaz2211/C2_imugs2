@@ -1167,13 +1167,13 @@ export default function App() {
 
   if (workspace === "contracts") {
     return (
-      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-background text-foreground">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-panel px-4">
+      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#07111f] text-slate-100">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800 bg-[#091522] px-4">
           <div className="flex min-w-0 items-center gap-2">
-            <Workflow className="h-5 w-5 shrink-0 text-primary" />
+            <Workflow className="h-5 w-5 shrink-0 text-cyan-400" />
             <div className="min-w-0">
-              <h2 className="text-sm font-semibold">Contract Explorer</h2>
-              <p className="truncate text-xs text-muted-foreground">Generated source graph, runtime ROS visibility, and scenario traces.</p>
+              <h2 className="text-sm font-semibold text-slate-100">System Contract Atlas</h2>
+              <p className="truncate text-xs text-slate-400">Evidence-backed map of the legacy mission, planning, execution, and feedback contracts.</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -1186,10 +1186,12 @@ export default function App() {
                 { value: "contracts", label: "Contracts" },
               ]}
             />
-            <Badge tone={contractsError ? "error" : "ok"}>{contractGraph ? `${contractGraph.summary.nodes} nodes` : "graph"}</Badge>
+            <Badge tone={contractsError ? "error" : "ok"}>
+              {contractGraph?.atlas ? `${contractGraph.atlas.components.length} systems · ${contractGraph.atlas.interactions.length} contracts` : "atlas"}
+            </Badge>
           </div>
         </header>
-        <section className="min-h-0 flex-1 overflow-auto p-4">
+        <section className="min-h-0 flex-1 overflow-hidden">
           <ContractExplorer graph={contractGraph} busy={contractsBusy} error={contractsError} onRefresh={() => refreshContracts()} />
         </section>
       </main>

@@ -1,0 +1,12 @@
+{
+"type": "FeatureCollection",
+"name": "working_area",
+"features": [
+{ "type": "Feature", "properties": { "uuid": "1f7d7785-c806-43dd-9545-5e47c7b60ea3" }, "geometry": { "type": "MultiPolygon", "coordinates": [ [ [ [ 669988.12816624797415, 5570108.584198996424675 ], [ 670473.843432879191823, 5570368.353923767805099 ], [ 670569.904112352291122, 5569852.873376173898578 ], [ 670316.899224162683822, 5569361.746240275911987 ], [ 670135.601603748858906, 5569520.043416309170425 ], [ 669988.12816624797415, 5570108.584198996424675 ] ] ] ] } },
+{ "type": "Feature", "properties": { "uuid": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ ] } },
+{ "type": "Feature", "properties": { "uuid": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ ] } },
+{ "type": "Feature", "properties": { "uuid": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ ] } },
+{ "type": "Feature", "properties": { "uuid": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ ] } },
+{ "type": "Feature", "properties": { "uuid": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ ] } }
+]
+}

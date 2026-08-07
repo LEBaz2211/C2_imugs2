@@ -1,0 +1,43 @@
+agent_id_key:
+  ros__parameters:
+    # dotOcean simulator enable/disable (resp. True/False)
+    enable_dotocean_simulator: True
+    # Fog Connection management:
+    fog_connection_timeout: 5
+    # Autonomy Connection management:
+    autonomy_connection_timeout: 5
+    # Task management:
+    use_start_time: False
+    # Waypoint management:
+    objective_distance_tolerance: 3.0
+    # Speed control:
+    #    - mode 1 = based on given speed value (in task)
+    #    - mode 2 = based on given speed value (in task), as an average value (try to keep average speed +- constant between two waypoints)
+    #    - mode 3 = based on given eta (in task) 
+    speed_control_mode: 1
+
+    # TEST MODE
+    # ==========
+    # Testing Fog-less (= edge-only) with pre-defined waypoints
+    edge_only_testing_mode: True
+    test_mobility_profile: 0
+    number_of_WP: 1
+    WP1: [48.786297, 2.090552] 
+    # WP2: [48.786947, 2.090777] 
+    # WP3: [48.787605, 2.091003] 
+    # WP4: [48.787711, 2.090552] 
+    # WP5: [48.787654, 2.089651]
+    # WP6: [50.2587264, 5.3893026]
+    # WP7: [50.2587327, 5.38939]
+    # WP8: [50.2587377, 5.3892638]
+    # WP9: [50.2587449, 5.3890571]
+    # WP10: [50.2587593, 5.3889587]
+    # WP11: [50.258817, 5.3888399]
+    # WP12: [50.2589265, 5.388655]
+    # WP13: [50.2589656, 5.3885829]
+    # WP14: [50.2589905, 5.3885222]
+    # WP15: [50.259013, 5.3883917]
+    # WP16: [50.259007, 5.3882275]
+    # WP17: [50.259007, 5.3882275]
+    # WP18: [50.2584904, 5.3872783]
+    speeds: [1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3, 1.3]

@@ -1,0 +1,2 @@
+bool null_objective
+AutonomyObjective objective

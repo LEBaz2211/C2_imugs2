@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>c2_ros2_rest_api</name>
+  <version>0.0.1</version>
+  <description>ROS2 C2 Node with REST API</description>
+  <maintainer email="your.email@example.com">Your Name</maintainer>
+  <license>Apache 2.0</license>
+
+  <!-- Build tool dependency -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Dependencies -->
+  <depend>rclcpp</depend>
+  <depend>c2_msgs</depend>
+  <depend>centralized_msgs</depend>
+  <depend>environment_msgs</depend>
+  <depend>Boost</depend>
+  <depend>cpprestsdk</depend>
+  <depend>nlohmann_json</depend>
+
+  <!-- Export build configuration -->
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

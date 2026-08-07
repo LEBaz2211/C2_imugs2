@@ -1,0 +1,6 @@
+unique_identifier_msgs/UUID autonomy_objective_id
+uint8 status
+uint32 time_to_arrival
+uint32 distance_to_arrival
+float32 needed_energy_to_arrival
+string<=2000 blockages

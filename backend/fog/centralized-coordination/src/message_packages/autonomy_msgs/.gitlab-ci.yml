@@ -1,0 +1,7 @@
+#before_script:
+  #- apt update && apt upgrade -y && apt install -y libcrypto++-dev libzmqpp-dev uuid-dev
+
+include:
+  project: dotocean/shared/imugs/imugs-devops
+  file: 
+    - .gitlab-ci.ros.msgs.yml

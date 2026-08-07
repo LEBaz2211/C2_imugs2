@@ -1,0 +1,6 @@
+[submodule "ros2ws/src/message_packages/autonomy_msgs"]
+	path = ros2ws/src/message_packages/autonomy_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/autonomy_msgs.git
+[submodule "ros2ws/src/message_packages/task_msgs"]
+	path = ros2ws/src/message_packages/task_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/task_msgs.git

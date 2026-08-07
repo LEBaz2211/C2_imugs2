@@ -1,0 +1,5 @@
+uint8 active_autonomy_mode
+uint8 mission_status
+VehicleConstraints vehicle_constraints
+VehicleInfo vehicle_info
+float64 speed

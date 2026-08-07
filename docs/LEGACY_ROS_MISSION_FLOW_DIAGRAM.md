@@ -6,13 +6,13 @@ For per-node contracts, inputs/outputs, internal behavior, and concrete workflow
 
 ```mermaid
 flowchart LR
-  UI[UI / Operator] -->|HTTP POST| REST[c2-ros-rest<br/>/c2_node]
-  UI -->|optional read via WebSocket 9090| RB[rosbridge_websocket]
+  UI[UI / Operator] -->|canonical HTTP JSON| API[FastAPI compatibility adapter]
+  API -->|legacy HTTP POST| REST[c2-ros-rest<br/>/c2_node]
 
   REST -->|/multi_robot/mission_init_request| C2I[c2_interface_node<br/>Interface]
   REST -->|/multi_robot/change_mission_status_request| C2I
 
-  C2I -->|flag_new_mission| ORCH[orchestrator_node<br/>OrchestratorNode]
+  C2I -->|in-process InterfaceC2State| ORCH[orchestrator_node<br/>OrchestratorNode]
   ORCH -->|creates per mission| MM[mission_<mission_id><br/>MissionManager]
 
   MM -->|get agents| FM[fleet_manager_node<br/>FleetManagerNode]
@@ -28,8 +28,11 @@ flowchart LR
   EDGE -->|edge feedback / agent profile| FM
   EDGE -->|edge feedback| MM
 
-  MM -->|/multi_robot/mission_feedback| UI
-  RB -->|exposes ROS graph| UI
+  MM -->|/multi_robot/mission_feedback| RB[rosbridge_websocket]
+  PLANNER -->|/multi_robot/planner/state| RB
+  EDGE -->|/multi_robot/edge/feedback| RB
+  RB -->|WebSocket ROS frames| API
+  API -->|normalized SSE events| UI
 ```
 
 ## Mission Sequence
@@ -37,6 +40,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant UI as UI / Operator
+  participant API as FastAPI adapter
   participant REST as c2_node<br/>C2
   participant C2I as c2_interface_node<br/>Interface
   participant ORCH as orchestrator_node
@@ -45,8 +49,11 @@ sequenceDiagram
   participant PL as planner_node
   participant EDGE as agent_<uuid>
   participant AUTO as autonomy_test_node
+  participant RB as rosbridge_websocket
 
-  UI->>REST: POST /mission_control initialize
+  UI->>API: POST /api/missions/init<br/>canonical MissionConfig
+  API->>API: normalize, validate, inline runtime features
+  API->>REST: POST /mission_control initialize<br/>legacy MissionConfig string
   REST->>REST: C2::setMissionConfig()
   REST->>C2I: C2::sendInitMission()<br/>/multi_robot/mission_init_request
   C2I->>C2I: Interface::_initMissionCallback()
@@ -66,23 +73,29 @@ sequenceDiagram
   PL->>MM: PlannerNode.get_plan_service_callback()<br/>task_plan JSON
   MM->>MM: MissionManager::_register_planning_result()
 
-  UI->>REST: POST /mission_control change_status APPROVE
+  UI->>API: POST /api/missions/{id}/approve
+  API->>REST: change_status requested_state=1
   REST->>C2I: /multi_robot/change_mission_status_request
-  C2I->>MM: MissionManager::_changeMissionStatus_callback()
+  C2I->>ORCH: direct setRequestMissionChangeStatus()
+  ORCH->>MM: /mission_<id>/mission_status_change
   MM->>FM: MissionManager::_sendAgentTasks()
   FM->>EDGE: FleetManagerNode::_sendAgentTask()<br/>AddTask
   EDGE->>EDGE: AgentTaskSupervisorNode::_addTaskService_callback()
 
-  UI->>REST: POST /mission_control change_status START
+  UI->>API: POST /api/missions/{id}/start
+  API->>REST: change_status requested_state=2
   REST->>C2I: /multi_robot/change_mission_status_request
-  C2I->>MM: MissionManager::_changeMissionStatus_callback()
+  C2I->>ORCH: direct setRequestMissionChangeStatus()
+  ORCH->>MM: /mission_<id>/mission_status_change
   MM->>FM: MissionManager::_changeAgentTaskStatuses(1)
   FM->>EDGE: FleetManagerNode::_changeAgentTaskStatus()<br/>ChangeTaskState EXECUTE
   EDGE->>AUTO: AgentTaskSupervisorNode::_set_objective_publisher_callback()
   AUTO->>AUTO: Autonomy::_motion_control_callback()
   AUTO->>EDGE: localization / autonomy_status
   EDGE->>MM: AgentTaskSupervisorNode::_feedback_publisher_callback()
-  MM->>UI: MissionManager::_publishMissionFeedback()
+  MM->>RB: /multi_robot/mission_feedback
+  RB->>API: rosbridge WebSocket frame
+  API->>UI: SSE mission.updated / planner.updated
 ```
 
 ## Read This First
@@ -90,8 +103,9 @@ sequenceDiagram
 If you only remember one thing:
 
 ```text
-UI -> C2 REST -> C2 Interface -> Orchestrator -> Mission Manager -> Planner
-   -> Fleet Manager -> Edge Agent -> Autonomy Sim -> Feedback back up
+UI -> FastAPI -> C2 REST -> C2 Interface -> Orchestrator -> Mission Manager
+   -> Planner / Fleet Manager -> Edge Agent -> Autonomy Sim
+   -> ROS feedback -> rosbridge -> FastAPI SSE -> UI
 ```
 
-`rosbridge` is only a WebSocket gateway for browser/debug access to ROS. It is not the mission brain.
+`rosbridge` is only a WebSocket gateway used by the FastAPI read adapter. The browser does not connect to it directly, and it is not the mission brain.

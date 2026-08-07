@@ -384,6 +384,47 @@ def test_contract_graph_exposes_system_contracts() -> None:
     assert graph["source_digest"]
 
 
+def test_verified_contract_atlas_is_closed_and_source_backed() -> None:
+    client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+
+    atlas = client.get("/api/contracts?include_runtime=false").json()["atlas"]
+    component_ids = {component["id"] for component in atlas["components"]}
+    interaction_ids = {interaction["id"] for interaction in atlas["interactions"]}
+
+    assert atlas["verification"]["status"] == "source_verified"
+    assert atlas["verification"]["runtime_status"] == "not_connected"
+    assert component_ids >= {
+        "browser_ui",
+        "fastapi_adapter",
+        "legacy_rest",
+        "c2_interface",
+        "orchestrator",
+        "mission_manager",
+        "planner",
+        "fleet_manager",
+        "edge_supervisor",
+        "autonomy_sim",
+        "rosbridge",
+    }
+    assert len(atlas["workflow"]["steps"]) == 15
+    assert {"stateful_rest_target", "planner_singleton", "planned_empty_tasks"} <= {
+        gap["id"] for gap in atlas["contract_gaps"]
+    }
+
+    for interaction in atlas["interactions"]:
+        assert interaction["source"] in component_ids
+        assert interaction["target"] in component_ids
+        evidence_paths = " ".join(ref["path"] for ref in interaction["source_refs"])
+        assert "/centralized_coordination/test/" not in evidence_paths
+        assert "/planner/test/" not in evidence_paths
+        assert all(ref["resolved"] for ref in interaction["source_refs"])
+
+    for step in atlas["workflow"]["steps"]:
+        assert set(step["actor_ids"]) <= component_ids
+        assert set(step["interaction_ids"]) <= interaction_ids
+        assert all(ref["resolved"] for ref in step["source_refs"])
+
+
 def test_init_approve_start_posts_to_legacy_rest() -> None:
     rest = FakeRestClient()
     client = TestClient(create_app(ROOT, rest_client=rest, rosbridge_client=FakeRosbridgeClient()))

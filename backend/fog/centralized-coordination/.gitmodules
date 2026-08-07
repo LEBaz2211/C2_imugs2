@@ -1,0 +1,18 @@
+[submodule "src/message_packages/c2_msgs"]
+	path = src/message_packages/c2_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/c2_msgs.git
+[submodule "src/message_packages/centralized_msgs"]
+	path = src/message_packages/centralized_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/centralized_msgs.git
+[submodule "src/message_packages/environment_msgs"]
+	path = src/message_packages/environment_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/environment_msgs.git
+[submodule "src/message_packages/task_msgs"]
+	path = src/message_packages/task_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/task_msgs.git
+[submodule "autonomy_msgs"]
+	path = autonomy_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/autonomy_msgs.git
+[submodule "src/message_packages/autonomy_msgs"]
+	path = src/message_packages/autonomy_msgs
+	url = https://gitlab.cylab.be/rma-ras/multi-robot-framework/submodules/custom_messages/autonomy_msgs.git

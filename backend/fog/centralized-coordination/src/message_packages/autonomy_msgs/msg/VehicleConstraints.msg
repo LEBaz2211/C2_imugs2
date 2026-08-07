@@ -1,0 +1,4 @@
+geometry_msgs/Twist max_speed
+geometry_msgs/Accel max_acceleration
+float64 max_weight
+float64 max_tilt_angle

@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .contract_atlas import build_verified_contract_atlas
+
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 ROS_CALL_KIND = {
@@ -45,6 +47,7 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
     edge_values = sorted(edges.values(), key=lambda item: (item.get("layer", ""), item.get("label", ""), item.get("id", "")))
     node_values = sorted(nodes.values(), key=lambda item: (item.get("layer", ""), item.get("kind", ""), item.get("label", "")))
     scenarios = _scenario_contracts(repo_root)
+    atlas = build_verified_contract_atlas(repo_root, runtime)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -57,6 +60,15 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
             "by_layer": dict(Counter(item.get("layer", "unknown") for item in node_values)),
             "by_kind": dict(Counter(item.get("kind", "unknown") for item in node_values)),
         },
+        "catalog": {
+            "status": "discovery_only",
+            "authoritative_view": "atlas",
+            "description": "Broad regex/AST inventory retained for search and raw evidence. It is not the verified active runtime topology.",
+            "limitations": [
+                "Vendored variants and dynamically-composed ROS names can require human classification.",
+                "Name visibility does not prove matching ROS type, endpoints, QoS, or payload behavior.",
+            ],
+        },
         "layers": [
             {"id": "system", "label": "System"},
             {"id": "http", "label": "HTTP/API"},
@@ -67,6 +79,7 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
         "nodes": node_values,
         "edges": edge_values,
         "scenarios": scenarios,
+        "atlas": atlas,
         "runtime": {
             "ros_nodes": runtime.get("nodes", []),
             "ros_topics": runtime.get("topics", []),

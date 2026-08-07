@@ -1,0 +1,2 @@
+unique_identifier_msgs/UUID autonomy_objective_id
+string<=150000 trajectory

@@ -1,0 +1,2 @@
+unique_identifier_msgs/UUID obstacle_id
+string obstacle_geofence

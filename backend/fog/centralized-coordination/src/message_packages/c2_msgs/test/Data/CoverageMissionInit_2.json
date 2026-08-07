@@ -1,0 +1,45 @@
+{
+"behavior":1,
+"vehicles":["E1C4B33F-6639-4321-A8EF-26ADC046AD8B","DC128E74-7C68-4ED3-9AF1-4A8189D4E217","6A2ECB35-CD73-4B00-9301-C583751057D2"],
+"transit":{
+	"geofence_maximize_coverage":false,
+	"vehicle_formation":2,
+	"vehicle_formation_distances":3,
+	"optimalization":{"visibility":1.0,"road_usage":1.0},
+	"desired_vehicle_constraints": {
+		"max_speed": 4,
+    		"max_acceleration": 0.1,
+    		"max_jerk": 0.01,
+    		"max_deceleration": 0.1,
+    		"max_straight_slope": 10,
+    		"max_side_slope": 3
+  		}
+	},
+"objective":{
+	"geometry":{
+		"geometry_type":"Polygon",
+		"coordinates":[
+			[2.07010,48.76359],
+			[2.0830096456,48.7598602042],
+			[2.0949758442,48.7615575373],
+			[2.1084696425,48.7646127369],
+			[2.112288642,48.7748816023],
+			[2.1123735087,48.7837077346],
+			[2.1049901096,48.8094223315],
+			[2.0868286452,48.8153629974],
+			[2.0783419795,48.812986731],
+			[2.0739289134,48.807809865],
+			[2.068582314,48.7998323993],
+			[2.0632357147,48.7893089339],
+			[2.0603502484,48.7708080028],
+			[2.065866581,48.7675830699]
+		]
+		},
+	"maximize_coverage":true,
+	"arrival_time": {
+      		"earliest": "1316615270",
+      		"target": "1316615273",
+      		"latest": "1316615271"
+		}
+	}
+}

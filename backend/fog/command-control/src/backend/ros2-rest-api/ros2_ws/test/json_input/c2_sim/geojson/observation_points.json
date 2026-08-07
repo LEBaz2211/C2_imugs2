@@ -1,0 +1,83 @@
+{
+    "type": "FeatureCollection",
+    "category": "observation_points",
+    "features": [
+        {
+            "type": "Feature",
+            "id": "--- uuid generated from C2 ---",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    2.327299118041992,
+                    48.867763659652354
+                ]
+            },
+            "properties": {
+                "weight": 0.8,
+                "maximum_time_between_visits": 40,
+                "total_observation_time": 120,
+                "total_observation_time_randomization": 40,
+                "observation_sectors": [
+                    {
+                        "azimuth_angle_interval": [
+                            20,
+                            60
+                        ],
+                        "altitude_angle_interval": [
+                            -10,
+                            30
+                        ],
+                        "horizontal_fov": 5,
+                        "sector_observation_time": 60,
+                        "sector_observation_time_randomization": 20
+                    },
+                    {
+                        "azimuth_angle_interval": [
+                            180,
+                            320
+                        ],
+                        "altitude_angle_interval": [
+                            0,
+                            45
+                        ],
+                        "horizontal_fov": 20,
+                        "sector_observation_time": 60,
+                        "sector_observation_time_randomization": 20
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "id": "--- uuid generated from C2 ---",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    2.3342514038085938,
+                    48.8678201189718
+                ]
+            },
+            "properties": {
+                "weight": 0.4,
+                "maximum_time_between_visits": 60,
+                "total_observation_time": 40,
+                "total_observation_time_randomization": 0,
+                "observation_sectors": [
+                    {
+                        "azimuth_angle_interval": [
+                            90,
+                            180
+                        ],
+                        "altitude_angle_interval": [
+                            -10,
+                            10
+                        ],
+                        "horizontal_fov": 5,
+                        "sector_observation_time": 20,
+                        "sector_observation_time_randomization": 5
+                    }
+                ]
+            }
+        }
+    ]
+}

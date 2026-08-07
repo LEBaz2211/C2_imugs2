@@ -49,14 +49,14 @@ Old launch scripts sometimes use `rmw_fastrtps_dynamic_cpp`; keep that as a depl
 | Name | Direction | Type | Payload |
 | --- | --- | --- | --- |
 | `/multi_robot/mission_init_request` | C2 -> fog | `c2_msgs/msg/InitMissionRequest` | `mission_id UUID`, `mission_config string<=10000` |
-| `/multi_robot/mission_init_response` | fog -> C2 | `c2_msgs/msg/InitMissionResponse` | `mission_id UUID`, `mission_feedback string<=10000` |
+| `/multi_robot/mission_init_response` | declared fog -> C2 | `c2_msgs/msg/InitMissionResponse` | Publisher/subscriber exist, but the active Interface callback constructs and never publishes the response |
 | `/multi_robot/change_mission_status_request` | C2 -> fog | `c2_msgs/msg/ChangeMissionStatusRequest` | `mission_id UUID`, `mission_request_status uint8` |
 | `/multi_robot/change_mission_status_response` | fog -> C2 | `c2_msgs/msg/ChangeMissionStatusResponse` | `mission_id UUID`, `mission_status uint8`, `error_message string<=2000` |
 | `/multi_robot/change_mission_vehicle_request` | C2 -> fog | `c2_msgs/msg/ChangeMissionVehicleRequest` | `mission_id UUID`, `vehicule_id_list`, `vehicle_changes uint8` |
 | `/multi_robot/change_mission_vehicle_response` | fog -> C2 | `c2_msgs/msg/ChangeMissionVehicleResponse` | `mission_id UUID` |
 | `/multi_robot/mission_feedback` | fog -> C2 | `c2_msgs/msg/MissionFeedback` | `mission_id UUID`, `mission_feedback JSON string` |
 | `/multi_robot/log` | internal/fog -> C2 | `c2_msgs/msg/SwarmLog` | `mission_id UUID`, `log`, `date`, `log_type uint8` |
-| `/multi_robot/swarm_log` | C2 interface alias | `c2_msgs/msg/SwarmLog` | same as `/multi_robot/log` |
+| `/multi_robot/swarm_log` | C2 Interface only | `c2_msgs/msg/SwarmLog` | Separate publisher with no active runtime subscriber; it is not an alias bridge for `/multi_robot/log` |
 
 ## Planner Services And Topics
 
@@ -64,11 +64,11 @@ Old launch scripts sometimes use `rmw_fastrtps_dynamic_cpp`; keep that as a depl
 | --- | --- | --- | --- |
 | `/multi_robot/planner/create` | service | `centralized_msgs/srv/CreatePlanner` | request: `id`, `priority`, `Agent[]`, `config JSON`; response: `id`, `state` |
 | `/multi_robot/planner/get_plan` | service | `centralized_msgs/srv/GetPlan` | request: `id`; response: `id`, `plan JSON` |
-| `/multi_robot/planner/set_agents` | service | `centralized_msgs/srv/UpdatePlannerAgents` | request: `id`, `Agent[]`; response: `id` |
-| `/multi_robot/planner/delete` | service | `centralized_msgs/srv/DeletePlanner` | request: `id`; response: `id`, `state` |
-| `/multi_robot/planner/delete_planner` | service | `centralized_msgs/srv/DeletePlanner` | active planner variant; keep as alias |
+| `/multi_robot/planner/set_agents` | unmatched client | `centralized_msgs/srv/UpdatePlannerAgents` | MissionManager declares a client; the active planner has no provider |
+| `/multi_robot/planner/delete` | unmatched client | `centralized_msgs/srv/DeletePlanner` | Orchestrator calls this name; the active planner does not provide it |
+| `/multi_robot/planner/delete_planner` | active service | `centralized_msgs/srv/DeletePlanner` | request: `id`; response: `id`, `state` |
 | `/multi_robot/planner/state` | topic | `std_msgs/msg/String` | planner state JSON/string |
-| `/multi_robot/planner/planner_calculated` | topic | `centralized_msgs/msg/PlanCalculated` | `id`, `plan JSON` |
+| `/multi_robot/planner/planner_calculated` | unmatched subscriber | `centralized_msgs/msg/PlanCalculated` | MissionManager subscribes, but the active planner never publishes it |
 | `/multi_robot/planner/agent` | topic | `centralized_msgs/msg/Agent` | active planner package uses `agent_id string`, `agent_profile JSON`, `nav_msgs/Odometry` |
 
 ## Fleet And Edge Services
@@ -76,10 +76,10 @@ Old launch scripts sometimes use `rmw_fastrtps_dynamic_cpp`; keep that as a depl
 | Name | Kind | Type | Payload |
 | --- | --- | --- | --- |
 | `multi_robot/fleet_manager/get_agents` | service | `centralized_msgs/srv/GetAgents` | request: `agent_id_list`; response: `Agent[]`, `error_message` |
-| `multi_robot/fleet_manager/send_tasks` | service | `c2_msgs/srv/InitMission` | request: mission/task JSON; response: mission feedback |
+| `multi_robot/fleet_manager/send_tasks` | service | `c2_msgs/srv/InitMission` | request identifies the mission; Fleet ignores the config field and reads `RuntimeDB.Planning` by mission id |
 | `multi_robot/fleet_manager/change_mission_status` | service | `c2_msgs/srv/ChangeMissionStatus` | request: mission id + status; response: status |
 | `/multi_robot/edge/agent_profile` | topic | `std_msgs/msg/String` | agent profile JSON |
-| `/multi_robot/edge/feedback` | topic | `task_msgs/msg/Feedback` | `agent_id`, `state`, `TaskFeedback[]`, localization, speed |
+| `/multi_robot/edge/feedback` | topic | `task_msgs/msg/Feedback` | `agent_id`, `state`, `TaskFeedback[]`, `nav_msgs/Odometry`; the old speed field is commented out |
 | `multi_robot/edge/connection_check` | topic | `std_msgs/msg/String` | heartbeat/check string |
 | `multi_robot/edge/agent_<uuid>/add_task` | service | `task_msgs/srv/AddTask` | `task_id`, `task_type`, `override`, `task_config JSON`, `std` |
 | `multi_robot/edge/agent_<uuid>/change_state` | service | `task_msgs/srv/ChangeState` | `requested_state -> state + feedback` |
@@ -96,7 +96,7 @@ Old launch scripts sometimes use `rmw_fastrtps_dynamic_cpp`; keep that as a depl
 | `<PREFIX>/edge/multi_robot/localization` | autonomy -> edge | `nav_msgs/msg/Odometry` | pose/twist |
 | `<PREFIX>/edge/multi_robot/vehicle_profile` | autonomy -> edge | `autonomy_msgs/msg/VehicleProfile` | vehicle state/capabilities |
 | `<PREFIX>/edge/multi_robot/detected_obstacle` | autonomy -> edge | `autonomy_msgs/msg/DetectedObstacle` | obstacle id + geofence |
-| `<PREFIX>/edge/multi_robot/autonomy_status` | autonomy -> edge | `autonomy_msgs/msg/AutonomyStatus` | objective status, ETA, distance, energy, blockages |
+| `<PREFIX>/edge/multi_robot/autonomy_status` | autonomy -> edge | `autonomy_msgs/msg/AutonomyStatus` | objective UUID, status enum, `PrimitiveStatus[]` |
 | `<PREFIX>/edge/multi_robot/autonomy_trajectory` | autonomy -> edge | `autonomy_msgs/msg/AutonomyTrajectory` | trajectory JSON/GeoJSON |
 
 ## JSON ICDs
@@ -121,6 +121,20 @@ Old JSON snippets are normalized before planning:
 | `transit.desired_speed` | `transit.desired_vehicle_constraints.max_speed` |
 | `objective.maximize_area_coverage` | `objective.maximize_coverage` |
 | scalar `objective.vehicle_orientation` | one-item array |
+| `vehicle_formation_distances` | `vehicle_formation_distance` |
+| `maximize_coverage_distances` | `maximum_coverage_distances` |
+| `transit.geofence_maximum_coverage` | `transit.geofence_maximize_coverage` |
+
+The schemas describe the intended canonical shapes, but `/api/missions/init` currently uses a partial handwritten validator rather than full JSON Schema validation. Runtime invariants can therefore be stricter than these files.
+
+## Verified Active Contract Gaps
+
+- FastAPI approve/start URLs contain a mission id, but the old REST status envelope contains only `requested_state`. `/c2_node` targets its last initialized mission.
+- The planner keeps global `current_mission_id`, `paths`, and `mission_defined` state. `GetPlan` returns the current cache rather than selecting by request id.
+- Planner output `tasks: {}` can pass the MissionManager's legacy empty-task check and still become `PLANNED`.
+- MissionFeedback is capped to the first 50 waypoints per task; `RuntimeDB.Planning` may contain a longer path.
+- Planner/UI waypoints are `[lon, lat]`; MissionFeedback serializes `[lat, lng]`; the FastAPI adapter swaps them back for the UI.
+- Canonical-to-legacy translation currently handles `optimization -> optimalization` but does not reverse every other canonical alias listed above.
 
 ## Planner Algorithms To Preserve
 

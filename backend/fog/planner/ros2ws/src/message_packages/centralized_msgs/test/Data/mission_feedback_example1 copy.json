@@ -1,0 +1,49 @@
+{
+       "behavior": 0,
+       "status": 1,
+       "date": "1991-03-26 07:00:00Z",
+       "tasks": [
+        {
+         "vehicle_id": "f17d27fc-50f6-11ec-bf63-0242ac130002",
+         "est": "1991-03-26 07:10:00Z",
+         "waypoints": [{
+          "coordinates": [-67.13734, 45.13745],
+          "orientation": 10,
+          "speed": 5,
+          "eta": "1991-03-26 07:11:00Z"
+         },{
+          "coordinates": [-70.11617, 43.68405],
+          "speed": 10,
+          "orientation": 16,
+          "eta": "1991-03-26 07:17:00Z"
+         },{
+          "coordinates": [-67.79141, 45.70258],
+          "speed": 10,
+          "orientation": 101,
+          "eta": "1991-03-26 07:31:00Z"
+         }
+         ]
+        },
+        {
+         "vehicle_id": "fcee3176-50f6-11ec-bf63-0242ac130002",
+         "est": "1991-03-26 07:10:00Z",
+         "waypoints": [{
+          "coordinates": [-67.13734, 45.13745],
+          "speed": 10,
+          "orientation": 10,
+          "eta": "1991-03-26 07:13:00Z"
+         },{
+          "coordinates": [-70.11617, 43.68405],
+          "speed": 5,
+          "orientation": 16,
+          "eta": "1991-03-26 07:28:00Z"
+         },{
+          "coordinates": [-67.79141, 45.70258],
+          "speed": 5,
+          "orientation": 101,
+          "eta": "1991-03-26 07:32:00Z"
+         }
+         ]
+        }
+       ]
+    }

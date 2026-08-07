@@ -1,0 +1,35 @@
+version: '3.5'
+
+services:
+    
+    # ROS2 
+    agent_1:
+      image: gitlab.cylab.be:8081/rma-ras/multi-robot-framework/submodules/edge-module/agent-tasks-supervisor:humble_cyclone_1.1
+      container_name: agent_1
+      command: bash -c ". launch_agent_tasks_supervisor.sh"
+      environment:
+            - AGENT_ID=97ebe7c2_012a_4a3d_b6a5_0e1a355543d0
+            - AUTONOMY_TOPIC_PREFIX=Themis_Fr
+            - ROS_DOMAIN_ID=112
+      volumes:
+            - ~/iMUGS/rosbags:/app/rosbags
+            - type: bind
+              source: ./config.yaml
+              target: /app/config.yaml
+            - type: bind
+              source: ./launch_agent_tasks_supervisor.sh
+              target: /app/launch_agent_tasks_supervisor.sh
+            - type: bind
+              source: ../../dds
+              target: /app/dds
+      restart: unless-stopped
+      network_mode: host
+      # networks:
+      #       - swarming_network
+
+
+
+# networks: 
+#   swarming_network:
+#     name: swarming_network
+

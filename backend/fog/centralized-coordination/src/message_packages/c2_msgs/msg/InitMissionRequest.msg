@@ -1,0 +1,2 @@
+unique_identifier_msgs/UUID mission_id
+string<=10000 mission_config

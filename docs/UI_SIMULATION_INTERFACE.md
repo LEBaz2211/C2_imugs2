@@ -16,7 +16,7 @@ The UI renders state and sends operator commands. It does not construct ROS mess
 
 The backend:
 
-- validates and normalizes mission JSON,
+- performs partial structural validation and normalizes mission JSON,
 - translates canonical fields and enums to legacy forms,
 - serves maps, agents, examples, and runtime state,
 - sends mission commands through the old REST bridge,
@@ -36,6 +36,8 @@ The backend:
 
 The API implementation may include experimental map/scenario helpers. They are not compatibility contracts until documented as stable.
 
+`GET /api/contracts` contains a curated `atlas` for the verified active mission path and a broader source-discovery catalog. The atlas is authoritative for the visualization; raw scanner discoveries are evidence candidates, not proof of an active runtime contract.
+
 ## Mission Commands
 
 | UI action | Backend behavior | Legacy request |
@@ -47,6 +49,8 @@ The API implementation may include experimental map/scenario helpers. They are n
 | Delete | Hide/remove adapter runtime state | no legacy deletion |
 
 Deleting through the UI does not remove ROS or MongoDB mission records. Test database cleanup is a separate, destructive action.
+
+Important legacy limitation: approve/start are mission-specific only at the FastAPI route. The old REST status body contains no mission id and targets `/c2_node`'s last initialized mission. The adapter's immediate `ACCEPTED`/`STARTED` response is optimistic until ROS feedback confirms the state.
 
 ## Live Events
 
@@ -72,12 +76,15 @@ schemas/agent_profile.schema.json
 schemas/map_feature.schema.json
 ```
 
+These schemas describe the intended contract. The current mission endpoint does not execute full JSON Schema validation; its handwritten checks cover only a subset, and legacy planner/edge code has additional runtime invariants.
+
 Important conventions:
 
 - GeoJSON and mission coordinates are `[lon, lat]`.
 - Leaflet marker coordinates are `[lat, lon]`.
 - ROS odometry is a local pose unless an adapter converts it.
 - Legacy aliases are accepted at input, normalized by the backend, and translated back only at the legacy boundary.
+- The current reverse translation covers `optimization -> optimalization`, but not every canonicalized coverage/formation alias.
 - UI-created features must be sent to the old planner as inline geometry because its baseline feature lookup does not know runtime feature ids.
 
 Allowed UI-created feature geometries:

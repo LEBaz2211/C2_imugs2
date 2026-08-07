@@ -25,6 +25,14 @@ docker compose -f docker-compose.legacy-ros.yml up --build
 ./scripts/check_legacy_ros_stack.sh
 ```
 
+Or start the initially identical, editable backend fork instead (the two ROS
+stacks cannot run together):
+
+```bash
+docker compose -f docker-compose.backend.yml up --build
+./scripts/check_backend_ros_stack.sh
+```
+
 Start the API and UI:
 
 ```bash
@@ -45,6 +53,7 @@ curl -s http://localhost:8000/api/legacy/trace | python3 -m json.tool
 | --- | --- |
 | `src/c2_imugs2/` | FastAPI adapter, mission normalization, ROS/REST adapters, maps, and modular replacement core |
 | `frontend/` | Operator UI, mission composer, Leaflet map, diagnostics, and live state |
+| `backend/` | Editable full-source fork of the legacy ROS backend |
 | `legacy_ros/` | Actual copied legacy ROS code used by the compatibility runtime |
 | `schemas/` | Canonical mission, task-plan, agent, and map-feature contracts |
 | `docs/legacy_nodes/` | Detailed inputs, outputs, behavior, and examples for each legacy node |
@@ -76,6 +85,9 @@ docker compose -f docker-compose.legacy-ros.yml up --build
 
 - [Project planning, objectives, and guardrails](PROJECT_PLANNING.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Legacy ROS component functions and robot workflows](docs/LEGACY_BACKEND_FEATURES_AND_WORKFLOWS.md)
+- [Complete single-robot mission code walkthrough](docs/SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
+- [Editable backend fork provenance](backend/FORK_PROVENANCE.md)
 - [UI/backend adapter](docs/UI_BACKEND_LEGACY_ADAPTER.md)
 - [ROS compatibility ICD](docs/ROS_COMPATIBILITY_ICD.md)
 - [Legacy mission flow](docs/LEGACY_ROS_MISSION_FLOW_DIAGRAM.md)

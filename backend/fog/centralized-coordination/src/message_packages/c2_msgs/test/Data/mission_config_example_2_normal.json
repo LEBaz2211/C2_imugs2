@@ -1,0 +1,54 @@
+{
+  "mission_id": "IUBI123",
+  "behavior": 0,
+  "vehicles":[
+    "f17d27fc-50f6-11ec-bf63-0242ac130002",
+    "fcee3176-50f6-11ec-bf63-0242ac130002",
+    "t18d27fc-50f6-11ec-bf63-0242ac130055"
+  ],
+  "start":{
+    "geometry":{
+      "feature_id": "d17d27fc-50d6-11ec-bf63-0242ac130201",
+      "geometry_type": "Polygon",
+      "coordinates":[
+        [65.123,50.465],
+        [65.123,50.465],
+        [65.123,50.465]
+      ]
+    },
+    "start_time":{
+      "earliest": "1991-03-26T22:15:00Z",
+      "target": "1991-03-26T22:15:00Z",
+      "latest": "1991-03-26T22:16:00Z"
+    }
+  },
+  "transit": {
+    "geofence": {
+      "feature_id": "d17d27fc-50d6-11ec-bf63-0242ac130202"
+    },
+    "vehicle_formation": 1,
+    "vehicle_formation_distances": 5,
+    "optimalization": {
+      "energy": 1,
+      "road_usage": 1
+    },
+    "vehicle_constraints": {
+      "desired_speed": 10
+    }
+  },
+  "objective": {
+    "geometry": {
+      "geometry_type": "Polygon",
+      "coordinates": [
+        [-67.13734, 45.13745],
+        [-66.96466, 44.8097],
+        [-68.03252,44.3252]
+      ]
+    },
+    "vehicle_formation": 4,
+    "vehicle_orientation": [-45,90,45], 
+    "maximize_coverage": true
+  }
+}
+
+  
