@@ -2,6 +2,9 @@
 
 This directory contains the minimal old ROS code needed to build and run the real legacy nodes from inside this repository.
 
+Exact component revisions, comparison scope, and local packaging exceptions are
+recorded in [SOURCE_PROVENANCE.md](SOURCE_PROVENANCE.md).
+
 The source was copied from `../multi-agent-framework` and trimmed to keep:
 
 - fog centralized coordination package and message packages
@@ -24,3 +27,13 @@ Check:
 ```bash
 ./scripts/check_legacy_ros_stack.sh
 ```
+
+The compose stack now runs an idempotent one-shot seed that places the three
+valid baseline RMA features in `MapDB.rma` before the planner starts. The
+planner retains the upstream database-backed design and adds local readiness,
+route-failure, bidirectional-road, and graph-connection compatibility patches.
+The exact Themis validation mission reached planner state `2` with `10`
+waypoints; an unreachable route reached state `4` without killing
+`/planner_node`. See the
+[comparison](../docs/LEGACY_ROS_UPSTREAM_COMPARISON.md) and
+[code walkthrough](../docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md).

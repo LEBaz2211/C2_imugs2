@@ -13,6 +13,14 @@ const runtime = db.getSiblingDB("RuntimeDB");
 });
 '
 
+docker compose -f docker-compose.legacy-ros.yml up -d --force-recreate mapdb-seed
+seed_exit_code="$(docker wait c2-imugs2-mapdb-seed)"
+if [ "$seed_exit_code" != "0" ]; then
+  docker logs c2-imugs2-mapdb-seed
+  echo "Legacy MapDB seed failed with exit code $seed_exit_code." >&2
+  exit "$seed_exit_code"
+fi
+
 docker compose -f docker-compose.legacy-ros.yml restart \
   centralized-coordination \
   planner \

@@ -131,7 +131,11 @@ The schemas describe the intended canonical shapes, but `/api/missions/init` cur
 
 - FastAPI approve/start URLs contain a mission id, but the old REST status envelope contains only `requested_state`. `/c2_node` targets its last initialized mission.
 - The planner keeps global `current_mission_id`, `paths`, and `mission_defined` state. `GetPlan` returns the current cache rather than selecting by request id.
-- Planner output `tasks: {}` can pass the MissionManager's legacy empty-task check and still become `PLANNED`.
+- MissionManager's empty-plan check recognizes only literal `"tasks":[]`. The
+  current planner now waits in state `1` for a matching cached robot and reports
+  state `4` for empty or unreachable results, so the normal path does not promote
+  `tasks: {}` to `PLANNED`; the check remains a compatibility hazard for other
+  planner implementations.
 - MissionFeedback is capped to the first 50 waypoints per task; `RuntimeDB.Planning` may contain a longer path.
 - Planner/UI waypoints are `[lon, lat]`; MissionFeedback serializes `[lat, lng]`; the FastAPI adapter swaps them back for the UI.
 - Canonical-to-legacy translation currently handles `optimization -> optimalization` but does not reverse every other canonical alias listed above.
@@ -152,5 +156,18 @@ The old planner algorithms should be wrapped behind `PlannerPort`, not imported 
 ## Compatibility Notes
 
 - Active embedded message packages differ from root `custom-msgs` in places. Prefer the message packages colocated with `centralized_coordination`, `planner`, and `agent_tasks_supervisor`.
-- The current legacy compose config loads baseline map features from local GeoJSON; the planner can also use MongoDB map collections in other deployments.
-- `docker-compose.legacy-ros.yml` intentionally runs the old ROS code as-is. Any failures there are real legacy build/runtime problems to fix in the old package or in a copied/ported ROS workspace, not hidden by a compatibility simulator.
+- The legacy planner initializes from `MapDB.rma` in practice; its direct
+  local-folder initialization remains disabled. `docker-compose.legacy-ros.yml`
+  now flattens, validates, and idempotently seeds the three valid baseline RMA
+  features before the planner starts.
+- The deployed RMA configuration uses `25 m` polygon/line graph connection
+  thresholds, and the local road graph is bidirectional. These small local
+  compatibility fixes connect the seeded geometry to the current OSM component.
+- `CreatePlanner` initializes the graph on demand when necessary and maps
+  readiness or route failures to planner state `4` without terminating ROS spin.
+  A missing live agent remains in state `1` and is retried. The FastAPI adapter
+  normalizes state `3` as `DISCONNECTED`, state `4` as `FAILED`, and treats both
+  as planner status `failed`.
+- `legacy_ros/` is based on the pinned old ROS components and preserves their
+  message, service, topic, enum, and JSON contracts. It now carries documented
+  planner reliability patches rather than being a byte-identical runtime copy.

@@ -587,7 +587,7 @@ def _add_mongo_contracts(repo_root: Path, nodes: dict[str, dict[str, Any]], edge
         "RuntimeDB.Planning": "Raw planner result JSON persisted by mission manager",
         "RuntimeDB.MissionFeedback": "Mission feedback emitted back to C2/UI",
         "RuntimeDB.Logs": "Legacy swarm and planner log records",
-        "MapDB.features": "Optional planner map feature collection",
+        "MapDB.rma": "Legacy planner map-feature collection seeded from the three valid RMA GeoJSON features",
     }
     for name, description in collections.items():
         node_id = f"mongo:{name}"
@@ -613,12 +613,12 @@ def _add_mongo_contracts(repo_root: Path, nodes: dict[str, dict[str, Any]], edge
             protocol="MongoDB",
             source_refs=source_refs,
         )
-    planner_ref = _source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py", repo_root, 70)
+    planner_ref = _source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py", repo_root, 443)
     edges["planner-mapdb"] = _edge(
         "planner-mapdb",
         "component:planner",
-        "mongo:MapDB.features",
-        "feature lookup",
+        "mongo:MapDB.rma",
+        "map construction and feature lookup",
         "mongo_read",
         "data",
         protocol="MongoDB",
@@ -644,6 +644,7 @@ def _add_system_edges(edges: dict[str, dict[str, Any]]) -> None:
 
 def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
     planner = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "multi_robot_path_planning.py"
+    mapf = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py"
     planner_node = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py"
     mission_manager = repo_root / "legacy_ros" / "fog" / "centralized-coordination" / "src" / "centralized_coordination" / "src" / "mission_manager.cpp"
     api = repo_root / "src" / "c2_imugs2" / "api.py"
@@ -651,13 +652,14 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
         {
             "id": "mission_lifecycle",
             "label": "Mission Lifecycle",
-            "summary": "Init, plan, approve, start, edge execution, and mission feedback.",
+            "summary": "Init reaches a deterministically seeded planner; a valid route continues to task execution.",
             "stages": [
                 _stage("ui_init", "UI sends Init", "component:ui", outputs=["POST /api/missions/init"]),
-                _stage("adapter_init", "Adapter normalizes and posts old REST", "component:api", source_refs=[_source_ref(api, repo_root, 219)], inputs=["MissionConfig"], outputs=["old REST action=initialize"]),
+                _stage("adapter_init", "Adapter normalizes and posts old REST", "component:api", source_refs=[_source_ref(api, repo_root, 291)], inputs=["MissionConfig"], outputs=["old REST action=initialize"]),
                 _stage("c2_topic", "Old REST publishes mission init topic", "component:c2_rest", outputs=["/multi_robot/mission_init_request"]),
-                _stage("create_planner", "Mission manager creates planner", "component:centralized", source_refs=[_source_ref(mission_manager, repo_root, 337)], inputs=["GetAgents", "MissionConfig"], outputs=["/multi_robot/planner/create"]),
-                _stage("planner_output", "Planner caches path and exposes plan", "component:planner", source_refs=[_source_ref(planner_node, repo_root, 219), _source_ref(planner_node, repo_root, 361)], outputs=["GetPlan.plan JSON"]),
+                _stage("map_prerequisite", "Compose seeds MapDB.rma and Planner initializes the graph", "component:planner", source_refs=[_source_ref(planner_node, repo_root, 164), _source_ref(planner_node, repo_root, 443), _source_ref(planner_node, repo_root, 678)], inputs=["three validated RMA GeoJSON features", "OSM data"], outputs=["mr_path_planner"], notes=["The timer or CreatePlanner readiness guard initializes the graph; failures publish planner state 4 without killing the node."]),
+                _stage("create_planner", "Mission manager requests planner creation", "component:centralized", source_refs=[_source_ref(mission_manager, repo_root, 337)], inputs=["GetAgents", "MissionConfig", "seeded or lazily initialized map"], outputs=["/multi_robot/planner/create"]),
+                _stage("planner_output", "Planner caches a non-empty path and exposes the plan", "component:planner", source_refs=[_source_ref(planner_node, repo_root, 220), _source_ref(planner_node, repo_root, 385)], outputs=["GetPlan.plan JSON", "planner state 2 or failure state 4"]),
                 _stage("feedback", "Mission manager stores planning and publishes feedback", "component:centralized", source_refs=[_source_ref(mission_manager, repo_root, 273), _source_ref(mission_manager, repo_root, 827)], outputs=["RuntimeDB.Planning", "/multi_robot/mission_feedback"]),
                 _stage("edge_start", "Approve/start sends tasks and execute status", "component:fleet", source_refs=[_source_ref(mission_manager, repo_root, 1056), _source_ref(mission_manager, repo_root, 1078)], outputs=["edge add_task", "edge change_task_state"]),
             ],
@@ -665,43 +667,42 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
         {
             "id": "single_robot_navigation",
             "label": "Single Robot NAVIGATE",
-            "summary": "One vehicle and one point objective produce one A* path.",
+            "summary": "With the seeded graph and cached robot, one nested Point produces a nearest-node A* path.",
             "stages": [
-                _stage("config", "MissionConfig behavior=0, one vehicle, Point geometry", "schema:mission_config.schema.json", inputs=["objective.geometries[].Point", "vehicles[1]", "transit.optimization.road_usage"]),
-                _stage("allocate", "Point allocated to one agent", "component:planner", source_refs=[_source_ref(planner, repo_root, 110)], outputs=["allocations[agent_id]=point"]),
-                _stage("astar", "A* path to nearest routable graph nodes", "component:planner", source_refs=[_source_ref(planner, repo_root, 184), _source_ref(planner, repo_root, 390)], outputs=["agent path [[lon,lat], ...]"]),
-                _stage("plan_json", "Planner plan JSON objectives per waypoint", "component:planner", source_refs=[_source_ref(planner_node, repo_root, 296)], outputs=["tasks[agent_id].objectives[]"]),
+                _stage("config", "Legacy Planner receives behavior=0, one vehicle, nested Point geometry", "schema:mission_config.schema.json", inputs=["objective.geometries[].Point coordinates=[[lon,lat]]", "vehicles[1]", "transit.optimalization.road_usage (ignored)"]),
+                _stage("allocate", "Point allocated to one cached agent", "component:planner", source_refs=[_source_ref(planner, repo_root, 79)], outputs=["allocations[agent_id]=[point]"]),
+                _stage("astar", "A* snaps both ends to nearest graph nodes", "component:planner", source_refs=[_source_ref(planner, repo_root, 123), _source_ref(mapf, repo_root, 71)], outputs=["agent graph-node path [[lon,lat], ...]"], notes=["Risk edges cost 100x; road_usage is ignored; exact endpoints are not appended; no route becomes planner state 4."]),
+                _stage("plan_json", "Planner plan JSON objectives per graph waypoint", "component:planner", source_refs=[_source_ref(planner_node, repo_root, 322)], outputs=["tasks[agent_id].objectives[]"]),
             ],
         },
         {
             "id": "multi_robot_navigation",
             "label": "Multi-Robot NAVIGATE",
-            "summary": "Multiple vehicles and point objectives are assigned before path planning.",
+            "summary": "Multiple cached vehicles can be assigned points, but important branches are defective.",
             "stages": [
                 _stage("config", "MissionConfig behavior=0, multiple vehicles and points", "schema:mission_config.schema.json", inputs=["vehicles[n]", "Point or MultiPoint geometries"]),
-                _stage("assign", "Hungarian when points <= vehicles; mTSP when points > vehicles", "component:planner", source_refs=[_source_ref(planner, repo_root, 114)], outputs=["agent objective allocations"]),
-                _stage("mapf", "Independent A* per agent or CBS by planner parameter", "component:planner", source_refs=[_source_ref(planner, repo_root, 199)], outputs=["paths keyed by agent_id"]),
+                _stage("assign", "Hungarian when points <= vehicles; defective mTSP call when points > vehicles", "component:planner", source_refs=[_source_ref(planner, repo_root, 84)], outputs=["agent objective allocations"], notes=["solve_mtsp indexes a list with string robot IDs and raises in the active call path."]),
+                _stage("mapf", "Independent A* per assigned agent in deployed config", "component:planner", source_refs=[_source_ref(planner, repo_root, 147)], outputs=["paths keyed by agent_id"], notes=["Global current mission/path state makes overlapping missions unsafe."]),
             ],
         },
         {
             "id": "coverage_zone",
-            "label": "Coverage / Sweep Zone",
-            "summary": "Coverage currently selects reachable coverage points; it is not a dense lawnmower sweep.",
+            "label": "Coverage / Sweep Zone Gap",
+            "summary": "Behavior 1 calls an undefined coverage_algorithm and currently raises before producing a path.",
             "stages": [
                 _stage("config", "MissionConfig behavior=1, Polygon or LineString objective", "schema:mission_config.schema.json", inputs=["objective.geometries[].Polygon", "maximize_coverage"]),
-                _stage("single", "One remaining agent selects first reachable coverage point", "component:planner", source_refs=[_source_ref(planner, repo_root, 143)], outputs=["one path to selected coverage point"]),
-                _stage("multi", "Multiple agents select MCLP coverage points, then Hungarian assignment", "component:planner", source_refs=[_source_ref(planner, repo_root, 161)], outputs=["one target per remaining agent"]),
+                _stage("undefined_helper", "Planner calls undefined coverage_algorithm", "component:planner", source_refs=[_source_ref(planner, repo_root, 102)], outputs=["NameError; no plan"]),
             ],
-            "risks": ["Current implementation does not output full sweep strips for every zone."],
+            "risks": ["Behavior 0 has a separate polygon/line candidate branch, but behavior 1 is not executable as written."],
         },
         {
             "id": "mission_roads",
-            "label": "Runtime Drawn Roads",
-            "summary": "LineString geometries in transit.roads or objective.geometries become temporary routable road graph edges.",
+            "label": "Runtime Drawn Roads Gap",
+            "summary": "The adapter can inline a LineString, but the legacy planner does not add mission geometry to its routing graph.",
             "stages": [
-                _stage("inline", "Adapter inlines runtime feature_id references", "component:api", source_refs=[_source_ref(api, repo_root, 1194)], outputs=["inline LineString geometry"]),
-                _stage("graph", "Planner augments graph with mission_line and mission_connector edges", "component:planner", source_refs=[_source_ref(planner, repo_root, 237)], outputs=["temporary road graph"]),
-                _stage("roads_only", "road_usage >= 0.999 restricts to preferred road sources", "component:planner", source_refs=[_source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py", repo_root, 25)], outputs=["osm, mission_line, mission_connector"]),
+                _stage("inline", "Adapter inlines runtime feature_id references", "component:api", source_refs=[_source_ref(api, repo_root, 1262)], outputs=["inline LineString geometry"]),
+                _stage("interpret", "Planner treats LineString as objective candidate geometry", "component:planner", source_refs=[_source_ref(planner, repo_root, 63), _source_ref(planner, repo_root, 93)], outputs=["coverage candidate nodes, not graph edges"]),
+                _stage("road_preference", "AStar reads length and risk only", "component:planner", source_refs=[_source_ref(mapf, repo_root, 32)], outputs=["road_usage has no effect"]),
             ],
         },
         {
@@ -711,7 +712,7 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
             "stages": [
                 _stage("enum", "Legacy enum declares NAVIGATE_NO_PLANNING=2", "ros_type:centralized_msgs/msg/Agent", source_refs=[_source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "message_packages" / "centralized_msgs" / "json" / "Enums.hpp", repo_root, 66)]),
                 _stage("schema", "Canonical schema allows behavior enum [0,1,2]", "schema:mission_config.schema.json", source_refs=[_source_ref(repo_root / "schemas" / "mission_config.schema.json", repo_root, 11)]),
-                _stage("planner", "Planner solve branch only supports behavior 0 and 1", "component:planner", source_refs=[_source_ref(planner, repo_root, 170)], outputs=["ValueError unsupported behavior"]),
+                _stage("planner", "Planner solve branch only recognizes behavior 0 and 1", "component:planner", source_refs=[_source_ref(planner, repo_root, 102)], outputs=["ValueError unsupported behavior 2"]),
             ],
             "risks": ["This is a real code/contract mismatch and should be shown as unsupported in the UI."],
         },

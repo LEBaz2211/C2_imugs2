@@ -206,10 +206,10 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             "MongoDB",
             "data_observability",
             "database",
-            "Legacy mission, planning, feedback, log, connected-vehicle, and vehicle-profile persistence.",
+            "Legacy runtime persistence plus the required MapDB.rma planner feature collection.",
             runtime_name="mongodb://127.0.0.1:27017",
             container="c2-imugs2-mongodb",
-            responsibilities=["RuntimeDB", "VehicleDB", "Optional MapDB"],
+            responsibilities=["RuntimeDB", "VehicleDB", "Required planner MapDB.rma"],
             tags=["mongodb", "persistence"],
             source_refs=[
                 ref("docker-compose.legacy-ros.yml", "MONGODB_CONNSTRING:", "Legacy DB connection"),
@@ -222,16 +222,16 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
         ),
         _component(
             "map_files",
-            "Map sources · GeoJSON + OSM",
+            "Planner map · MapDB.rma + OSM",
             "data_observability",
             "data_source",
-            "Read-only legacy GeoJSON plus the planner's independently-built OSMnx graph.",
-            runtime_name="/data/map/rma",
+            "MongoDB GeoJSON features used to construct and connect the planner's OSMnx graph. Compose seeds them from the mounted local folder before Planner starts.",
+            runtime_name="MapDB.rma",
             container="c2-imugs2-planner",
-            responsibilities=["Free roads/workspaces", "Risk polygons", "OSM road graph"],
-            tags=["geojson", "osmnx", "lon-lat"],
+            responsibilities=["MapDB roads/workspaces", "MapDB risk polygons", "OSM road graph"],
+            tags=["mongodb", "geojson", "osmnx", "lon-lat"],
             source_refs=[
-                ref("legacy_ros/config/config_planner.yaml", "map_folder:", "Planner map mount"),
+                ref("legacy_ros/config/config_planner.yaml", "map_feature_collection:", "MapDB collection"),
                 ref(PLANNER, "def initialize_map", "Planner map construction"),
             ],
         ),
@@ -478,14 +478,15 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             "planner",
             "Build planning graph",
             "data",
-            "GeoJSON + OSMnx",
-            "Loads local feature layers and independently builds an OSM road graph.",
+            "MongoDB GeoJSON + OSMnx",
+            "Reads MapDB.rma features, builds an OSM road graph around their centroid, and joins graph representations generated from the database features to it.",
             ["plan"],
             contract="GeoJSON coordinates [lon, lat]",
             source_refs=[
-                ref("legacy_ros/config/config_planner.yaml", "map_folder:", "Mounted feature root"),
+                ref("legacy_ros/config/config_planner.yaml", "map_feature_collection:", "MapDB feature collection"),
                 ref(PLANNER, "def initialize_map", "Graph initialization"),
             ],
+            notes=["Compose idempotently seeds the three valid RMA features; CreatePlanner also has a synchronous readiness guard."],
         ),
         _interaction(
             "planner_state",
@@ -503,7 +504,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
                 ref(PLANNER, "'/multi_robot/planner/state'", "Publisher"),
                 ref(f"{CENTRAL}/mission_manager.cpp", '"/multi_robot/planner/state"', "Subscriber"),
             ],
-            notes=["Planner READY/planned state is not proof that tasks contain any waypoints."],
+            notes=["The local timer rejects empty paths before state 2 and publishes state 4 on solver failure; mission feedback remains the execution-facing contract."],
         ),
         _interaction(
             "mission_get_plan",
@@ -899,12 +900,12 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             ],
         ),
         _gap(
-            "planned_empty_tasks",
-            "critical",
-            "PLANNED can contain tasks: {}",
-            "The planner can serialize an empty task map, while MissionManager's failure check looks for tasks: [] and otherwise marks the mission PLANNED.",
+            "legacy_empty_task_sentinel",
+            "medium",
+            "MissionManager's empty-plan sentinel has the wrong JSON shape",
+            "Planner now rejects empty paths before state 2, but MissionManager still checks only tasks: []; the protection lives at the planner boundary.",
             [
-                ref(PLANNER, 'mission = {"mission_id": self.current_mission_id, "tasks": tasks}', "Empty dict is serializable"),
+                ref(PLANNER, 'mission = {"mission_id": mission_id, "tasks": tasks}', "Empty dict is serializable"),
                 ref(f"{CENTRAL}/mission_manager.cpp", 'result->plan.find("\\"tasks\\":[]")', "Wrong empty check"),
             ],
         ),
@@ -1040,7 +1041,7 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
                         "primitives": [
                             {
                                 "parameters": {
-                                    "coordinates": OBJECTIVE,
+                                    "coordinates": "<nearest graph-node [lon,lat]>",
                                     "speed": 4.0,
                                     "max_speed": 4.0,
                                 }
@@ -1056,7 +1057,7 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
         "status": 1,
         "status_name": "PLANNED",
         "path_status": "received",
-        "planned_paths": {AGENT_ID: [START, OBJECTIVE]},
+        "planned_paths": {AGENT_ID: ["<nearest start graph-node>", "<nearest destination graph-node>"]},
     }
     steps = [
         _step(
@@ -1163,15 +1164,16 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
         _step(
             9,
             "plan",
-            "Create planner job and compute the path",
-            "Planner combines live Agent state, legacy mission JSON, local GeoJSON, and its own OSMnx graph.",
+            "Create the planner and calculate a route",
+            "Compose seeds MapDB.rma first. Planner's timer or synchronous CreatePlanner guard combines cached live Agent state, legacy mission JSON, MapDB features, and the OSMnx graph.",
             "plan",
             ["mission_manager", "fleet_manager", "planner", "map_files"],
             ["mission_create_planner", "fleet_agent_topic", "planner_map"],
             input={"id": MISSION_ID, "agents": [AGENT_ID], "config": "<legacy JSON>"},
-            output={"planner_state": 2, "cached_paths": {AGENT_ID: [START, OBJECTIVE]}},
-            transformations=["0 initialized → 1 planning → 2 planned.", "Path waypoints remain [lon, lat]."],
+            output={"success": {"planner_state": 2, "cached_paths": {AGENT_ID: "nearest graph-node path"}}, "failure": {"planner_state": 4, "cached_paths": {}}},
+            transformations=["Success: 0 initialized → 1 planning → 2 planned; failure: state 4 without node termination.", "Both endpoints snap to graph nodes; road_usage is ignored; risk edges cost 100x."],
             source_refs=[ref(PLANNER, "new_paths = self.mr_path_planner.solve_mission", "Path solve")],
+            notes=["No matching live agent remains in state 1; later steps require a non-empty robot-keyed plan."],
         ),
         _step(
             10,
@@ -1258,8 +1260,8 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
     ]
     return {
         "id": "themis_navigate_lifecycle",
-        "label": "Themis Fr road NAVIGATE · Init → Plan → Execute → Complete",
-        "summary": "One verified example follows the same mission data through every serialization, state transition, and transport boundary.",
+        "label": "Themis Fr NAVIGATE · verified seeded execution",
+        "summary": "The verified path seeds MapDB.rma, creates a 10-waypoint Themis route, and continues through dispatch, execution, and feedback.",
         "example": {
             "mission_id": MISSION_ID,
             "agent_id": AGENT_ID,

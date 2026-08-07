@@ -379,8 +379,12 @@ def test_contract_graph_exposes_system_contracts() -> None:
     assert "http:POST /api/missions/init" in node_ids
     assert "ros:service:/multi_robot/planner/create" in node_ids
     assert "schema:mission_config.schema.json" in node_ids
+    assert "mongo:MapDB.rma" in node_ids
     assert "mission_lifecycle" in scenario_ids
     assert "unsupported_no_planning" in scenario_ids
+    scenarios = {scenario["id"]: scenario for scenario in graph["scenarios"]}
+    assert "undefined coverage_algorithm" in scenarios["coverage_zone"]["summary"]
+    assert "does not add mission geometry" in scenarios["mission_roads"]["summary"]
     assert graph["source_digest"]
 
 
@@ -407,9 +411,16 @@ def test_verified_contract_atlas_is_closed_and_source_backed() -> None:
         "rosbridge",
     }
     assert len(atlas["workflow"]["steps"]) == 15
-    assert {"stateful_rest_target", "planner_singleton", "planned_empty_tasks"} <= {
+    assert {
+        "stateful_rest_target",
+        "planner_singleton",
+        "legacy_empty_task_sentinel",
+    } <= {
         gap["id"] for gap in atlas["contract_gaps"]
     }
+    planner_step = next(step for step in atlas["workflow"]["steps"] if step["id"] == "plan")
+    assert planner_step["output"]["success"]["planner_state"] == 2
+    assert planner_step["output"]["failure"] == {"planner_state": 4, "cached_paths": {}}
 
     for interaction in atlas["interactions"]:
         assert interaction["source"] in component_ids
@@ -606,15 +617,15 @@ def test_planning_diagnostics_includes_scenario_matrix(tmp_path: Path) -> None:
     assert "total_cost_with_endpoint_penalty_m" in ok_scenarios[0]["metrics"]
 
 
-def test_inline_user_feature_refs_leaves_legacy_feature_ids_alone(tmp_path: Path) -> None:
+def test_inline_user_feature_refs_leaves_mapdb_feature_ids_alone(tmp_path: Path) -> None:
     mission = {
         "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
         "behavior": 0,
         "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
-        "objective": {"geometries": [{"feature_id": "legacy-known-by-planner"}]},
+        "objective": {"geometries": [{"feature_id": "mapdb-known-by-planner"}]},
     }
 
-    assert _inline_user_feature_refs(mission, tmp_path)["objective"]["geometries"] == [{"feature_id": "legacy-known-by-planner"}]
+    assert _inline_user_feature_refs(mission, tmp_path)["objective"]["geometries"] == [{"feature_id": "mapdb-known-by-planner"}]
 
 
 def test_real_legacy_rest_payload_uses_old_optimization_spelling() -> None:
@@ -719,6 +730,8 @@ def test_planner_ready_state_does_not_promote_mission_status_without_feedback() 
                 "planners": [
                     {"mission_id": "7ae5fb5a-bf4f-431f-8d39-5f750ac288f6", "state": 2},
                     {"mission_id": "9f74e8da-bce7-4101-b555-e36687beb8df", "state": 1},
+                    {"mission_id": "11111111-2222-4333-8444-555555555555", "state": 4},
+                    {"mission_id": "22222222-3333-4444-8555-666666666666", "state": 3},
                 ]
             }
         }
@@ -730,3 +743,8 @@ def test_planner_ready_state_does_not_promote_mission_status_without_feedback() 
     assert "status_name" not in updates[0]
     assert updates[1]["planner_state_name"] == "PLANNING"
     assert "status_name" not in updates[1]
+    assert updates[2]["planner_state_name"] == "FAILED"
+    assert updates[2]["planner_status"] == "failed"
+    assert "status_name" not in updates[2]
+    assert updates[3]["planner_state_name"] == "DISCONNECTED"
+    assert updates[3]["planner_status"] == "failed"

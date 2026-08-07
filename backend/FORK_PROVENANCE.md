@@ -1,7 +1,7 @@
 # Editable ROS Backend Fork
 
 This directory is the working copy of the legacy ROS backend. It exists so the
-backend can evolve without changing the runnable comparison baseline in
+backend can evolve separately from the runnable compatibility runtime in
 `legacy_ros/`.
 
 ## Baseline
@@ -33,8 +33,13 @@ backend/
 
 This is intentionally a placeholder fork, not a redesigned architecture. Its
 ROS message/service definitions, topic/service names, numeric enums, and JSON
-contracts are unchanged. Future refactors should be made here and compared
-against `legacy_ros/` one boundary at a time.
+contracts were unchanged at the copy point. `legacy_ros/` was later
+resynchronized with `multi-agent-framework` and then received narrow runtime
+fixes: deterministic `MapDB.rma` seeding, guarded map readiness and error state
+`4`, explicit no-route handling, bidirectional local roads, and the `25 m` RMA
+connection thresholds. The two planner trees therefore intentionally differ.
+See
+[`docs/LEGACY_ROS_UPSTREAM_COMPARISON.md`](../docs/LEGACY_ROS_UPSTREAM_COMPARISON.md).
 
 ## Run The Fork
 
@@ -65,7 +70,8 @@ These are runtime data and should not be treated as source.
 
 The FastAPI map reader and experimental Scenario Lab launcher still default to
 paths and an edge image named for `legacy_ros/`. The initial trees are
-identical, so this does not affect parity testing. Those dependencies must
+historically identical at commit `9db7b44`; current planner behavior is not.
+Those dependencies must
 become configurable before later backend changes to maps, launch scripts, or
 the edge image are selected as the default UI runtime.
 
@@ -76,11 +82,12 @@ The following checks every version-controlled baseline file. No output from
 
 ```bash
 count=0
+baseline=9db7b44d70ce89c8dbf58e85320cf43f69e948bf
 while IFS= read -r source; do
   relative="${source#legacy_ros/}"
-  cmp --silent "$source" "backend/$relative"
+  cmp --silent <(git show "$baseline:$source") "backend/$relative"
   count=$((count + 1))
-done < <(git ls-files legacy_ros)
+done < <(git ls-tree -r --name-only "$baseline" -- legacy_ros)
 printf 'verified files: %s\n' "$count"
 ```
 

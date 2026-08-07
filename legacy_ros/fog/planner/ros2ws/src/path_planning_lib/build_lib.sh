@@ -1,21 +1,15 @@
-#!/usr/bin/env bash
-set -euo pipefail
+# Build FIelds2Cover Library
+cd Fields2Cover;
+mkdir -p build;
+cd build;
+cmake -DCMAKE_BUILD_TYPE=Release -DUSE_ORTOOLS_RELEASE=ON ..;
+make -j$(nproc);
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+make install;
 
-if [ -d Fields2Cover ]; then
-  cd Fields2Cover
-  mkdir -p build
-  cd build
-  cmake -DCMAKE_BUILD_TYPE=Release -DUSE_ORTOOLS_RELEASE=ON ..
-  make -j"$(nproc)"
-  make install
-  cd "$SCRIPT_DIR"
-else
-  echo "Fields2Cover source not vendored; skipping optional Fields2Cover native build."
-fi
 
 # Build Path Planning Lib Library
-python3 "$SCRIPT_DIR/setup.py" bdist_wheel
-cd dist && python3 -m pip install *.whl --force-reinstall --no-deps
+cd ..
+python3 /app/ros2ws/src/path_planning_lib/setup.py bdist_wheel
+cd dist && pip3 install *.whl --force-reinstall
+

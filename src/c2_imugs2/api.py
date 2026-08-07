@@ -682,7 +682,7 @@ def _planning_scenario_analysis(
         "model": {
             "kind": "adapter_diagnostic_graph",
             "important_limit": "This does not command ROS. It isolates node snapping, source filters, and endpoint-cost assumptions using the adapter road overlays.",
-            "legacy_planner_issue_to_watch": "The old planner chooses nearest graph nodes first, runs A*, then prepends/appends exact start/objective points. Those endpoint legs are not part of A* route selection.",
+            "legacy_planner_issue_to_watch": "The legacy planner snaps both endpoints to graph nodes and returns only that graph-node path. This adapter diagnostic adds the exact endpoint legs for visibility; they are not planner output or part of A* route selection.",
         },
         "graph_summaries": graph_summaries,
         "scenarios": scenarios,
@@ -941,6 +941,8 @@ def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], sta
             "notes": ["Graph nodes exist, but candidate start/end road nodes are disconnected under this scenario filter."],
         }
 
+    # The legacy ROS planner returns only graph nodes. The diagnostic adds
+    # exact endpoints to its display route so snap gaps remain visible to users.
     route = [start, *[nodes[node] for node in best["node_path"]], objective]
     visible_length = _route_length_m(route)
     start_snap = float(best["start"]["distance_m"])
@@ -948,9 +950,9 @@ def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], sta
     segments = _scenario_segments(graph, start, objective, best["node_path"], start_snap, end_snap)
     notes = []
     if start_snap > 25 or end_snap > 25:
-        notes.append("Large endpoint snap: old A* route selection may ignore a visible off-road leg.")
+        notes.append("Large endpoint snap: the legacy planner omits the exact endpoint legs; this diagnostic draws them only for visibility.")
     if endpoint_penalty == 0:
-        notes.append("Endpoint snap is reported but not charged in this scenario cost, matching the legacy concern.")
+        notes.append("Endpoint snap is reported but not charged here; the legacy A* optimizes only its graph-node path.")
     return {
         "id": scenario_def["id"],
         "label": scenario_def["label"],
@@ -1262,9 +1264,11 @@ def _mission_updates_from_planner_state(payload: dict[str, Any]) -> list[dict[st
 def _inline_user_feature_refs(mission_config: dict[str, Any], repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
     """Replace runtime UI feature_id references with inline geometry for the legacy planner.
 
-    The old planner can resolve feature_id values only from its local GeoJSON map folders.
-    UI-created runtime features live in the adapter's user_features file, so they must be
-    sent as literal geometry in mission_config.
+    The legacy planner resolves feature_id values only from its configured
+    MapDB collection. UI-created features live in the adapter's user_features file and
+    are not seeded there, so they must cross the mission boundary as literal geometry.
+    Inlining preserves the contract but does not make every geometry a routing-graph
+    input; for example, the legacy planner does not add transit roads to its graph.
     """
     normalized = deepcopy(mission_config)
     user_geometries = _user_feature_geometry_index(repo_root, map_name)
@@ -1372,7 +1376,7 @@ def _planner_status_from_planner_state(planner_state: Any) -> str:
         return "planned"
     if name == "PLANNING":
         return "planning"
-    if name == "FAILED":
+    if name in {"DISCONNECTED", "FAILED"}:
         return "failed"
     return "waiting_for_feedback"
 
@@ -1386,7 +1390,8 @@ def _planner_state_name(planner_state: Any) -> str:
         0: "IDLE",
         1: "PLANNING",
         2: "READY",
-        3: "FAILED",
+        3: "DISCONNECTED",
+        4: "FAILED",
     }.get(state_id, f"UNKNOWN ({state_id})")
 
 

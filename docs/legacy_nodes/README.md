@@ -103,4 +103,12 @@ c2_node -> c2_interface_node -> orchestrator_node -> mission_manager_node
 
 For planner understanding, start with [planner_node.md](planner_node.md), then read the parts of [mission_manager_node.md](mission_manager_node.md) and [fleet_manager_node.md](fleet_manager_node.md) that explain how planner inputs are collected.
 
+The legacy compose stack now runs an idempotent `mapdb-seed` job before starting
+the planner. It loads the three valid RMA baseline features into `MapDB.rma`.
+`CreatePlanner` also has a readiness guard: it initializes the database-backed
+graph synchronously when needed and returns planner error state `4` without
+terminating the node if map initialization fails. The complete verified robot
+mission is traced in the
+[legacy single-robot walkthrough](../LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md).
+
 For task JSON vocabulary, especially `primitive`, `objective`, and `waypoint`, read [primitives.md](primitives.md).

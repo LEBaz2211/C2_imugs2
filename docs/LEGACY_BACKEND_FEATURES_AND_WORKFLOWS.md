@@ -538,9 +538,11 @@ The default robot is Themis Fr with UUID
 
 ### W2. Run One Robot To One Destination
 
-For the full source-level path through this workflow, including exact line
-links in every file, see the
-[single-robot mission code walkthrough](SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md).
+For the full source-level path through the editable `backend/` workflow, see the
+[editable-backend walkthrough](SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md). For
+the current vendored runtime—including its deterministic MapDB seed, planner
+readiness guard, and exact `legacy_ros/` line links—see the
+[legacy ROS walkthrough](LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md).
 
 Relevant mission fields:
 
@@ -573,6 +575,9 @@ robot reaches final waypoint
 ```
 
 Wait for a non-empty plan before Approve and for `ACCEPTED` before Start.
+The current legacy compose uses `25 m` graph-connection thresholds, waits for
+the live robot cache instead of publishing an empty plan, and has been verified
+to produce a real non-empty Themis route from a clean seeded volume.
 
 ### W3. Send One Robot To A Coverage Area
 
@@ -687,5 +692,8 @@ MissionHandler.cpp -> c2_rest.cpp -> c2_interface_node.cpp
 ```
 
 More exhaustive per-node interface tables remain in
-[Legacy ROS Node Contracts](legacy_nodes/README.md). The editable source is in
-[backend](../backend/); `legacy_ros/` remains the unchanged comparison oracle.
+[Legacy ROS Node Contracts](legacy_nodes/README.md). The replacement fork is in
+[backend](../backend/); `legacy_ros/` is based on the pinned upstream snapshot
+and carries the compatibility-preserving seed/readiness/route fixes recorded in
+the
+[comparison](LEGACY_ROS_UPSTREAM_COMPARISON.md).

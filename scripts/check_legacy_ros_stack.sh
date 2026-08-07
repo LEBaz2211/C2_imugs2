@@ -5,6 +5,9 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.legacy-ros.yml}"
 STACK_PREFIX="${STACK_PREFIX:-c2-imugs2}"
 STACK_LABEL="${STACK_LABEL:-Legacy}"
 ROS_CONTAINER="${ROS_CONTAINER:-${STACK_PREFIX}-centralized-coordination}"
+CHECK_MAPDB_SEED="${CHECK_MAPDB_SEED:-1}"
+MONGO_CONTAINER="${MONGO_CONTAINER:-${STACK_PREFIX}-mongodb}"
+MAPDB_SEED_CONTAINER="${MAPDB_SEED_CONTAINER:-${STACK_PREFIX}-mapdb-seed}"
 
 required_containers=(
   "${STACK_PREFIX}-mongodb"
@@ -51,6 +54,23 @@ container_running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]
 }
 
+container_completed_successfully() {
+  local container="$1"
+  [ "$(docker inspect -f '{{.State.Status}}:{{.State.ExitCode}}' "$container" 2>/dev/null || true)" = "exited:0" ]
+}
+
+mapdb_seed_is_valid() {
+  docker exec "$MONGO_CONTAINER" mongosh --quiet --eval '
+const expected = [
+  "60bae762-6c7a-4b11-8803-556fdfee4425",
+  "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e",
+  "5711e91f-f8e5-4ae2-b4a0-8ceb7e73d098",
+];
+const features = db.getSiblingDB("MapDB").getCollection("rma");
+quit(expected.every((id) => features.countDocuments({"properties.feature_id": id}) === 1) ? 0 : 1);
+' >/dev/null
+}
+
 has_line() {
   local haystack="$1"
   local needle="$2"
@@ -64,6 +84,11 @@ echo
 for container in "${required_containers[@]}"; do
   check "container running: $container" container_running "$container"
 done
+
+if [ "$CHECK_MAPDB_SEED" = "1" ]; then
+  check "map seed completed: $MAPDB_SEED_CONTAINER" container_completed_successfully "$MAPDB_SEED_CONTAINER"
+  check "MapDB.rma contains the three baseline features" mapdb_seed_is_valid
+fi
 
 nodes="$(docker exec "$ROS_CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash && source /app/centralized_coordination/install/setup.bash && ros2 node list' 2>/dev/null || true)"
 topics="$(docker exec "$ROS_CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash && source /app/centralized_coordination/install/setup.bash && ros2 topic list' 2>/dev/null || true)"

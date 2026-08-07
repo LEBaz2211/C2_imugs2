@@ -13,15 +13,19 @@ flowchart LR
   REST -->|/multi_robot/change_mission_status_request| C2I
 
   C2I -->|in-process InterfaceC2State| ORCH[orchestrator_node<br/>OrchestratorNode]
-  ORCH -->|creates per mission| MM[mission_<mission_id><br/>MissionManager]
+  ORCH -->|creates per mission| MM[mission_UUID<br/>MissionManager]
+
+  MAP[baseline RMA GeoJSON] --> SEED[mapdb-seed]
+  SEED -->|validated idempotent upsert| DB[(MapDB.rma)]
 
   MM -->|get agents| FM[fleet_manager_node<br/>FleetManagerNode]
   FM -->|Agent msg| PLANNER[planner_node<br/>PlannerNode]
+  DB -->|roads, geofence, risk| PLANNER
   MM -->|create/get plan| PLANNER
   PLANNER -->|task_plan JSON| MM
 
   MM -->|send tasks / task state| FM
-  FM -->|AddTask / ChangeTaskState| EDGE[agent_<uuid><br/>AgentTaskSupervisorNode]
+  FM -->|AddTask / ChangeTaskState| EDGE[agent_UUID<br/>AgentTaskSupervisorNode]
 
   EDGE -->|AutonomySetObjective| AUTO[autonomy_test_node_Themis_Fr<br/>Autonomy sim]
   AUTO -->|localization / status / profile| EDGE
@@ -37,6 +41,14 @@ flowchart LR
 
 ## Mission Sequence
 
+The sequence below is the current clean-volume path. Compose first runs the
+idempotent map seed and starts the planner only after the three required RMA
+features have been verified. `CreatePlanner` synchronously initializes the graph
+if the periodic poll has not done so yet. Readiness and route errors return
+planner state `4`; they no longer terminate the planner process. See the
+[legacy single-robot walkthrough](LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
+for exact source links.
+
 ```mermaid
 sequenceDiagram
   participant UI as UI / Operator
@@ -44,12 +56,18 @@ sequenceDiagram
   participant REST as c2_node<br/>C2
   participant C2I as c2_interface_node<br/>Interface
   participant ORCH as orchestrator_node
-  participant MM as mission_<id><br/>MissionManager
+  participant MM as mission_UUID<br/>MissionManager
   participant FM as fleet_manager_node
+  participant SEED as mapdb-seed
+  participant DB as MapDB.rma
   participant PL as planner_node
-  participant EDGE as agent_<uuid>
+  participant EDGE as agent_UUID
   participant AUTO as autonomy_test_node
   participant RB as rosbridge_websocket
+
+  SEED->>DB: flatten, validate, and upsert 3 baseline features
+  DB-->>SEED: required feature IDs verified
+  Note over SEED,PL: Compose starts planner after seed exits successfully
 
   UI->>API: POST /api/missions/init<br/>canonical MissionConfig
   API->>API: normalize, validate, inline runtime features
@@ -66,18 +84,23 @@ sequenceDiagram
   MM->>FM: MissionManager::_createPlanner()<br/>multi_robot/fleet_manager/get_agents
   FM->>MM: FleetManagerNode::GetAgents_callback()
   MM->>PL: /multi_robot/planner/create
-  PL->>PL: PlannerNode.set_mission_service_callback()
-  PL->>PL: PlannerNode.planning_timer_callback()
-  PL->>MM: /multi_robot/planner/state = planned
-  MM->>PL: MissionManager::_requestPlanning()<br/>/multi_robot/planner/get_plan
-  PL->>MM: PlannerNode.get_plan_service_callback()<br/>task_plan JSON
-  MM->>MM: MissionManager::_register_planning_result()
+  PL->>DB: verify features and initialize graph if needed
+  alt Map and mission accepted
+    PL->>PL: PlannerNode.planning_timer_callback()
+    PL->>MM: /multi_robot/planner/state = 0 then 1 then 2
+    MM->>PL: MissionManager::_requestPlanning()<br/>/multi_robot/planner/get_plan
+    PL->>MM: PlannerNode.get_plan_service_callback()<br/>non-empty task_plan JSON
+    MM->>MM: MissionManager::_register_planning_result()
+  else Readiness or route failure
+    PL-->>MM: CreatePlanner response or planner state = 4
+    Note over UI,MM: Do not approve or start a mission without a non-empty plan
+  end
 
   UI->>API: POST /api/missions/{id}/approve
   API->>REST: change_status requested_state=1
   REST->>C2I: /multi_robot/change_mission_status_request
   C2I->>ORCH: direct setRequestMissionChangeStatus()
-  ORCH->>MM: /mission_<id>/mission_status_change
+  ORCH->>MM: /mission_UUID/mission_status_change
   MM->>FM: MissionManager::_sendAgentTasks()
   FM->>EDGE: FleetManagerNode::_sendAgentTask()<br/>AddTask
   EDGE->>EDGE: AgentTaskSupervisorNode::_addTaskService_callback()
@@ -86,7 +109,7 @@ sequenceDiagram
   API->>REST: change_status requested_state=2
   REST->>C2I: /multi_robot/change_mission_status_request
   C2I->>ORCH: direct setRequestMissionChangeStatus()
-  ORCH->>MM: /mission_<id>/mission_status_change
+  ORCH->>MM: /mission_UUID/mission_status_change
   MM->>FM: MissionManager::_changeAgentTaskStatuses(1)
   FM->>EDGE: FleetManagerNode::_changeAgentTaskStatus()<br/>ChangeTaskState EXECUTE
   EDGE->>AUTO: AgentTaskSupervisorNode::_set_objective_publisher_callback()
@@ -109,3 +132,7 @@ UI -> FastAPI -> C2 REST -> C2 Interface -> Orchestrator -> Mission Manager
 ```
 
 `rosbridge` is only a WebSocket gateway used by the FastAPI read adapter. The browser does not connect to it directly, and it is not the mission brain.
+
+The deployed RMA planner uses `25 m` local-to-OSM graph connection thresholds,
+and local road LineStrings are traversable in both directions. The real stack
+has been verified to produce a non-empty single-robot plan through this path.

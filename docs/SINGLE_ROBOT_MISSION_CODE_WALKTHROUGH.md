@@ -169,7 +169,7 @@ sequenceDiagram
 
     REST->>IF: InitMissionRequest
     IF-->>OR: shared new-mission flag
-    OR->>MM: create /mission_<uuid>
+    OR->>MM: create /mission_UUID
     MM->>FM: GetAgents(robot UUID)
     MM->>PL: CreatePlanner(config, robot data)
     PL->>PL: point allocation + A* route

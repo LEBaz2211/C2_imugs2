@@ -71,6 +71,13 @@ Planner state values used internally:
 
 ### 1. Init Mission Becomes A Plan
 
+The compose stack seeds `MapDB.rma` before starting the planner. If the planner's
+graph is not ready when this node calls `/multi_robot/planner/create`, the
+planner initializes it synchronously from the seeded features. Initialization
+errors return planner state `4` without terminating `/planner_node`. See the
+[legacy walkthrough](../LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md) for the
+complete verified path.
+
 Loaded mission config:
 
 ```json
@@ -98,12 +105,13 @@ Loaded mission config:
 Sequence:
 
 ```text
-1. State NONE calls fleet_manager/get_agents for f9992bb3-...
-2. Fleet manager returns Agent with odometry near [4.392588, 50.844317].
-3. Mission manager calls /multi_robot/planner/create.
-4. Planner publishes state 2 for this mission.
-5. Mission manager calls /multi_robot/planner/get_plan.
-6. Plan is stored in RuntimeDB.Planning and mission status becomes PLANNED=1.
+1. The compose seed upserts and verifies the three baseline `MapDB.rma` features.
+2. State NONE calls fleet_manager/get_agents for f9992bb3-...
+3. Fleet manager returns Agent with odometry near [4.392588, 50.844317].
+4. Mission manager calls /multi_robot/planner/create.
+5. Planner initializes its graph if needed, then publishes states 0, 1, and 2.
+6. Mission manager calls /multi_robot/planner/get_plan.
+7. The non-empty plan is stored in RuntimeDB.Planning and mission status becomes PLANNED=1.
 ```
 
 ### 2. Approve Then Start Dispatches Edge Tasks
@@ -160,7 +168,12 @@ Mission manager behavior:
 
 ## Gotchas
 
-- The mission manager checks for the literal string `"tasks":[]` to detect empty planning. The planner normally returns an object under `"tasks"`, so an empty object can still be treated as planned.
+- The mission manager still checks only for the literal string `"tasks":[]` to
+  detect empty planning. The patched planner prevents the normal mission path
+  from publishing state `2` for a missing robot, empty result, or unreachable
+  route: it waits in state `1` for robot data and reports state `4` for planning
+  errors. The MissionManager check remains too shape-specific for another
+  planner implementation.
 - Published mission feedback truncates each task to the first 50 remaining waypoints.
 - The internal feedback structs keep `TaskId` and `waypoint_id`, but the generated legacy feedback JSON serializer emits `vehicle_id`, `waypoints`, and `est`; it does not emit `task_id` or `waypoint_id`.
 - Planner task coordinates are `[lon, lat]`; mission feedback waypoint coordinates are serialized as `[lat, lng]`.
