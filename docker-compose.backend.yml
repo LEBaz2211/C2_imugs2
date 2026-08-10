@@ -16,6 +16,28 @@ services:
       retries: 5
       start_period: 5s
 
+  mapdb-seed:
+    image: mongo:7
+    container_name: c2-imugs2-backend-mapdb-seed
+    network_mode: host
+    environment:
+      MAP_SEED_ROOT: /seed/rma
+      MAP_DATABASE: MapDB
+      MAP_COLLECTION: rma
+      MAP_REQUIRED_FEATURE_IDS: 60bae762-6c7a-4b11-8803-556fdfee4425,dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e,5711e91f-f8e5-4ae2-b4a0-8ceb7e73d098
+    volumes:
+      - ./backend/config/data/map/rma:/seed/rma:ro
+      - ./backend/docker/seed-mapdb.js:/seed/seed-mapdb.js:ro
+    command:
+      - mongosh
+      - --quiet
+      - mongodb://127.0.0.1:27017/MapDB
+      - /seed/seed-mapdb.js
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
   mongo-express:
     image: mongo-express:1.0.2-20
     container_name: c2-imugs2-backend-mongo-express
@@ -64,11 +86,14 @@ services:
     volumes:
       - ./backend/config/config_planner.yaml:/app/config.yaml:ro
       - ./backend/config/data/map:/data/map:ro
+      - ./data/runtime:/runtime:ro
       - ./data/backend-planresults:/app/data/.planresults
-    command: ros2 run planner planner_node --ros-args --params-file /app/config.yaml
+    command: bash -lc 'if [ -f /runtime/active_planner.yaml ]; then exec ros2 run planner planner_node --ros-args --params-file /runtime/active_planner.yaml; else exec ros2 run planner planner_node --ros-args --params-file /app/config.yaml; fi'
     depends_on:
       mongodb:
         condition: service_healthy
+      mapdb-seed:
+        condition: service_completed_successfully
 
   c2-ros-rest:
     build:

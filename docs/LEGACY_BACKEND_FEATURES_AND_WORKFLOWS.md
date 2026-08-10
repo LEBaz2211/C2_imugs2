@@ -695,5 +695,6 @@ More exhaustive per-node interface tables remain in
 [Legacy ROS Node Contracts](legacy_nodes/README.md). The replacement fork is in
 [backend](../backend/); `legacy_ros/` is based on the pinned upstream snapshot
 and carries the compatibility-preserving seed/readiness/route fixes recorded in
-the
-[comparison](LEGACY_ROS_UPSTREAM_COMPARISON.md).
+the [comparison](LEGACY_ROS_UPSTREAM_COMPARISON.md). The editable backend fork
+was synchronized with those runtime fixes on 2026-08-10; its separate compose
+file retains backend-specific container names and runtime data directories.

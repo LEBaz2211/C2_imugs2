@@ -215,6 +215,10 @@ def generate_graph_from_linestring(linestring):
         graph.nodes[NODE_IDs]['x']= float(cords[k][0])
         if(k>0):
             graph.add_edge(NODE_IDs+1,NODE_IDs)
+            # A free road LineString describes traversable geometry, not a
+            # one-way traffic rule.  Keep both directions so a robot snapped
+            # near the final coordinate can still route back along the road.
+            graph.add_edge(NODE_IDs,NODE_IDs+1)
 #         i=i-1
         NODE_IDs=NODE_IDs-1
                     

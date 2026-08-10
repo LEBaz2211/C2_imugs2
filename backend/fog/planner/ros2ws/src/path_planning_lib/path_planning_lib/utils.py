@@ -127,11 +127,12 @@ def distance_between_coordinates(lat1, lon1, lat2, lon2):
     # Earth's radius in kilometers
     R = 6371
 
-    # Calculate the angular separation. Floating point rounding can push this
-    # value just outside [-1, 1] for nearly identical coordinates.
-    cosine_delta = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
-    cosine_delta = max(-1.0, min(1.0, cosine_delta))
-    delta_sigma = math.acos(cosine_delta)
+    # Calculate the angular separation
+    cosine = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
+    # Floating point rounding can put near-identical coordinates a few ULPs
+    # outside acos' domain. Frozen OSM graphs contain many shared endpoints,
+    # so clamp the mathematically valid cosine range explicitly.
+    delta_sigma = math.acos(max(-1.0, min(1.0, cosine)))
 
     # Calculate the distance
     distance = R * delta_sigma
@@ -294,10 +295,6 @@ def read_features_from_db(
             print(f"Error processing document: {document}")
             print(e)
 
-    print("Features found:")
-    for gdf in features:
-        print(gdf)
-
     return features
 
 
@@ -305,10 +302,10 @@ def read_features_from_db(
 def read_free_linestrings_from_disk(filepath,crs="epsg:32633"):
     
     free_linestrings=[]
-    base_path = filepath if os.path.isabs(filepath) else os.path.join(os.getcwd(), filepath)
+    current_dir = os.getcwd()
 
-    print("Looking for geojson files at : "+base_path)
-    for file in glob.iglob(os.path.join(base_path, 'free_linestrings', '*.geojson')):
+    print("Looking for geojson files at : "+current_dir+filepath)
+    for file in glob.iglob(current_dir+filepath+'/free_linestrings/*.geojson'):
         gdf_free_linestring=gpd.read_file(file,crs=crs)
         gdf_line=gpd.GeoDataFrame(index=["myline"], geometry=[gdf_free_linestring['geometry'][0]])
 #         gdf_line.set_crs(crs)
@@ -320,9 +317,9 @@ def read_free_linestrings_from_disk(filepath,crs="epsg:32633"):
 def read_free_polygons_from_disk(filepath,crs="epsg:32633"):
 
     free_polygons=[]
-    base_path = filepath if os.path.isabs(filepath) else os.path.join(os.getcwd(), filepath)
+    current_dir = os.getcwd()
 
-    for file in glob.iglob(os.path.join(base_path, 'free_polygons', '*.geojson')):
+    for file in glob.iglob(current_dir+filepath+'/free_polygons/*.geojson'):
         gdf_free_polygon=gpd.read_file(file)
     
         gdf_poly=gpd.GeoDataFrame(index=["myPoly"], geometry=[gdf_free_polygon['geometry'][0]],crs=crs)
@@ -333,8 +330,8 @@ def read_free_polygons_from_disk(filepath,crs="epsg:32633"):
 def read_risk_polygons_from_disk(filepath,crs="epsg:32633"):
 
     risk_polygons=[]
-    base_path = filepath if os.path.isabs(filepath) else os.path.join(os.getcwd(), filepath)
-    for file in glob.iglob(os.path.join(base_path, 'risk_polygons', '*.geojson')):
+    current_dir = os.getcwd()
+    for file in glob.iglob(current_dir+filepath+'/risk_polygons/*.geojson'):
         gdf_risk_polygon=gpd.read_file(file)    
         gdf_poly=gpd.GeoDataFrame(index=["myPoly"], geometry=[gdf_risk_polygon['geometry'][0]],crs=crs)
         risk_polygons.append(gdf_poly)
@@ -344,10 +341,10 @@ def read_risk_polygons_from_disk(filepath,crs="epsg:32633"):
 def read_virtual_geofence_from_disk(filepath,crs="epsg:32633"):
     
     virtual_geofences=[]
-    base_path = filepath if os.path.isabs(filepath) else os.path.join(os.getcwd(), filepath)
+    current_dir = os.getcwd()
 
     # print(current_dir+filepath+'/virtual_geofences/*.geojson')
-    for file in glob.iglob(os.path.join(base_path, 'virtual_geofences', '*.geojson')):
+    for file in glob.iglob(current_dir+filepath+'/virtual_geofences/*.geojson'):
         virtual_geofence=gpd.read_file(file,crs=crs)
         gdf_virtual_geofence =gpd.GeoDataFrame(index=["myPoly"], geometry=[virtual_geofence['geometry'][0]])
 #         gdf_line.set_crs(crs)

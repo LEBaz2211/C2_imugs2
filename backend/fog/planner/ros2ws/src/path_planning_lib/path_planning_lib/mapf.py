@@ -6,11 +6,9 @@ AStar search
 from cmath import sqrt
 from math import dist, fabs
 import itertools
-import math
 import time
 
 import matplotlib.pyplot as plt# for plotting cost map
-import networkx as nx
 # fromprint tools.bresenham import *
 from .graph import *
 from .models import *
@@ -18,25 +16,11 @@ from .models import *
 
     
 class AStar():
-    def __init__(self, graph, agent, ordered_destinations, road_usage=0.5):
+    def __init__(self, graph, agent, ordered_destinations):
         # Associated with a specific graph and a specific agent
+        self.graph = graph
         self.agent = agent 
         self.destination = ordered_destinations[0]
-        self.road_usage = self._normalized_preference(road_usage)
-        self.roads_only = self.road_usage >= 0.999
-        self.graph = graph.copy() if self.roads_only else graph
-        self._access_node_index = 0
-        self.preferred_road_sources = self._preferred_road_sources() if self.roads_only else None
-
-    @staticmethod
-    def _normalized_preference(value):
-        try:
-            normalized = float(value)
-        except (TypeError, ValueError):
-            return 0.5
-        if normalized > 1.0:
-            normalized = normalized / 100.0
-        return min(max(normalized, 0.0), 1.0)
 
     # def set_preferred_start_direction(self,initial_state,preferred_start_direction):
     #     if preferred_start_direction:
@@ -45,43 +29,14 @@ class AStar():
     #             self.cost_graph[position[1],position[0]] *=1
                 
     
-    def edge_data(self, current_node, neighbor_node):
-        if self.graph.has_edge(current_node, neighbor_node):
-            edges = self.graph.get_edge_data(current_node, neighbor_node)
-        elif self.graph.has_edge(neighbor_node, current_node):
-            edges = self.graph.get_edge_data(neighbor_node, current_node)
-        else:
-            return None
-
-        candidates = list(edges.values())
-        if self.roads_only:
-            road_candidates = [edge for edge in candidates if self.is_allowed_road(edge)]
-            if road_candidates:
-                candidates = road_candidates
-        return min(candidates, key=lambda edge: edge.get('length', float('inf')))
-
-    def edge_is_blocked(self, current_node, neighbor_node):
-        edge = self.edge_data(current_node, neighbor_node)
-        if edge is None:
-            return True
-        if bool(edge.get('risk', False)):
-            return True
-        return self.roads_only and not self.is_allowed_road(edge)
-
     def step_cost(self, current_node, neighbor_node):
         # Set the cost of a step to a neighbor to its value in the cost graph:
         # step_cost = self.cost_graph[neighbor.location.y,neighbor.location.x]
 
-        edge = self.edge_data(current_node, neighbor_node)
-        if edge is None:
-            return float('inf')
-        cost = edge['length']
-        is_road = bool(edge.get('road', False))
-        if self.road_usage > 0.5 and not is_road:
-            cost *= 1.0 + ((self.road_usage - 0.5) * 198.0)
-        elif self.road_usage < 0.5 and is_road:
-            cost *= 1.0 + ((0.5 - self.road_usage) * 198.0)
-        return cost
+        step_cost = self.graph.edges[current_node, neighbor_node, 0]['length']
+        if self.graph.edges[current_node, neighbor_node, 0]['risk']:
+            step_cost*=100
+        return step_cost
 
     def heuristic_cost(self, current_node, destination_node):
         current_x = self.graph.nodes[current_node]['x']
@@ -106,21 +61,21 @@ class AStar():
                 t=0
             else:
                 previous_state = route[i-1]
-                t = previous_state.get_time() + self.step_cost(total_path[i-1], node) / self.agent.nominal_speed
+                t = previous_state.get_time() + self.graph.edges[total_path[i-1], node, 0]['length'] / self.agent.nominal_speed
             state = State(t,node)
             route.append(state)
         return route
     
     
 
-    def search(self, log_failure=True):
+    def search(self):
         """Buddy
         low level A* search 
         """
         # start_state= State(0, ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1]))
-        start_node = self.nearest_routable_node(self.agent.localization)
+        start_node = ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1])
         
-        destination_node= self.nearest_routable_node(self.destination)
+        destination_node= ox.nearest_nodes(self.graph,self.destination[0],self.destination[1])
         
         closed_set = set()
         open_set = {start_node}
@@ -138,23 +93,20 @@ class AStar():
             temp_dict = {open_item:f_score.setdefault(open_item, float("inf")) for open_item in open_set}
             current_node = min(temp_dict, key=temp_dict.get)
             if current_node==destination_node:
+                print("a_star -> found destination node")
                 return self.reconstruct_path(came_from, current_node), f_score[current_node]
 
             open_set -= {current_node}
             closed_set |= {current_node}
 
             # Get the neighbors of the selected node
-            neighbor_nodes = set(self.graph.neighbors(current_node))
-            if hasattr(self.graph, 'predecessors'):
-                neighbor_nodes |= set(self.graph.predecessors(current_node))
+            neighbor_nodes = list(self.graph.neighbors(current_node))
             for neighbor_node in neighbor_nodes:
                 # t = current_state.get_time() + self.graph.edges[current_node, node, 0]['length'] / self.agent.nominal_speed
                 # time.sleep(1)
                 # neighbor_state = State(t,node)
                 
                 if not neighbor_node or neighbor_node in closed_set:
-                    continue
-                if self.edge_is_blocked(current_node, neighbor_node):
                     continue
 
                 tentative_g_score = g_score.setdefault(current_node, float("inf")) + self.step_cost(current_node, neighbor_node)
@@ -170,154 +122,9 @@ class AStar():
                 f_score[neighbor_node] =  g_score[neighbor_node] + self.heuristic_cost(neighbor_node, destination_node) 
             
 
-        try:
-            undirected_has_path = nx.has_path(self.graph.to_undirected(as_view=True), start_node, destination_node)
-        except Exception:
-            undirected_has_path = "unknown"
-        if log_failure:
-            print(
-                "A* failed",
-                {
-                    "agent": self.agent.agent_id,
-                    "visited_nodes": len(closed_set),
-                    "remaining_open_nodes": len(open_set),
-                    "undirected_has_path": undirected_has_path,
-                    "risk_edges": sum(1 for _u, _v, _key, data in self.graph.edges(keys=True, data=True) if data.get('risk')),
-                    "road_edges": sum(1 for _u, _v, _key, data in self.graph.edges(keys=True, data=True) if data.get('road')),
-                    "total_edges": self.graph.number_of_edges(),
-                },
-                flush=True,
-            )
-        return False
-
-    def nearest_routable_node(self, point):
-        if not self.roads_only:
-            return ox.nearest_nodes(self.graph, point[0], point[1])
-
-        road_nodes = self.road_nodes(self.preferred_road_sources)
-        if not road_nodes:
-            return ox.nearest_nodes(self.graph, point[0], point[1])
-
-        access_node = self.nearest_road_access_node(point)
-        if access_node is not None:
-            return access_node
-
-        return min(
-            road_nodes,
-            key=lambda node: self._squared_coordinate_distance(
-                point,
-                [self.graph.nodes[node]['x'], self.graph.nodes[node]['y']],
-            ),
-        )
-
-    def nearest_road_access_node(self, point):
-        best = None
-        for u, v, _key, data in self.graph.edges(keys=True, data=True):
-            if not self.is_allowed_access_road(data):
-                continue
-            start = [self.graph.nodes[u]['x'], self.graph.nodes[u]['y']]
-            end = [self.graph.nodes[v]['x'], self.graph.nodes[v]['y']]
-            projection = self.project_point_to_segment(point, start, end)
-            if best is None or projection['distance_m'] < best['distance_m']:
-                best = {**projection, 'u': u, 'v': v, 'edge': data, 'start': start, 'end': end}
-
-        if best is None:
-            return None
-
-        if best['distance_to_start_m'] <= 0.5:
-            return best['u']
-        if best['distance_to_end_m'] <= 0.5:
-            return best['v']
-
-        node = self.new_access_node_id()
-        coordinate = best['coordinate']
-        self.graph.add_node(node, x=coordinate[0], y=coordinate[1])
-        road_source = best['edge'].get('road_source')
-        for endpoint, endpoint_coordinate, length_key in (
-            (best['u'], best['start'], 'distance_to_start_m'),
-            (best['v'], best['end'], 'distance_to_end_m'),
-        ):
-            self.graph.add_edge(
-                node,
-                endpoint,
-                length=round(best[length_key], 3),
-                road=True,
-                road_source=road_source,
-                risk=False,
-                feature_id=best['edge'].get('feature_id'),
-            )
-        return node
-
-    def new_access_node_id(self):
-        self._access_node_index += 1
-        return f"access:{self.agent.agent_id}:{self._access_node_index}"
-
-    def is_allowed_access_road(self, edge):
-        if not self.is_allowed_road(edge):
-            return False
-        return edge.get('road_source') != 'mission_connector'
-
-    def road_nodes(self, road_sources=None):
-        nodes = set()
-        for u, v, _key, data in self.graph.edges(keys=True, data=True):
-            if not self.is_allowed_road(data, road_sources):
-                continue
-            nodes.add(u)
-            nodes.add(v)
-        return nodes
-
-    def is_allowed_road(self, edge, road_sources=None):
-        if not edge.get('road') or edge.get('risk'):
-            return False
-        sources = self.preferred_road_sources if road_sources is None else road_sources
-        if isinstance(sources, str):
-            sources = {sources}
-        if sources is not None and edge.get('road_source') not in sources:
-            return False
-        return True
-
-    def _preferred_road_sources(self):
-        sources = set()
-        if self.road_nodes("osm"):
-            sources.add("osm")
-        if self.road_nodes("mission_line"):
-            sources.update({"mission_line", "mission_connector"})
-        return sources or None
-
-    @staticmethod
-    def _squared_coordinate_distance(first, second):
-        return ((float(first[0]) - float(second[0])) ** 2) + ((float(first[1]) - float(second[1])) ** 2)
-
-    @classmethod
-    def project_point_to_segment(cls, point, start, end):
-        origin_lat = float(point[1])
-        p = cls._lonlat_to_local_meters(point, origin_lat)
-        a = cls._lonlat_to_local_meters(start, origin_lat)
-        b = cls._lonlat_to_local_meters(end, origin_lat)
-        dx = b[0] - a[0]
-        dy = b[1] - a[1]
-        if dx == 0 and dy == 0:
-            t = 0.0
-        else:
-            t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)))
-        projected = [a[0] + t * dx, a[1] + t * dy]
-        coordinate = cls._local_meters_to_lonlat(projected, origin_lat)
-        return {
-            'coordinate': coordinate,
-            'distance_m': math.hypot(p[0] - projected[0], p[1] - projected[1]),
-            'distance_to_start_m': math.hypot(projected[0] - a[0], projected[1] - a[1]),
-            'distance_to_end_m': math.hypot(projected[0] - b[0], projected[1] - b[1]),
-        }
-
-    @staticmethod
-    def _lonlat_to_local_meters(point, origin_lat):
-        longitude_scale = max(0.2, abs(math.cos(math.radians(float(origin_lat)))))
-        return [float(point[0]) * 111_320.0 * longitude_scale, float(point[1]) * 111_320.0]
-
-    @staticmethod
-    def _local_meters_to_lonlat(point, origin_lat):
-        longitude_scale = max(0.2, abs(math.cos(math.radians(float(origin_lat)))))
-        return [point[0] / (111_320.0 * longitude_scale), point[1] / 111_320.0]
+        # Keep the return shape stable for every caller.  Some callers unpack
+        # the result before checking whether a path was found.
+        return None, float("inf")
 
 class CBS_Node(object):
     def __init__(self):

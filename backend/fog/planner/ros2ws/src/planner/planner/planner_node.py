@@ -15,6 +15,7 @@ import random
 
 import pymongo
 from pymongo import MongoClient, ReadPreference
+import networkx as nx
 import osmnx as ox
 from shapely.ops import unary_union
 import geopandas as gpd
@@ -66,6 +67,8 @@ class PlannerNode(Node):
                                     ('map_folder',rclpy.Parameter.Type.STRING),
                                     ('mongodb_url',rclpy.Parameter.Type.STRING),
                                     ('map_feature_collection',rclpy.Parameter.Type.STRING),
+                                    ('scenario_activation_token',rclpy.Parameter.Type.STRING),
+                                    ('load_osm_from_network',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_database',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_local_folder',rclpy.Parameter.Type.BOOL),
 
@@ -89,10 +92,12 @@ class PlannerNode(Node):
         self.mongodb_url = self.get_parameter("mongodb_url").value
         self.load_map_from_database= self.get_parameter("load_map_from_database").value
         self.load_map_from_local_folder= self.get_parameter("load_map_from_local_folder").value
+        self.load_osm_from_network = self.get_parameter("load_osm_from_network").value
 
         self.mongo_client = MongoClient(self.mongodb_url, read_preference=ReadPreference.PRIMARY)  # Set read preference
         self.map_database = self.mongo_client["MapDB"]
         map_feature_collection = self.get_parameter("map_feature_collection").value
+        self.scenario_activation_token = self.get_parameter("scenario_activation_token").value
         self.map_feature_collection = self.map_database[map_feature_collection]
         self.mongodb_features_count = 0
         # Start a MongoDB watcher in a separate thread
@@ -107,6 +112,7 @@ class PlannerNode(Node):
 
         self.path = []
         self.paths = dict()
+        self.paths_mission_id = None
         self.paths_mutex = threading.Lock()
         self.path_image_saved = False
 
@@ -116,7 +122,8 @@ class PlannerNode(Node):
         self.init= False
 
 
-        self.initialize_map()
+        # self.initialize_map((point[0],point[1]))
+        # self.initialize_map()
         
 
         
@@ -217,47 +224,72 @@ class PlannerNode(Node):
         self.state_publisher.publish(msg)
 
     def planning_timer_callback(self):
-        if (self.mission_defined):
+        if not self.mission_defined:
+            return
 
-            self.planner_states.update({self.current_mission_id: 1})  # Planning state
+        mission_id = self.current_mission_id
+        self.planner_states.update({mission_id: 1})  # Planning state
 
+        try:
+            mission_agents = self.mr_path_planner.get_mission_agents(mission_id)
 
-            self.paths_mutex.acquire()
-            
-            # consider agents that are detected and included in the mission
-            agents_to_plan = [agent for agent in self.agents.values() if agent.agent_id in self.mr_path_planner.get_mission_agents(self.current_mission_id)]
-            self.get_logger().info(
-                f'Planning mission "{self.current_mission_id}" for {len(agents_to_plan)} detected agent(s)'
-            )
+            # Consider agents that are detected and included in the mission.
+            agents_to_plan = [
+                agent
+                for agent in self.agents.values()
+                if agent.agent_id in mission_agents
+            ]
             if not agents_to_plan:
-                self.get_logger().warn("Mission is defined, but no matching agents have reported to the planner yet.")
-                self.paths_mutex.release()
+                self.get_logger().warning(
+                    f"Waiting for live agent state before planning mission {mission_id}"
+                )
                 return
-            
-            # Set max speed of mission as nominal speed for now
-            self.set_agents_nominal_speeds(agents_to_plan, self.mr_path_planner.get_max_speed(self.current_mission_id), "max_speed")
 
-            # Compute Multi Robot Paths
-            new_paths = self.mr_path_planner.solve_mission(self.current_mission_id, agents_to_plan)
+            print("Agents to plan for:")
+            print(mission_agents)
 
-            self.planner_states.update({self.current_mission_id: 2})  # Planned state
-
-            waypoint_count = sum(len(path) for path in new_paths.values())
-            self.get_logger().info(
-                f'Planner produced {len(new_paths)} path(s) with {waypoint_count} waypoint(s)'
+            # Set max speed of mission as nominal speed for now.
+            self.set_agents_nominal_speeds(
+                agents_to_plan,
+                self.mr_path_planner.get_max_speed(mission_id),
+                "max_speed",
             )
-            
-            self.paths = new_paths
-            self.paths_mutex.release()
 
-            # Plot the result
-            if (not self.path_image_saved):
-                self.plot_graph_service(paths=self.paths)
+            # Compute Multi Robot Paths.  The lock is released even when the
+            # legacy solver raises, so GetPlan cannot deadlock afterward.
+            with self.paths_mutex:
+                new_paths = self.mr_path_planner.solve_mission(
+                    mission_id, agents_to_plan
+                )
+                if not new_paths:
+                    raise RuntimeError("Planner returned no agent paths")
+                self.paths = new_paths
+                self.paths_mission_id = mission_id
 
+            self.planner_states.update({mission_id: 2})  # Planned state
+            print("PATHS")
+            print(new_paths)
+
+        except Exception as e:
             self.mission_defined = False
-            self.get_logger().info(
-                f'Planning completed for mission "{self.current_mission_id}". Cached plan is ready for execution.'
+            with self.paths_mutex:
+                self.paths = {}
+                self.paths_mission_id = None
+            self.planner_states.update({mission_id: 4})  # Planning failed
+            self.get_logger().error(
+                f"Failed to plan mission {mission_id}: {type(e).__name__}: {e}"
             )
+            return
+
+        # Plotting is diagnostic output and must not invalidate a usable plan.
+        if not self.path_image_saved:
+            try:
+                self.plot_graph_service(paths=self.paths)
+            except Exception as e:
+                self.get_logger().warning(
+                    f"Could not render plan for mission {mission_id}: "
+                    f"{type(e).__name__}: {e}"
+                )
                 
 
     def set_mission_service_callback(self, request, response):
@@ -268,11 +300,14 @@ class PlannerNode(Node):
         mission_config = request.config
 
         try:
-            # Parse and store the mission using ID as the key
+            self._ensure_map_ready()
             self.mr_path_planner.update_mission(mission_id, mission_config, self.map_feature_collection)
 
+            self.current_mission_id = mission_id
             self.planner_states.update({mission_id: 0})  # initialized state
-
+            with self.paths_mutex:
+                self.paths = {}
+                self.paths_mission_id = None
 
             # Store the corresponding plan (placeholder logic)
             self.plans[mission_id] = json.dumps({"plan": None}) 
@@ -284,16 +319,16 @@ class PlannerNode(Node):
             response.id = mission_id
             response.state = 1  # Assuming successful creation
 
-            self.current_mission_id = mission_id
-        except json.JSONDecodeError as e:
-            self.get_logger().error(f"Failed to parse mission config: {e}")
-            response.state = 0  # Indicate failure
+            
+        except Exception as e:
+            self.get_logger().error(f"Failed to create planner for mission {mission_id}: {type(e).__name__}: {e}")
+            self._set_create_planner_failure(mission_id, response)
 
         return response
 
 
 
-    def path_to_plan_json(self, paths):
+    def path_to_plan_json(self, mission_id, paths):
         tasks = {}
 
         for agent_id, path in paths.items():
@@ -331,8 +366,8 @@ class PlannerNode(Node):
                             "primitive_id": primitive_id,
                             "parameters": {
                                 "coordinates": waypoint,
-                                "speed": self.mr_path_planner.get_max_speed(self.current_mission_id),
-                                "max_speed": self.mr_path_planner.get_max_speed(self.current_mission_id),
+                                "speed": self.mr_path_planner.get_max_speed(mission_id),
+                                "max_speed": self.mr_path_planner.get_max_speed(mission_id),
                                 "mobility_profile": 0,
                                 "wait_time": 0
                             }
@@ -347,13 +382,11 @@ class PlannerNode(Node):
                 "objectives": objectives
             }
 
-        mission = {"mission_id": self.current_mission_id, "tasks": tasks}
+        mission = {"mission_id": mission_id, "tasks": tasks}
         json_string = json.dumps(mission, indent=4)
-        objective_count = sum(len(task["objectives"]) for task in tasks.values())
-        self.get_logger().info(
-            f'Generated plan JSON for mission "{self.current_mission_id}" '
-            f'with {len(tasks)} task(s) and {objective_count} objective(s)'
-        )
+        
+        print("JSON Plan:")
+        print(json_string)
         
         return json_string
 
@@ -361,7 +394,19 @@ class PlannerNode(Node):
     def get_plan_service_callback(self, request, response):
 
         self.get_logger().info('Received GetPlan request')
-        plan_json = self.path_to_plan_json(paths=self.paths)
+        with self.paths_mutex:
+            if (
+                request.id == self.paths_mission_id
+                and self.planner_states.get(request.id) == 2
+            ):
+                plan_json = self.path_to_plan_json(request.id, self.paths)
+            else:
+                self.get_logger().warning(
+                    f"No completed plan is available for mission {request.id}"
+                )
+                plan_json = json.dumps(
+                    {"mission_id": request.id, "tasks": {}}, indent=4
+                )
 
         response.id = request.id
         response.plan = plan_json  # Placeholder for the actual plan
@@ -418,42 +463,37 @@ class PlannerNode(Node):
     # Methods
     def initialize_map(self):
 
-        if self.load_map_from_local_folder:
-            self.get_logger().info("Loading map from folder: "+ self.map_folder)
-        else:
-            self.get_logger().info("Loading map from database: "+ self.mongodb_url)
+        # A failed reload must never leave the previous scenario's planner
+        # object looking ready.
+        self.init = False
+        self.mr_path_planner = None
+        self.get_logger().info(
+            f"Loading frozen map from MapDB.{self.map_feature_collection.name} "
+            f"({self.mongodb_url})"
+        )
+        # self.get_logger().info("Loading map from folder: "+ self.map_folder)
 
         # Free Roads
-        if self.load_map_from_local_folder:
-            free_lines=read_free_linestrings_from_disk(self.map_folder,crs=self.epsg)
-        else:
-            free_lines = read_features_from_db(geometry_type = "LineString",feature_type = "road", feature_collection = self.map_feature_collection, crs=self.epsg)
+        free_lines = read_features_from_db(geometry_type = "LineString",feature_type = "road", feature_collection = self.map_feature_collection, crs=self.epsg)
+        # free_lines=read_free_linestrings_from_disk(self.map_folder.value,crs=self.epsg)
         self.line_graphs=[]
         
         for line in free_lines:
-           line_graph = generate_graph_from_linestring(line)
-           self.mark_graph_edges(line_graph, road=True, road_source="legacy_line")
-           self.line_graphs.append(line_graph)
+           self.line_graphs.append(generate_graph_from_linestring(line))
 
         # Free Polygons
-        if self.load_map_from_local_folder:
-            free_polys=read_free_polygons_from_disk(self.map_folder,crs=self.epsg)
-        else:
-            free_polys = read_features_from_db(geometry_type ="Polygon",feature_type = ["geofence", "workspace"], feature_collection = self.map_feature_collection, crs=self.epsg)
+        free_polys = read_features_from_db(geometry_type ="Polygon",feature_type = ["geofence", "workspace"], feature_collection = self.map_feature_collection, crs=self.epsg)
+        # free_polys2=read_free_polygons_from_disk(self.map_folder,crs=self.epsg)
         self.poly_graphs=[]
         poly_pnts=[]
         for poly in free_polys:
             poly_pnts.append(generate_points_in_polygon(poly,self.points_in_polygon_dist,crs=self.epsg))
         for poly_point in poly_pnts:
-            poly_graph = generate_delaunay_graph_from_points_in_polygon(poly_point,crs=self.epsg)
-            self.mark_graph_edges(poly_graph, road=False)
-            self.poly_graphs.append(poly_graph)
+            self.poly_graphs.append(generate_delaunay_graph_from_points_in_polygon(poly_point,crs=self.epsg))
 
         # Risk Polygons
-        if self.load_map_from_local_folder:
-            risk_polys=read_risk_polygons_from_disk(self.map_folder,crs=self.epsg)
-        else:
-            risk_polys = read_features_from_db(geometry_type ="Polygon",feature_type = "risk", feature_collection = self.map_feature_collection, crs=self.epsg)
+        risk_polys = read_features_from_db(geometry_type ="Polygon",feature_type = "risk", feature_collection = self.map_feature_collection, crs=self.epsg)
+        # risk_polys=read_risk_polygons_from_disk(self.map_folder.value,crs=self.epsg)
         self.risk_poly_graphs=[]
         self.risk_poly_gdfs=[]
         for gdf_poly in risk_polys:
@@ -484,18 +524,31 @@ class PlannerNode(Node):
         else:
             raise ValueError("No valid geometries found to compute central point and map radius.")
 
-        # Generate OSMNX Graph (left, bottom, right, top)
-        # bbox, *, network_type='all', simplify=True, retain_all=False, truncate_by_edge=False, custom_filter=None
-        # self.G = ox.graph_from_bbox((2.881738450702528, 51.23322886000847 , 2.938772513420844, 51.25868020804094), simplify=False, 
-        #                             network_type="all_private")
-        self.G = ox.graph_from_point((central_point.y, central_point.x), simplify=False, 
-                                    network_type="all_private", dist=self.map_radius)
-        self.obstacle_gdf = ox.features_from_point((central_point.y, central_point.x),{"building":True,"amentity":True},dist=self.map_radius)
+        if self.load_osm_from_network:
+            self.get_logger().warn(
+                "Live OSM download is enabled. This mode is non-reproducible and is not used by scenario activation."
+            )
+            self.G = ox.graph_from_point(
+                (central_point.y, central_point.x),
+                simplify=False,
+                network_type="all_private",
+                dist=self.map_radius,
+            )
+            self.obstacle_gdf = ox.features_from_point(
+                (central_point.y, central_point.x),
+                {"building": True, "amenity": True},
+                dist=self.map_radius,
+            )
+        else:
+            # Downloaded OSM roads are ordinary road LineStrings in the active,
+            # immutable MapDB collection. Start empty and compose only those
+            # frozen database graphs below.
+            self.G = nx.MultiDiGraph()
+            self.obstacle_gdf = None
 
         #populate basic graph
         if(self.populate_graph):
             self.G = populate_graph(self.G,self.populate_min_distance)
-        self.mark_osm_road_edges(self.G)
             
         #connect graphs
         for line_graph in self.line_graphs:
@@ -537,97 +590,24 @@ class PlannerNode(Node):
         else:
             self.G_projected = G_proj
 
-        self.init = True
+        if self.G.number_of_nodes() == 0 or self.G.number_of_edges() == 0:
+            raise ValueError(
+                f"MapDB.{self.map_feature_collection.name} produced an empty routing graph"
+            )
 
-        self.get_logger().info('MAP IS LOADED ')
-        self.plot_graph_service()
-        self.get_logger().info('Graph Image Saved ')
-
-        # Initialize Multi-Robot Paths Planner
+        # Initialize the mission planner before publishing the readiness marker.
+        # Scenario activation treats this exact marker as the point at which
+        # CreatePlanner can safely be accepted.
         self.mr_path_planner = MultiRobotPathPlanning(self.mapf , self.mongodb_url, "MapDB")
         self.mr_path_planner.graph = self.G
-        self.mr_path_planner.local_feature_geometries = self.load_local_feature_geometries()
-        self.mr_path_planner.mission_road_connect_max_distance = self.line_G_max_distance
-
-    @staticmethod
-    def mark_graph_edges(graph, road, road_source=None):
-        for _u, _v, _key, data in graph.edges(keys=True, data=True):
-            data["road"] = bool(road)
-            if road_source is not None:
-                data["road_source"] = road_source
-        return graph
-
-    @classmethod
-    def mark_osm_road_edges(cls, graph):
-        for _u, _v, _key, data in graph.edges(keys=True, data=True):
-            data["road"] = cls.is_osm_road_edge(data)
-            data["road_source"] = "osm"
-        return graph
-
-    @classmethod
-    def is_osm_road_edge(cls, edge_data):
-        highways = cls._tag_values(edge_data.get("highway"))
-        if not highways:
-            return False
-
-        if highways & {"footway", "path", "pedestrian", "steps", "cycleway", "bridleway", "corridor"}:
-            return False
-
-        road_highways = {
-            "motorway",
-            "trunk",
-            "primary",
-            "secondary",
-            "tertiary",
-            "unclassified",
-            "residential",
-            "living_street",
-            "service",
-            "road",
-        }
-        if not highways & road_highways:
-            return False
-
-        # The RMA mission area uses OSM service roads for internal access.
-        # Treat them as routable roads for the robot instead of applying
-        # public-car access filters such as private/driveway/parking_aisle.
-        return True
-
-    @staticmethod
-    def _tag_values(value):
-        if value is None:
-            return set()
-        if isinstance(value, (list, tuple, set)):
-            return {str(item).lower() for item in value}
-        return {str(value).lower()}
-
-
-    def load_local_feature_geometries(self):
-        feature_geometries = {}
-        if not self.load_map_from_local_folder:
-            return feature_geometries
-
-        geojson_paths = glob.glob(os.path.join(self.map_folder, "**", "*.geojson"), recursive=True)
-        for geojson_path in geojson_paths:
-            try:
-                with open(geojson_path, "r", encoding="utf-8") as file:
-                    payload = json.load(file)
-            except (OSError, json.JSONDecodeError) as exc:
-                self.get_logger().warn(f"Could not load local GeoJSON feature file {geojson_path}: {exc}")
-                continue
-
-            features = payload.get("features", [payload]) if isinstance(payload, dict) else []
-            for feature in features:
-                if not isinstance(feature, dict):
-                    continue
-                properties = feature.get("properties") or {}
-                feature_id = properties.get("feature_id") or feature.get("id")
-                geometry = feature.get("geometry")
-                if feature_id and isinstance(geometry, dict):
-                    feature_geometries[str(feature_id)] = geometry
-
-        self.get_logger().info(f"Loaded {len(feature_geometries)} local feature geometries for mission feature_id lookup")
-        return feature_geometries
+        self.init = True
+        self.get_logger().info(
+            f"MAP IS LOADED collection=MapDB.{self.map_feature_collection.name} "
+            f"activation={self.scenario_activation_token} "
+            f"nodes={self.G.number_of_nodes()} edges={self.G.number_of_edges()}"
+        )
+        self.plot_graph_service()
+        self.get_logger().info('Graph Image Saved ')
 
 
 
@@ -680,7 +660,10 @@ class PlannerNode(Node):
 
         graph=self.G
 
-        fig, ax = ox.plot_footprints(self.obstacle_gdf,figsize=(50, 50),alpha=0.4,show=False)
+        if self.obstacle_gdf is not None and not self.obstacle_gdf.empty:
+            fig, ax = ox.plot_footprints(self.obstacle_gdf,figsize=(50, 50),alpha=0.4,show=False)
+        else:
+            fig, ax = plt.subplots(figsize=(50, 50))
         fig2, ax2 = ox.plot_graph(graph, ax=ax, node_size=10, edge_color=["red" if data.get('risk') else "white" for u, v, key, data in graph.edges(keys=True, data=True)], edge_linewidth=0.7, node_color="red", show=False)
         # fig2,ax2=ox.plot_graph(graph,ax=ax,node_size=4,edge_color="w",edge_linewidth=0.7, node_color="r",show=False,save=True,filepath="./map.png")
 
@@ -742,9 +725,40 @@ class PlannerNode(Node):
                 ax2.annotate(txt, (x, y), c="g",fontsize=6)  
             
             fig2.savefig("data/.planresults/graph.png", format="png", dpi=100, bbox_inches="tight")  
-            # fig2.savefig("data/.planresults/graph_"+current_date+"-"+current_time+".png", format="png", dpi=100, bbox_inches="tight")             
+            # fig2.savefig("data/.planresults/graph_"+current_date+"-"+current_time+".png", format="png", dpi=100, bbox_inches="tight")            
             # fig2.savefig("data/.planresults/graph_"+current_date+"-"+current_time+".png")
             
+
+    def _ensure_map_ready(self):
+        """Initialize the database-backed graph before accepting a mission."""
+        if getattr(self, "mr_path_planner", None) is not None:
+            return
+
+        feature_count = self.map_feature_collection.count_documents({})
+        if feature_count == 0:
+            raise RuntimeError(
+                f"MapDB.{self.map_feature_collection.name} is empty; "
+                "the baseline map seed must complete before CreatePlanner"
+            )
+
+        self.get_logger().info(
+            f"Planner graph is not ready; initializing it from "
+            f"{feature_count} MapDB.{self.map_feature_collection.name} documents"
+        )
+        self.initialize_map()
+        self.mongodb_features_count = feature_count
+
+    def _set_create_planner_failure(self, mission_id, response):
+        """Return the planner's existing error state without terminating spin."""
+        self.mission_defined = False
+        self.current_mission_id = mission_id
+        with self.paths_mutex:
+            self.paths = {}
+            self.paths_mission_id = None
+        self.planner_states.update({mission_id: 4})
+        response.id = mission_id
+        response.state = 4
+
 
 def main(args=None):
     rclpy.init(args=args)
