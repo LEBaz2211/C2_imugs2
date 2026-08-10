@@ -3,6 +3,10 @@ pyproject.toml
 src/c2_imugs2/__init__.py
 src/c2_imugs2/api.py
 src/c2_imugs2/cli.py
+src/c2_imugs2/contract_atlas.py
+src/c2_imugs2/contract_docs.py
+src/c2_imugs2/contract_inventory.py
+src/c2_imugs2/contracts.py
 src/c2_imugs2/domain.py
 src/c2_imugs2/geometry.py
 src/c2_imugs2/legacy_map.py
@@ -14,6 +18,8 @@ src/c2_imugs2/planner_adapters.py
 src/c2_imugs2/ports.py
 src/c2_imugs2/repositories.py
 src/c2_imugs2/rosbridge.py
+src/c2_imugs2/scenario_launch.py
+src/c2_imugs2/scenario_runtime.py
 src/c2_imugs2/task_plan.py
 src/c2_imugs2.egg-info/PKG-INFO
 src/c2_imugs2.egg-info/SOURCES.txt
@@ -22,4 +28,8 @@ src/c2_imugs2.egg-info/entry_points.txt
 src/c2_imugs2.egg-info/requires.txt
 src/c2_imugs2.egg-info/top_level.txt
 tests/test_api.py
+tests/test_backend_legacy_sync.py
+tests/test_contract_docs.py
 tests/test_core.py
+tests/test_legacy_mapdb_startup.py
+tests/test_legacy_planner_resilience.py

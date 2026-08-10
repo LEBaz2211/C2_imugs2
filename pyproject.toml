@@ -17,10 +17,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
 
 [project.scripts]
 c2-imugs2 = "c2_imugs2.cli:main"
 c2-imugs2-api = "c2_imugs2.api:main"
+c2-imugs2-contract-docs = "c2_imugs2.contract_docs:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

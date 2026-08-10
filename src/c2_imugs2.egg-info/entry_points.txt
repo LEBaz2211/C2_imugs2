@@ -1,3 +1,4 @@
 [console_scripts]
 c2-imugs2 = c2_imugs2.cli:main
 c2-imugs2-api = c2_imugs2.api:main
+c2-imugs2-contract-docs = c2_imugs2.contract_docs:main

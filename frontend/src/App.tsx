@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +8,6 @@ import {
   createEventSource,
   deleteMapFeature,
   forgetMission as forgetMissionRecord,
-  getContracts,
   getActiveScenario,
   getDiagnostics,
   getLegacyTrace,
@@ -25,7 +24,6 @@ import {
   startMission,
   updateMapFeature,
   type AgentUpdateEvent,
-  type ContractGraph,
   type DiagnosticsState,
   type LegacyResetResult,
   type LegacyTrace,
@@ -46,7 +44,6 @@ import { Tabs } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 import { agents as fallbackAgents, mapFeatures as fallbackFeatures, missionExamples as fallbackMissionExamples } from "./data/demo";
 import { createTaskPlan, normalizeMission, validateMission } from "./mission";
-import { ContractExplorer } from "./ContractExplorer";
 import { MapView, type DraftMapFeature } from "./MapView";
 import { ScenarioLab, loadScenarioContextLibrary, type ScenarioAgentPlacement, type ScenarioContextLibrary, type ScenarioMapView } from "./ScenarioLab";
 import type { Agent, MapFeature, MissionConfig } from "./types";
@@ -156,9 +153,6 @@ export default function App() {
   const [showNewMission, setShowNewMission] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState | undefined>();
   const [legacyTrace, setLegacyTrace] = useState<LegacyTrace | undefined>();
-  const [contractGraph, setContractGraph] = useState<ContractGraph | undefined>();
-  const [contractsBusy, setContractsBusy] = useState(false);
-  const [contractsError, setContractsError] = useState("");
   const [planningDiagnostics, setPlanningDiagnostics] = useState<PlanningDiagnostics | undefined>();
   const [planningDiagnosticsBusy, setPlanningDiagnosticsBusy] = useState(false);
   const [selectedPlanningScenarioId, setSelectedPlanningScenarioId] = useState<string | undefined>();
@@ -171,7 +165,7 @@ export default function App() {
   const [initRequestedAt, setInitRequestedAt] = useState<number | undefined>();
   const [nowMs, setNowMs] = useState(Date.now());
   const [tab, setTab] = useState("mission");
-  const [workspace, setWorkspace] = useState<"c2" | "scenario" | "contracts">("c2");
+  const [workspace, setWorkspace] = useState<"c2" | "scenario">("c2");
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | undefined>();
   const [scenarioAgents, setScenarioAgents] = useState<Agent[]>([]);
   const [scenarioFeatureIds, setScenarioFeatureIds] = useState<string[]>([]);
@@ -235,7 +229,6 @@ export default function App() {
       })
       .catch(() => setExamples(fallbackMissionExamples));
     getDiagnostics().then(applyDiagnostics).catch(() => undefined);
-    refreshContracts(false);
 
     const source = createEventSource();
     source.addEventListener("diagnostics.updated", (event) => {
@@ -914,21 +907,6 @@ export default function App() {
     return result;
   }
 
-  async function refreshContracts(showBusy = true) {
-    if (showBusy) setContractsBusy(true);
-    setContractsError("");
-    try {
-      const graph = await getContracts(true);
-      setContractGraph(graph);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setContractsError(message);
-      if (showBusy) setCommandFeedback({ tone: "error", message: `Contract graph refresh failed: ${message}` });
-    } finally {
-      if (showBusy) setContractsBusy(false);
-    }
-  }
-
   async function cleanLegacyRuntimeForExamples() {
     setApiError("");
     setLegacyResetBusy(true);
@@ -991,39 +969,6 @@ export default function App() {
     [planningDiagnostics, selectedPlanningScenarioId],
   );
 
-  if (workspace === "contracts") {
-    return (
-      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#07111f] text-slate-100">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800 bg-[#091522] px-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Workflow className="h-5 w-5 shrink-0 text-cyan-400" />
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-slate-100">System Contract Atlas</h2>
-              <p className="truncate text-xs text-slate-400">Evidence-backed map of the legacy mission, planning, execution, and feedback contracts.</p>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Tabs
-              value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
-              items={[
-                { value: "c2", label: "C2" },
-                { value: "scenario", label: "Scenario" },
-                { value: "contracts", label: "Contracts" },
-              ]}
-            />
-            <Badge tone={contractsError ? "error" : "ok"}>
-              {contractGraph?.atlas ? `${contractGraph.atlas.components.length} systems · ${contractGraph.atlas.interactions.length} contracts` : "atlas"}
-            </Badge>
-          </div>
-        </header>
-        <section className="min-h-0 flex-1 overflow-hidden">
-          <ContractExplorer graph={contractGraph} busy={contractsBusy} error={contractsError} onRefresh={() => refreshContracts()} />
-        </section>
-      </main>
-    );
-  }
-
   return (
     <main className="flex h-screen min-h-[720px] overflow-hidden bg-background text-foreground">
       <MapView
@@ -1068,11 +1013,10 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Tabs
               value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario")}
               items={[
                 { value: "c2", label: "C2" },
                 { value: "scenario", label: "Scenario" },
-                { value: "contracts", label: "Contracts" },
               ]}
             />
             {workspace === "c2" && mission && <PlannerProgressTag mission={mission} missionState={missionState} plannerState={plannerState} busyCommand={busyCommand} initRequestedAt={initRequestedAt} nowMs={nowMs} />}

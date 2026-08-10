@@ -51,7 +51,7 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_digest": _source_digest(source_files),
+        "source_digest": _source_digest(source_files, repo_root),
         "source_file_count": len(source_files),
         "summary": {
             "nodes": len(node_values),
@@ -136,10 +136,10 @@ def _contract_source_files(repo_root: Path) -> list[Path]:
         repo_root / "src" / "c2_imugs2",
         repo_root / "frontend" / "src",
         repo_root / "schemas",
-        repo_root / "legacy_ros" / "fog",
-        repo_root / "legacy_ros" / "edge",
+        repo_root / "backend" / "fog",
+        repo_root / "backend" / "edge",
     ]
-    files: list[Path] = [repo_root / "docker-compose.yml", repo_root / "docker-compose.legacy-ros.yml"]
+    files: list[Path] = [repo_root / "docker-compose.yml", repo_root / "docker-compose.backend.yml"]
     for root in roots:
         if not root.exists():
             continue
@@ -149,10 +149,10 @@ def _contract_source_files(repo_root: Path) -> list[Path]:
     return sorted({path.resolve() for path in files if path.exists()})
 
 
-def _source_digest(paths: list[Path]) -> str:
+def _source_digest(paths: list[Path], repo_root: Path) -> str:
     digest = hashlib.sha256()
     for path in paths:
-        digest.update(str(path).encode("utf-8"))
+        digest.update(_relative(path, repo_root).encode("utf-8"))
         try:
             digest.update(path.read_bytes())
         except OSError:
@@ -279,7 +279,7 @@ def _match_http_endpoint_node(nodes: dict[str, dict[str, Any]], method: str, cal
 
 def _parse_ros_idl(repo_root: Path) -> dict[str, dict[str, Any]]:
     catalog: dict[str, dict[str, Any]] = {}
-    for path in sorted((repo_root / "legacy_ros").rglob("*")):
+    for path in sorted((repo_root / "backend").rglob("*")):
         if path.suffix not in {".msg", ".srv"} or "message_packages" not in path.parts:
             continue
         try:
@@ -417,11 +417,14 @@ def _add_ros_usage_edges(
 
 def _ros_usages(repo_root: Path) -> list[dict[str, Any]]:
     usages: list[dict[str, Any]] = []
-    roots = [repo_root / "legacy_ros", repo_root / "src" / "c2_imugs2"]
+    roots = [repo_root / "backend", repo_root / "src" / "c2_imugs2"]
     for root in roots:
         if not root.exists():
             continue
         for path in root.rglob("*"):
+            relative_path = _relative(path, repo_root)
+            if "/centralized_coordination/test/" in relative_path or "/planner/test/" in relative_path:
+                continue
             if path.suffix == ".py":
                 usages.extend(_python_ros_usages(path, repo_root))
             elif path.suffix in {".cpp", ".hpp", ".h"}:
@@ -431,17 +434,18 @@ def _ros_usages(repo_root: Path) -> list[dict[str, Any]]:
 
 def _python_ros_usages(path: Path, repo_root: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="ignore")
+    scan_text = re.sub(r"(?m)^\s*#.*$", "", text)
     usages: list[dict[str, Any]] = []
     pattern = re.compile(r"create_(publisher|subscription|service)\s*\(\s*([A-Za-z0-9_\.]+)\s*,\s*['\"]([^'\"]+)['\"]", re.S)
-    for match in pattern.finditer(text):
+    for match in pattern.finditer(scan_text):
         usages.append(
             {
                 "kind": match.group(1),
                 "type": match.group(2).split(".")[-1],
                 "name": match.group(3),
                 "path": _relative(path, repo_root),
-                "line": text[: match.start()].count("\n") + 1,
-                "source_ref": _source_ref(path, repo_root, text[: match.start()].count("\n") + 1),
+                "line": scan_text[: match.start()].count("\n") + 1,
+                "source_ref": _source_ref(path, repo_root, scan_text[: match.start()].count("\n") + 1),
             }
         )
     return usages
@@ -449,17 +453,19 @@ def _python_ros_usages(path: Path, repo_root: Path) -> list[dict[str, Any]]:
 
 def _cpp_ros_usages(path: Path, repo_root: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="ignore")
+    scan_text = re.sub(r"/\*.*?\*/", lambda value: "\n" * value.group(0).count("\n"), text, flags=re.S)
+    scan_text = re.sub(r"(?m)^\s*//.*$", "", scan_text)
     usages: list[dict[str, Any]] = []
     pattern = re.compile(r"create_(publisher|subscription|service|client)<([^>]+)>\s*\(\s*\"([^\"]+)\"", re.S)
-    for match in pattern.finditer(text):
+    for match in pattern.finditer(scan_text):
         usages.append(
             {
                 "kind": match.group(1),
                 "type": match.group(2).strip(),
                 "name": match.group(3),
                 "path": _relative(path, repo_root),
-                "line": text[: match.start()].count("\n") + 1,
-                "source_ref": _source_ref(path, repo_root, text[: match.start()].count("\n") + 1),
+                "line": scan_text[: match.start()].count("\n") + 1,
+                "source_ref": _source_ref(path, repo_root, scan_text[: match.start()].count("\n") + 1),
             }
         )
     return usages
@@ -526,7 +532,7 @@ def _schema_fields(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _add_compose_nodes(repo_root: Path, nodes: dict[str, dict[str, Any]], edges: dict[str, dict[str, Any]]) -> None:
-    for compose_path in [repo_root / "docker-compose.yml", repo_root / "docker-compose.legacy-ros.yml"]:
+    for compose_path in [repo_root / "docker-compose.yml", repo_root / "docker-compose.backend.yml"]:
         if not compose_path.exists():
             continue
         services = _compose_services(compose_path)
@@ -613,7 +619,7 @@ def _add_mongo_contracts(repo_root: Path, nodes: dict[str, dict[str, Any]], edge
             protocol="MongoDB",
             source_refs=source_refs,
         )
-    planner_ref = _source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py", repo_root, 443)
+    planner_ref = _source_ref(repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py", repo_root, 443)
     edges["planner-mapdb"] = _edge(
         "planner-mapdb",
         "component:planner",
@@ -643,10 +649,10 @@ def _add_system_edges(edges: dict[str, dict[str, Any]]) -> None:
 
 
 def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
-    planner = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "multi_robot_path_planning.py"
-    mapf = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py"
-    planner_node = repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py"
-    mission_manager = repo_root / "legacy_ros" / "fog" / "centralized-coordination" / "src" / "centralized_coordination" / "src" / "mission_manager.cpp"
+    planner = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "multi_robot_path_planning.py"
+    mapf = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py"
+    planner_node = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py"
+    mission_manager = repo_root / "backend" / "fog" / "centralized-coordination" / "src" / "centralized_coordination" / "src" / "mission_manager.cpp"
     api = repo_root / "src" / "c2_imugs2" / "api.py"
     return [
         {
@@ -710,7 +716,7 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
             "label": "NAVIGATE_NO_PLANNING Gap",
             "summary": "Enum and schema allow behavior=2, but the active planner branch rejects it.",
             "stages": [
-                _stage("enum", "Legacy enum declares NAVIGATE_NO_PLANNING=2", "ros_type:centralized_msgs/msg/Agent", source_refs=[_source_ref(repo_root / "legacy_ros" / "fog" / "planner" / "ros2ws" / "src" / "message_packages" / "centralized_msgs" / "json" / "Enums.hpp", repo_root, 66)]),
+                _stage("enum", "Backend enum declares NAVIGATE_NO_PLANNING=2", "ros_type:centralized_msgs/msg/Agent", source_refs=[_source_ref(repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "message_packages" / "centralized_msgs" / "json" / "Enums.hpp", repo_root, 66)]),
                 _stage("schema", "Canonical schema allows behavior enum [0,1,2]", "schema:mission_config.schema.json", source_refs=[_source_ref(repo_root / "schemas" / "mission_config.schema.json", repo_root, 11)]),
                 _stage("planner", "Planner solve branch only recognizes behavior 0 and 1", "component:planner", source_refs=[_source_ref(planner, repo_root, 102)], outputs=["ValueError unsupported behavior 2"]),
             ],
@@ -745,13 +751,13 @@ def _component_for_path(relative_path: str) -> str:
         return "component:ui"
     if relative_path.startswith("src/c2_imugs2/api.py") or relative_path.startswith("src/c2_imugs2/rosbridge.py"):
         return "component:api"
-    if "legacy_ros/fog/command-control" in relative_path:
+    if "backend/fog/command-control" in relative_path:
         return "component:c2_rest"
-    if "legacy_ros/fog/planner" in relative_path:
+    if "backend/fog/planner" in relative_path:
         return "component:planner"
-    if "legacy_ros/edge" in relative_path:
+    if "backend/edge" in relative_path:
         return "component:edge"
-    if "legacy_ros/fog/centralized-coordination" in relative_path:
+    if "backend/fog/centralized-coordination" in relative_path:
         if "fleet_manager" in relative_path:
             return "component:fleet"
         return "component:centralized"

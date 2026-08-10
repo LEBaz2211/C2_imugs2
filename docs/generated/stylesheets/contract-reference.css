@@ -1,0 +1,17 @@
+.md-grid {
+  max-width: 96rem;
+}
+
+.md-typeset table:not([class]) {
+  display: table;
+  width: 100%;
+}
+
+.md-typeset code {
+  overflow-wrap: anywhere;
+}
+
+.mermaid {
+  overflow-x: auto;
+  text-align: center;
+}

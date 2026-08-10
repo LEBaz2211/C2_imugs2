@@ -9,13 +9,13 @@ AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
 OBJECTIVE = [4.39167, 50.84417]
 START = [4.392588, 50.844317]
 
-CENTRAL = "legacy_ros/fog/centralized-coordination/src/centralized_coordination/src"
-CENTRAL_MSGS = "legacy_ros/fog/centralized-coordination/src/message_packages"
-REST = "legacy_ros/fog/command-control/src/backend/ros2-rest-api/ros2_ws/src/c2_ros2_rest_api/src"
-PLANNER = "legacy_ros/fog/planner/ros2ws/src/planner/planner/planner_node.py"
-EDGE = "legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/agent_tasks_supervisor_node.cpp"
-AUTONOMY = "legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/test/test_autonomy.cpp"
-EDGE_MSGS = "legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/message_packages"
+CENTRAL = "backend/fog/centralized-coordination/src/centralized_coordination/src"
+CENTRAL_MSGS = "backend/fog/centralized-coordination/src/message_packages"
+REST = "backend/fog/command-control/src/backend/ros2-rest-api/ros2_ws/src/c2_ros2_rest_api/src"
+PLANNER = "backend/fog/planner/ros2ws/src/planner/planner/planner_node.py"
+EDGE = "backend/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/agent_tasks_supervisor_node.cpp"
+AUTONOMY = "backend/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/test/test_autonomy.cpp"
+EDGE_MSGS = "backend/edge/agent-tasks-supervisor/ros2ws/src/message_packages"
 
 
 def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -100,7 +100,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             tags=["observability", "websocket", "rosapi"],
             source_refs=[
                 ref("src/c2_imugs2/rosbridge.py", "LIVE_TOPICS = (", "Adapter live topic allow-list"),
-                ref("docker-compose.legacy-ros.yml", "rosbridge_websocket_launch.xml", "Runtime launch"),
+                ref("docker-compose.backend.yml", "rosbridge_websocket_launch.xml", "Runtime launch"),
             ],
         ),
         _component(
@@ -182,7 +182,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             tags=["legacy", "edge", "ros2"],
             source_refs=[
                 ref(EDGE, "AgentTaskSupervisorNode::AgentTaskSupervisorNode(std::string node_name) : Node(node_name)", "ROS node construction"),
-                ref("legacy_ros/config/launch_agent_tasks_supervisor.sh", "swarm_edge_executable agent_$AGENT_ID", "ROS node identity"),
+                ref("backend/config/launch_agent_tasks_supervisor.sh", "swarm_edge_executable agent_$AGENT_ID", "ROS node identity"),
                 ref(EDGE, "_addTaskService_callback", "Task ingestion"),
             ],
         ),
@@ -198,7 +198,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             tags=["legacy", "simulator", "themis-fr"],
             source_refs=[
                 ref(AUTONOMY, "Autonomy::Autonomy(std::string node_name) : Node(node_name)", "ROS node construction"),
-                ref("legacy_ros/config/launch_autonomy_sim.sh", "test_autonomy_sim autonomy_test_node_$AUTONOMY_TOPIC_PREFIX", "ROS node identity"),
+                ref("backend/config/launch_autonomy_sim.sh", "test_autonomy_sim autonomy_test_node_$AUTONOMY_TOPIC_PREFIX", "ROS node identity"),
             ],
         ),
         _component(
@@ -212,9 +212,9 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             responsibilities=["RuntimeDB", "VehicleDB", "Required planner MapDB.rma"],
             tags=["mongodb", "persistence"],
             source_refs=[
-                ref("docker-compose.legacy-ros.yml", "MONGODB_CONNSTRING:", "Legacy DB connection"),
+                ref("docker-compose.backend.yml", "MONGODB_CONNSTRING:", "Backend DB connection"),
                 ref(
-                    "legacy_ros/fog/centralized-coordination/src/centralized_coordination/include/custom_libraries/mongodb_handler.hpp",
+                    "backend/fog/centralized-coordination/src/centralized_coordination/include/custom_libraries/mongodb_handler.hpp",
                     'kDatabaseName[] = "RuntimeDB"',
                     "Runtime database",
                 ),
@@ -231,7 +231,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             responsibilities=["MapDB roads/workspaces", "MapDB risk polygons", "OSM road graph"],
             tags=["mongodb", "geojson", "osmnx", "lon-lat"],
             source_refs=[
-                ref("legacy_ros/config/config_planner.yaml", "map_feature_collection:", "MapDB collection"),
+                ref("backend/config/config_planner.yaml", "map_feature_collection:", "MapDB collection"),
                 ref(PLANNER, "def initialize_map", "Planner map construction"),
             ],
         ),
@@ -483,7 +483,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             ["plan"],
             contract="GeoJSON coordinates [lon, lat]",
             source_refs=[
-                ref("legacy_ros/config/config_planner.yaml", "map_feature_collection:", "MapDB feature collection"),
+                ref("backend/config/config_planner.yaml", "map_feature_collection:", "MapDB feature collection"),
                 ref(PLANNER, "def initialize_map", "Graph initialization"),
             ],
             notes=["Compose idempotently seeds the three valid RMA features; CreatePlanner also has a synchronous readiness guard."],

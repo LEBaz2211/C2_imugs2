@@ -5,124 +5,132 @@ Summary: Clean replacement core for iMUGS-style multi-robot C2 mission planning.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.111
+Requires-Dist: pymongo>=4.8
 Requires-Dist: uvicorn[standard]>=0.30
 Requires-Dist: websockets>=12
 Provides-Extra: dev
 Requires-Dist: pytest>=8; extra == "dev"
 Requires-Dist: httpx>=0.27; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: mkdocs<2,>=1.6; extra == "docs"
+Requires-Dist: mkdocs-material<10,>=9.6; extra == "docs"
 
-# C2 iMUGS2 Replacement
+# C2 iMUGS2
 
-This repository is a clean replacement implementation inspired by the old multi-robot C2 / fog / planner / edge-supervisor system.
+This repository contains a web UI and FastAPI adapter for a ROS 2 multi-robot
+system. It also contains two copies of the ROS backend: one for development and
+one retained as a legacy reference.
 
-The long-term project will support LLM benchmarking, but the immediate goal is simpler: provide a working, testable replacement flow that accepts a `mission_config`, plans per-agent tasks, stores mission state, and can later be wrapped with ROS 2 nodes and Docker services.
+This README is only the repository entry point. The ROS backends and their
+components have separate README files with more specific information.
 
-## Current Flow
+## Where to start
+
+| Area | Purpose | Documentation |
+|---|---|---|
+| `backend/` | Editable ROS backend used for new backend work | [Backend README](backend/README.md) |
+| `legacy_ros/` | Frozen compatibility/reference copy | [Legacy ROS README](legacy_ros/README.md) |
+| `frontend/` | React mission and scenario UI | UI structure is described in [UI/backend adapter](docs/UI_BACKEND_LEGACY_ADAPTER.md) |
+| `src/c2_imugs2/` | FastAPI adapter and Python modules | [Architecture](docs/ARCHITECTURE.md) |
+| `schemas/` | JSON contracts for missions, plans, agents, and map features | [Generated contract reference](docs/generated/index.md) |
+| `docs/legacy_nodes/` | Per-node ROS inputs, outputs, and examples | [ROS node README](docs/legacy_nodes/README.md) |
+
+More specific backend package notes are available for:
+
+- [Centralized coordination](backend/fog/centralized-coordination/README.md)
+- [Planner](backend/fog/planner/README.md)
+- [Edge task supervisor](backend/edge/agent-tasks-supervisor/README.md)
+
+Some package-level README files came from the original source repositories and
+may describe their old standalone build process. For this repository, use the
+top-level Compose files and the [backend README](backend/README.md).
+
+## Runtime layout
 
 ```text
-mission_config JSON
--> validation and normalization
--> fixture-backed map/agent repositories
--> simple planner
--> task_plan JSON
--> mission feedback
--> edge-dispatch records
+Browser UI (:5173)
+  -> FastAPI adapter (:8000)
+  -> ROS REST bridge (:5001) and rosbridge (:9090)
+  -> centralized coordination, planner, fleet, edge, and autonomy nodes
+  -> MongoDB
 ```
 
-## Try It
+The editable and legacy ROS stacks use the same host ports and ROS domain, so
+they cannot run at the same time.
 
-Backend:
+## Run the editable backend
+
+Start the ROS backend:
 
 ```bash
-python -m c2_imugs2.cli demo
+docker compose -f docker-compose.legacy-ros.yml down
+docker compose -f docker-compose.backend.yml up --build
+./scripts/check_backend_ros_stack.sh
 ```
 
-or after installing:
+Start the API and UI in another terminal:
 
 ```bash
-pip install -e .
-c2-imugs2 demo
+docker compose up -d --build c2-imugs2-api c2-imugs2-ui
 ```
 
-The demo uses:
+Open `http://localhost:5173`.
 
-```text
-fixtures/missions/simple_navigation.json
-fixtures/agents.json
-fixtures/map_features.json
+Health and diagnostic endpoints:
+
+```bash
+curl -s http://localhost:8000/api/health | python3 -m json.tool
+curl -s http://localhost:8000/api/diagnostics | python3 -m json.tool
+curl -s http://localhost:8000/api/legacy/trace | python3 -m json.tool
 ```
 
-Runtime JSON outputs are written under:
+To run the frozen legacy stack instead, follow the
+[legacy ROS instructions](legacy_ros/README.md).
 
-```text
-data/runtime/
+## Contract documentation
+
+The contract reference is generated from the editable backend, adapter,
+frontend API calls, Compose configuration, and JSON Schemas.
+
+```bash
+.venv/bin/python -m pip install -e ".[docs]"
+.venv/bin/python -m c2_imugs2.contract_docs generate
+.venv/bin/mkdocs serve
 ```
 
-Frontend:
+Open `http://127.0.0.1:8001`. Source changes are watched while MkDocs is
+running. CI also checks that the committed generated files are current.
+
+## Tests
+
+Python and adapter tests:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q
+```
+
+Frontend build:
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm run build
 ```
 
-The UI opens on Vite's local URL, normally `http://localhost:5173`. It is a shadcn-style React surface with a fictive mission map, animated UGV trajectories, polygon drawing, a schema-aligned mission JSON editor, task-plan preview, asset browser, and a quiet LLM-assistant placeholder. The assistant is intentionally local/deterministic for now; the benchmarking harness comes later.
-
-Run the replacement core and UI together:
+Backend ROS changes should also be checked with:
 
 ```bash
-docker compose up --build
+./scripts/check_backend_ros_stack.sh
 ```
 
-Run the vendored legacy ROS stack:
+## Project guidance
 
-```bash
-docker compose -f docker-compose.legacy-ros.yml up --build
-```
+Read [PROJECT_PLANNING.md](PROJECT_PLANNING.md) before changing architecture,
+ROS contracts, or compatibility behavior. Do not edit `legacy_ros/` unless a
+change specifically targets the legacy reference.
 
-That compose file builds and runs the actual old `centralized_coordination`, `planner`, `c2_ros2_rest_api`, `rosbridge`, `agent_tasks_supervisor`, and `test_autonomy_sim` nodes from the trimmed source copied into `legacy_ros/`. For the edge side, `agent_tasks_supervisor` and `test_autonomy_sim` run in the same container because they are two executables from the same old package and form one simulated UGV pair.
+Additional technical documents:
 
-After it is running:
-
-```bash
-./scripts/check_legacy_ros_stack.sh
-```
-
-## What Is Implemented
-
-- Canonical mission and task-plan schemas.
-- Legacy mission normalization for `objective.geometry` -> `objective.geometries[]`.
-- Legacy spelling alias `optimalization` -> `optimization`.
-- File-backed mission, plan, map, and agent repositories.
-- Explicit ports/interfaces for planner, repositories, and edge dispatch.
-- Deterministic point/feature planner for `NAVIGATE`.
-- Coverage placeholder behavior that still emits useful waypoint tasks for area features.
-- Mission lifecycle service with `INIT`, `APPROVE`, and `START`.
-- Edge dispatch records for later ROS 2 integration.
-- React + shadcn-style frontend for mission visualization and editing.
-- Legacy ROS Docker compose wrapper and ICD map for the old fog/planner/edge topic/service names.
-
-## Architecture
-
-The core is modular. `MissionService` depends on small ports, not concrete implementations:
-
-- `PlannerPort`
-- `AgentRepositoryPort`
-- `MapRepositoryPort`
-- `MissionRepositoryPort`
-- `PlanRepositoryPort`
-- `EdgeDispatcherPort`
-
-This means the simple planner can be swapped with the actual planner by implementing `create_plan(mission_config, agents) -> task_plan`.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## What Comes Next
-
-- ROS 2 interface package and nodes.
-- Edge mock node.
-- MongoDB adapter.
-- HTTP API for connecting the UI to the backend runtime.
-- Better graph/path planning.
-- Coverage and formation logic.
-- LLM benchmark harness after the replacement system works.
+- [ROS compatibility ICD](docs/ROS_COMPATIBILITY_ICD.md)
+- [Editable backend mission walkthrough](docs/SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
+- [Legacy backend mission walkthrough](docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
+- [Backend/legacy comparison](docs/LEGACY_ROS_UPSTREAM_COMPARISON.md)
