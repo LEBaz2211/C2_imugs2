@@ -15,6 +15,7 @@ import random
 
 import pymongo
 from pymongo import MongoClient, ReadPreference
+import networkx as nx
 import osmnx as ox
 from shapely.ops import unary_union
 import geopandas as gpd
@@ -66,6 +67,8 @@ class PlannerNode(Node):
                                     ('map_folder',rclpy.Parameter.Type.STRING),
                                     ('mongodb_url',rclpy.Parameter.Type.STRING),
                                     ('map_feature_collection',rclpy.Parameter.Type.STRING),
+                                    ('scenario_activation_token',rclpy.Parameter.Type.STRING),
+                                    ('load_osm_from_network',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_database',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_local_folder',rclpy.Parameter.Type.BOOL),
 
@@ -89,10 +92,12 @@ class PlannerNode(Node):
         self.mongodb_url = self.get_parameter("mongodb_url").value
         self.load_map_from_database= self.get_parameter("load_map_from_database").value
         self.load_map_from_local_folder= self.get_parameter("load_map_from_local_folder").value
+        self.load_osm_from_network = self.get_parameter("load_osm_from_network").value
 
         self.mongo_client = MongoClient(self.mongodb_url, read_preference=ReadPreference.PRIMARY)  # Set read preference
         self.map_database = self.mongo_client["MapDB"]
         map_feature_collection = self.get_parameter("map_feature_collection").value
+        self.scenario_activation_token = self.get_parameter("scenario_activation_token").value
         self.map_feature_collection = self.map_database[map_feature_collection]
         self.mongodb_features_count = 0
         # Start a MongoDB watcher in a separate thread
@@ -458,7 +463,14 @@ class PlannerNode(Node):
     # Methods
     def initialize_map(self):
 
-        self.get_logger().info("Loading map from database: "+ self.mongodb_url)
+        # A failed reload must never leave the previous scenario's planner
+        # object looking ready.
+        self.init = False
+        self.mr_path_planner = None
+        self.get_logger().info(
+            f"Loading frozen map from MapDB.{self.map_feature_collection.name} "
+            f"({self.mongodb_url})"
+        )
         # self.get_logger().info("Loading map from folder: "+ self.map_folder)
 
         # Free Roads
@@ -512,13 +524,27 @@ class PlannerNode(Node):
         else:
             raise ValueError("No valid geometries found to compute central point and map radius.")
 
-        # Generate OSMNX Graph (left, bottom, right, top)
-        # bbox, *, network_type='all', simplify=True, retain_all=False, truncate_by_edge=False, custom_filter=None
-        # self.G = ox.graph_from_bbox((2.881738450702528, 51.23322886000847 , 2.938772513420844, 51.25868020804094), simplify=False, 
-        #                             network_type="all_private")
-        self.G = ox.graph_from_point((central_point.y, central_point.x), simplify=False, 
-                                    network_type="all_private", dist=self.map_radius)
-        self.obstacle_gdf = ox.features_from_point((central_point.y, central_point.x),{"building":True,"amentity":True},dist=self.map_radius)
+        if self.load_osm_from_network:
+            self.get_logger().warn(
+                "Live OSM download is enabled. This mode is non-reproducible and is not used by scenario activation."
+            )
+            self.G = ox.graph_from_point(
+                (central_point.y, central_point.x),
+                simplify=False,
+                network_type="all_private",
+                dist=self.map_radius,
+            )
+            self.obstacle_gdf = ox.features_from_point(
+                (central_point.y, central_point.x),
+                {"building": True, "amenity": True},
+                dist=self.map_radius,
+            )
+        else:
+            # Downloaded OSM roads are ordinary road LineStrings in the active,
+            # immutable MapDB collection. Start empty and compose only those
+            # frozen database graphs below.
+            self.G = nx.MultiDiGraph()
+            self.obstacle_gdf = None
 
         #populate basic graph
         if(self.populate_graph):
@@ -564,15 +590,24 @@ class PlannerNode(Node):
         else:
             self.G_projected = G_proj
 
-        self.init = True
+        if self.G.number_of_nodes() == 0 or self.G.number_of_edges() == 0:
+            raise ValueError(
+                f"MapDB.{self.map_feature_collection.name} produced an empty routing graph"
+            )
 
-        self.get_logger().info('MAP IS LOADED ')
-        self.plot_graph_service()
-        self.get_logger().info('Graph Image Saved ')
-
-        # Initialize Multi-Robot Paths Planner
+        # Initialize the mission planner before publishing the readiness marker.
+        # Scenario activation treats this exact marker as the point at which
+        # CreatePlanner can safely be accepted.
         self.mr_path_planner = MultiRobotPathPlanning(self.mapf , self.mongodb_url, "MapDB")
         self.mr_path_planner.graph = self.G
+        self.init = True
+        self.get_logger().info(
+            f"MAP IS LOADED collection=MapDB.{self.map_feature_collection.name} "
+            f"activation={self.scenario_activation_token} "
+            f"nodes={self.G.number_of_nodes()} edges={self.G.number_of_edges()}"
+        )
+        self.plot_graph_service()
+        self.get_logger().info('Graph Image Saved ')
 
 
 
@@ -625,7 +660,10 @@ class PlannerNode(Node):
 
         graph=self.G
 
-        fig, ax = ox.plot_footprints(self.obstacle_gdf,figsize=(50, 50),alpha=0.4,show=False)
+        if self.obstacle_gdf is not None and not self.obstacle_gdf.empty:
+            fig, ax = ox.plot_footprints(self.obstacle_gdf,figsize=(50, 50),alpha=0.4,show=False)
+        else:
+            fig, ax = plt.subplots(figsize=(50, 50))
         fig2, ax2 = ox.plot_graph(graph, ax=ax, node_size=10, edge_color=["red" if data.get('risk') else "white" for u, v, key, data in graph.edges(keys=True, data=True)], edge_linewidth=0.7, node_color="red", show=False)
         # fig2,ax2=ox.plot_graph(graph,ax=ax,node_size=4,edge_color="w",edge_linewidth=0.7, node_color="r",show=False,save=True,filepath="./map.png")
 

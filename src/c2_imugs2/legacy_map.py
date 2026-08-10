@@ -143,6 +143,11 @@ def normalize_user_geojson_feature(feature: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_osm_roads_overlay(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
+    """Load a previously frozen overlay without performing implicit network I/O.
+
+    New OSM data is fetched only by the explicit Scenario Lab polygon query and
+    becomes authoritative only after scenario activation stores it in MapDB.
+    """
     cache_path = repo_root / "data" / "runtime" / f"osm_roads_{map_name}.geojson"
     if cache_path.exists():
         try:
@@ -152,77 +157,7 @@ def load_osm_roads_overlay(repo_root: Path, map_name: str = "rma") -> dict[str, 
         except json.JSONDecodeError:
             pass
 
-    collection = load_legacy_geojson_map(repo_root, map_name)
-    bbox = _feature_collection_bbox(collection)
-    if bbox is None:
-        return {"type": "FeatureCollection", "features": []}
-
-    west, south, east, north = _expand_bbox(bbox, margin=0.0012)
-    overpass = _query_overpass_roads((west, south, east, north))
-    if overpass is None:
-        return _local_road_overlay(collection)
-    overlay = _overpass_roads_to_feature_collection(overpass, feature_type="osm_road")
-    if not overlay.get("features"):
-        overlay = _local_road_overlay(collection)
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(overlay, indent=2), encoding="utf-8")
-    except OSError:
-        pass
-    return overlay
-
-
-def import_osm_roads_as_user_features(
-    repo_root: Path,
-    map_name: str,
-    bbox: tuple[float, float, float, float],
-    max_features: int = 80,
-) -> dict[str, Any]:
-    """Fetch OSM highway LineStrings for a bbox and persist them as runtime road features."""
-    west, south, east, north = _validate_bbox(bbox)
-    overpass = _query_overpass_roads((west, south, east, north))
-    if overpass is None:
-        raise ValueError("OpenStreetMap Overpass query failed")
-
-    collection = _overpass_roads_to_feature_collection(overpass, feature_type="road")
-    imported = []
-    available = []
-    existing_by_id = {
-        str((feature.get("properties") or {}).get("feature_id") or feature.get("id")): feature
-        for feature in load_user_geojson_map(repo_root, map_name).get("features", [])
-    }
-    selected_features = collection.get("features", [])[: max(1, max_features)]
-    for feature in selected_features:
-        properties = dict(feature.get("properties") or {})
-        feature_id = str(properties.get("feature_id") or feature.get("id"))
-        existing = existing_by_id.get(feature_id)
-        if existing:
-            available.append(existing)
-            continue
-        properties.update(
-            {
-                "feature_id": feature_id,
-                "feature_type": "road",
-                "import_source": "openstreetmap-overpass",
-                "source_tool": "scenario_lab_osm_import",
-            }
-        )
-        feature["properties"] = properties
-        saved = save_user_geojson_feature(repo_root, map_name, feature)
-        imported.append(saved)
-        available.append(saved)
-        existing_by_id[feature_id] = saved
-
-    full_collection = load_legacy_geojson_map(repo_root, map_name)
-    return {
-        "imported_count": len(imported),
-        "skipped_existing": len(selected_features) - len(imported),
-        "available_count": len(available),
-        "bbox": [west, south, east, north],
-        "features": available,
-        "geojson": full_collection,
-        "map_features": feature_collection_to_map_features(full_collection),
-    }
+    return _local_road_overlay(load_legacy_geojson_map(repo_root, map_name))
 
 
 def query_osm_roads_for_bbox(

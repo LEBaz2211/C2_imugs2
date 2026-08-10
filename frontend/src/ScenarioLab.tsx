@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { Feature, FeatureCollection } from "geojson";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { OsmRoadImportRequest, QueriedOsmRoads, ScenarioLaunchRequest, ScenarioLaunchResult } from "./api";
+import type { OsmRoadImportRequest, QueriedOsmRoads, ScenarioCatalogEntry, ScenarioLaunchRequest, ScenarioLaunchResult } from "./api";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Tabs } from "./components/ui/tabs";
@@ -66,6 +66,10 @@ export type ScenarioRecord = {
   map_view?: ScenarioMapView;
   created_at: string;
   updated_at: string;
+  runtime_active?: boolean;
+  runtime_status?: string;
+  runtime_version?: string;
+  map_collection?: string;
 };
 
 type ScenarioLibrary = {
@@ -97,6 +101,7 @@ type ScenarioLabProps = {
   pendingAgentPlacement?: ScenarioAgentPlacement;
   currentMapView?: ScenarioMapView;
   activeScenarioId?: string;
+  catalogScenarios?: ScenarioCatalogEntry[];
   placingAgentId?: string;
   onScenarioAgentsChange: (agents: Agent[]) => void;
   onActiveScenarioFeaturesChange: (featureIds: string[]) => void;
@@ -154,6 +159,7 @@ export function ScenarioLab({
   pendingAgentPlacement,
   currentMapView,
   activeScenarioId,
+  catalogScenarios = [],
   placingAgentId,
   onScenarioAgentsChange,
   onActiveScenarioFeaturesChange,
@@ -193,6 +199,11 @@ export function ScenarioLab({
     onScenarioLibraryChange(scenarioContextLibraryFromLibrary(library));
     onScenarioAgentsChange(activeScenario.agents.map(toAgent));
   }, [activeScenario.agents, library, onScenarioAgentsChange, onScenarioLibraryChange]);
+
+  useEffect(() => {
+    if (!catalogScenarios.length) return;
+    setLibrary((current) => mergeScenarioCatalog(current, catalogScenarios));
+  }, [catalogScenarios]);
 
   useEffect(() => {
     if (!activeScenarioId || activeScenarioId === library.active_scenario_id) return;
@@ -415,16 +426,16 @@ export function ScenarioLab({
           >
             {library.scenarios.map((scenario) => (
               <option key={scenario.scenario_id} value={scenario.scenario_id}>
-                {scenario.name}
+                {scenario.name}{scenario.runtime_active ? " (active)" : ""}
               </option>
             ))}
           </select>
           <Button size="icon" variant="outline" onClick={createScenario} title="New scenario">
             <Plus className="h-4 w-4" />
           </Button>
-          <Button size="sm" disabled={launchBusy || activeScenario.agents.length === 0} onClick={launchActiveScenario} title="Launch scenario vehicles into ROS">
+          <Button size="sm" disabled={launchBusy || activeScenario.agents.length === 0} onClick={launchActiveScenario} title="Freeze the scenario map, switch the planner, and verify its ROS vehicles">
             <Play className="h-4 w-4" />
-            {launchBusy ? "Launching" : "Launch"}
+            {launchBusy ? "Activating" : "Activate"}
           </Button>
           <Button size="icon" variant="outline" onClick={duplicateScenario} title="Duplicate scenario">
             <Copy className="h-4 w-4" />
@@ -441,7 +452,7 @@ export function ScenarioLab({
             launchError
           ) : (
             <span>
-              <span className="font-semibold text-foreground">{launchResult?.docker_started ? "Started" : "Generated"}</span>{" "}
+              <span className="font-semibold text-foreground">{launchResult?.ready ? "Ready" : launchResult?.status}</span>{" "}
               {launchResult?.message}
               {launchResult?.host_command && !launchResult.docker_started ? <span className="ml-1 font-mono">{launchResult.host_command}</span> : null}
             </span>
@@ -905,7 +916,7 @@ function RoadImportPanel({
     <div className="space-y-4">
       <div className="rounded-md border border-border bg-panel p-4">
         <div className="flex items-center justify-between">
-          <LabTitle icon={<Route className="h-4 w-4" />} label="OSM Road Import" />
+          <LabTitle icon={<Route className="h-4 w-4" />} label="Frozen OSM Roads" />
           <Badge>{formatBboxSize(bbox)}</Badge>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
@@ -924,7 +935,7 @@ function RoadImportPanel({
           </Button>
           <Button size="sm" onClick={submit} disabled={busy || !polygon}>
             <Check className="h-4 w-4" />
-            {busy ? "Importing" : "Import Inside Polygon"}
+            {busy ? "Downloading" : "Download Inside Polygon"}
           </Button>
         </div>
       </div>
@@ -1018,6 +1029,49 @@ function normalizeLibrary(stored: ScenarioLibrary): ScenarioLibrary {
   return {
     active_scenario_id: scenarios.some((scenario) => scenario.scenario_id === stored.active_scenario_id) ? stored.active_scenario_id : scenarios[0]?.scenario_id ?? "",
     scenarios,
+  };
+}
+
+function mergeScenarioCatalog(library: ScenarioLibrary, catalog: ScenarioCatalogEntry[]): ScenarioLibrary {
+  const catalogById = new Map(catalog.map((scenario) => [scenario.scenario_id, scenarioRecordFromCatalog(scenario)]));
+  const scenarios = library.scenarios.map((local) => {
+    const saved = catalogById.get(local.scenario_id);
+    if (!saved) return local;
+    catalogById.delete(local.scenario_id);
+    return {
+      ...saved,
+      ...local,
+      agents: local.agents.length ? local.agents : saved.agents,
+      selected_agent_id: local.selected_agent_id || saved.selected_agent_id,
+      feature_ids: local.feature_ids.length ? local.feature_ids : saved.feature_ids,
+      road_imports: local.road_imports.length ? local.road_imports : saved.road_imports,
+      runtime_active: saved.runtime_active,
+      runtime_status: saved.runtime_status,
+      runtime_version: saved.runtime_version,
+      map_collection: saved.map_collection,
+    };
+  });
+  scenarios.push(...catalogById.values());
+  return { ...library, scenarios };
+}
+
+function scenarioRecordFromCatalog(scenario: ScenarioCatalogEntry): ScenarioRecord {
+  const agents = (scenario.agents ?? []).map((agent) => scenarioAgentFromAgent(agent));
+  return {
+    scenario_id: scenario.scenario_id,
+    name: scenario.name || scenario.scenario_id,
+    map: scenario.map || "rma",
+    notes: scenario.notes || "",
+    feature_ids: unique(scenario.feature_ids ?? []),
+    selected_agent_id: scenario.selected_agent_id || agents[0]?.agent_id || "",
+    agents,
+    road_imports: normalizeRoadImports(scenario.road_imports),
+    created_at: scenario.created_at || new Date().toISOString(),
+    updated_at: scenario.updated_at || scenario.created_at || new Date().toISOString(),
+    runtime_active: scenario.runtime_active,
+    runtime_status: scenario.runtime_status,
+    runtime_version: scenario.version,
+    map_collection: scenario.map_collection,
   };
 }
 
@@ -1268,21 +1322,22 @@ function isScenarioLabImportedRoad(feature?: MapFeature): feature is MapFeature 
 }
 
 function scenarioAgentFromAgent(agent: Agent): ScenarioAgent {
+  const constraints = agent.constraints ?? {};
   return {
     agent_id: agent.agent_id,
     name: agent.name,
     vehicle_type: agent.vehicle_type,
-    status: agent.status,
+    status: agent.status || "available",
     current_location: agent.current_location,
     constraints: {
-      max_speed: agent.constraints.max_speed ?? 4,
-      max_acceleration: agent.constraints.max_acceleration ?? 0,
-      max_deceleration: agent.constraints.max_deceleration ?? 0,
-      max_jerk: agent.constraints.max_jerk ?? 0,
-      max_straight_slope: agent.constraints.max_straight_slope ?? 0,
-      max_side_slope: agent.constraints.max_side_slope ?? 0,
-      max_weight: agent.constraints.max_weight ?? 0,
-      max_tilt_angle: agent.constraints.max_tilt_angle ?? 0,
+      max_speed: constraints.max_speed ?? 4,
+      max_acceleration: constraints.max_acceleration ?? 0,
+      max_deceleration: constraints.max_deceleration ?? 0,
+      max_jerk: constraints.max_jerk ?? 0,
+      max_straight_slope: constraints.max_straight_slope ?? 0,
+      max_side_slope: constraints.max_side_slope ?? 0,
+      max_weight: constraints.max_weight ?? 0,
+      max_tilt_angle: constraints.max_tilt_angle ?? 0,
     },
     capabilities: [],
   };

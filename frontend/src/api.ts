@@ -31,16 +31,6 @@ export type OsmRoadImportRequest = {
   max_features?: number;
 };
 
-export type ImportedOsmRoads = {
-  imported_count: number;
-  skipped_existing: number;
-  available_count?: number;
-  bbox: [number, number, number, number];
-  features: FeatureCollection["features"];
-  geojson: FeatureCollection;
-  map_features: MapFeature[];
-};
-
 export type QueriedOsmRoads = {
   feature_count: number;
   source_way_count?: number;
@@ -63,12 +53,45 @@ export type ScenarioLaunchRequest = {
   road_imports?: unknown[];
 };
 
+export type ScenarioCatalogEntry = {
+  scenario_id: string;
+  name: string;
+  map: string;
+  notes: string;
+  agents: Agent[];
+  feature_ids: string[];
+  selected_agent_id: string;
+  road_imports: {
+    import_id: string;
+    name: string;
+    bbox: [number, number, number, number];
+    feature_count: number;
+    geojson: FeatureCollection;
+    created_at: string;
+  }[];
+  version: string;
+  map_collection: string;
+  feature_count: number;
+  road_count: number;
+  runtime_active: boolean;
+  runtime_status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ScenarioLaunchResult = {
-  status: "generated" | "started" | string;
+  status: "inactive" | "activating" | "ready" | "failed" | string;
+  ready: boolean;
   message: string;
-  docker_started: boolean;
-  agent_count: number;
-  containers: {
+  docker_started?: boolean;
+  scenario_id?: string;
+  name?: string;
+  version?: string;
+  map_collection?: string;
+  feature_count?: number;
+  road_count?: number;
+  agents?: Agent[];
+  containers?: {
     agent_id: string;
     name: string;
     topic_prefix: string;
@@ -401,16 +424,20 @@ export async function getOsmRoads(mapName = "rma"): Promise<FeatureCollection> {
   return getJson(`/api/map/osm-roads?map=${encodeURIComponent(mapName)}`);
 }
 
-export async function importOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<ImportedOsmRoads> {
-  return postJson(`/api/map/osm-roads/import?map=${encodeURIComponent(mapName)}`, request);
-}
-
 export async function queryOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<QueriedOsmRoads> {
   return postJson(`/api/map/osm-roads/query?map=${encodeURIComponent(mapName)}`, request);
 }
 
 export async function launchScenario(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
-  return postJson("/api/scenarios/launch", request);
+  return postJson("/api/scenarios/activate", request);
+}
+
+export async function getActiveScenario(): Promise<ScenarioLaunchResult> {
+  return getJson("/api/scenarios/active");
+}
+
+export async function getScenarios(): Promise<{ scenarios: ScenarioCatalogEntry[] }> {
+  return getJson("/api/scenarios");
 }
 
 export async function createMapFeature(feature: FeatureCollection["features"][number], mapName = "rma"): Promise<CreatedMapFeature> {

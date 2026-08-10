@@ -128,7 +128,11 @@ def distance_between_coordinates(lat1, lon1, lat2, lon2):
     R = 6371
 
     # Calculate the angular separation
-    delta_sigma = math.acos(math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1))
+    cosine = math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
+    # Floating point rounding can put near-identical coordinates a few ULPs
+    # outside acos' domain. Frozen OSM graphs contain many shared endpoints,
+    # so clamp the mathematically valid cosine range explicitly.
+    delta_sigma = math.acos(max(-1.0, min(1.0, cosine)))
 
     # Calculate the distance
     distance = R * delta_sigma
@@ -290,10 +294,6 @@ def read_features_from_db(
         except Exception as e:
             print(f"Error processing document: {document}")
             print(e)
-
-    print("Features found:")
-    for gdf in features:
-        print(gdf)
 
     return features
 

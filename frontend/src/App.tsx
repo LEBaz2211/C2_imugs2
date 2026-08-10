@@ -9,6 +9,7 @@ import {
   deleteMapFeature,
   forgetMission as forgetMissionRecord,
   getContracts,
+  getActiveScenario,
   getDiagnostics,
   getLegacyTrace,
   getMissionState,
@@ -16,6 +17,7 @@ import {
   getOsmRoads,
   getPlanningDiagnostics,
   getRuntimeBootstrap,
+  getScenarios,
   initMission,
   launchScenario,
   queryOsmRoads,
@@ -36,23 +38,21 @@ import {
   type PlannerUpdateEvent,
   type ScenarioLaunchRequest,
   type ScenarioLaunchResult,
+  type ScenarioCatalogEntry,
 } from "./api";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Tabs } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 import { agents as fallbackAgents, mapFeatures as fallbackFeatures, missionExamples as fallbackMissionExamples } from "./data/demo";
-import { createTaskPlan, missionDestinationPoints, normalizeMission, validateMission } from "./mission";
+import { createTaskPlan, normalizeMission, validateMission } from "./mission";
 import { ContractExplorer } from "./ContractExplorer";
 import { MapView, type DraftMapFeature } from "./MapView";
-import { ScenarioLab, loadScenarioContextLibrary, saveActiveScenarioId, type ScenarioAgentPlacement, type ScenarioContext, type ScenarioContextLibrary, type ScenarioMapView } from "./ScenarioLab";
-import type { Agent, GeometryRef, LonLat, MapFeature, MissionConfig } from "./types";
+import { ScenarioLab, loadScenarioContextLibrary, type ScenarioAgentPlacement, type ScenarioContextLibrary, type ScenarioMapView } from "./ScenarioLab";
+import type { Agent, MapFeature, MissionConfig } from "./types";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
-const MIN_SCENARIO_ROAD_CORRIDOR_METERS = 250;
-const MAX_SCENARIO_ROAD_CORRIDOR_METERS = 2500;
-const SCENARIO_ROAD_CORRIDOR_RATIO = 0.6;
 
 function loadInitialScenarioState() {
   const library = loadScenarioContextLibrary();
@@ -140,193 +140,9 @@ function directGeometryRefFromFeature(feature: MapFeature) {
   return { feature_id: feature.feature_id };
 }
 
-type ScenarioRoadSelection = {
-  refs: GeometryRef[];
-  selected: number;
-  total: number;
-  usedCorridor: boolean;
-};
-
-function scenarioRoadGeometryRefs(
-  collection: FeatureCollection | undefined,
-  mission?: MissionConfig,
-  agents: Agent[] = [],
-  features: MapFeature[] = [],
-): ScenarioRoadSelection {
-  const starts = mission ? selectedAgentLocations(mission, agents) : [];
-  const targets = mission?.behavior === 0 ? missionDestinationPoints(mission, features) : [];
-  const useCorridor = starts.length > 0 && targets.length > 0;
-  const seen = new Set<string>();
-  const refs: GeometryRef[] = [];
-  let total = 0;
-  for (const feature of collection?.features ?? []) {
-    if (!feature.geometry || feature.geometry.type !== "LineString") continue;
-    const coordinates = feature.geometry.coordinates;
-    if (!Array.isArray(coordinates) || coordinates.length < 2) continue;
-    total += 1;
-    if (useCorridor && !lineStringTouchesMissionCorridor(coordinates, starts, targets)) continue;
-    const key = JSON.stringify(coordinates);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    refs.push({
-      geometry: {
-        geometry_type: "LineString",
-        coordinates,
-      },
-    });
-  }
-  return { refs, selected: refs.length, total, usedCorridor: useCorridor };
-}
-
-function missionWithScenarioRoads(
-  mission: MissionConfig,
-  roads: FeatureCollection | undefined,
-  agents: Agent[],
-  features: MapFeature[],
-): { mission: MissionConfig; roadSelection: ScenarioRoadSelection } {
-  const roadSelection = scenarioRoadGeometryRefs(roads, mission, agents, features);
-  const roadRefs = roadSelection.refs;
-  if (!roadRefs.length) return { mission, roadSelection };
-
-  const existingLines = new Set(
-    mission.objective.geometries.flatMap((geometryRef) => {
-      const geometry = geometryRef.geometry;
-      if (!geometry || (geometry.geometry_type ?? geometry.type) !== "LineString") return [];
-      return [JSON.stringify(geometry.coordinates)];
-    }),
-  );
-  const missingRoadRefs = roadRefs.filter((geometryRef) => {
-    const key = JSON.stringify(geometryRef.geometry?.coordinates);
-    return !existingLines.has(key);
-  });
-  if (!missingRoadRefs.length) return { mission, roadSelection };
-
-  return {
-    roadSelection,
-    mission: {
-      ...mission,
-      objective: {
-        ...mission.objective,
-        geometries: [...mission.objective.geometries, ...missingRoadRefs],
-      },
-    },
-  };
-}
-
-function selectedAgentLocations(mission: MissionConfig, agents: Agent[]): LonLat[] {
-  const selectedIds = new Set(mission.vehicles);
-  return uniqueLonLat(agents.filter((agent) => selectedIds.has(agent.agent_id)).map((agent) => agent.current_location));
-}
-
-function uniqueLonLat(points: LonLat[]): LonLat[] {
-  const seen = new Set<string>();
-  const unique: LonLat[] = [];
-  for (const point of points) {
-    const key = `${point[0].toFixed(7)},${point[1].toFixed(7)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(point);
-  }
-  return unique;
-}
-
-function lineStringTouchesMissionCorridor(coordinates: unknown, starts: LonLat[], targets: LonLat[]) {
-  const roadPoints = flattenCoordinatePoints(coordinates);
-  if (roadPoints.length < 2) return false;
-
-  const corridorMeters = scenarioRoadCorridorMeters(starts, targets);
-  const originLat = averageLatitude([...roadPoints, ...starts, ...targets]);
-  for (let roadIndex = 1; roadIndex < roadPoints.length; roadIndex += 1) {
-    const roadA = roadPoints[roadIndex - 1];
-    const roadB = roadPoints[roadIndex];
-    for (const start of starts) {
-      for (const target of targets) {
-        if (segmentDistanceMeters(roadA, roadB, start, target, originLat) <= corridorMeters) return true;
-      }
-    }
-  }
-  return false;
-}
-
-function scenarioRoadCorridorMeters(starts: LonLat[], targets: LonLat[]) {
-  const originLat = averageLatitude([...starts, ...targets]);
-  let directDistance = 0;
-  for (const start of starts) {
-    for (const target of targets) {
-      directDistance = Math.max(directDistance, distanceMeters(start, target, originLat));
-    }
-  }
-  return clamp(
-    directDistance * SCENARIO_ROAD_CORRIDOR_RATIO + MIN_SCENARIO_ROAD_CORRIDOR_METERS,
-    MIN_SCENARIO_ROAD_CORRIDOR_METERS,
-    MAX_SCENARIO_ROAD_CORRIDOR_METERS,
-  );
-}
-
-function segmentDistanceMeters(firstA: LonLat, firstB: LonLat, secondA: LonLat, secondB: LonLat, originLat: number) {
-  const a = lonLatToMeters(firstA, originLat);
-  const b = lonLatToMeters(firstB, originLat);
-  const c = lonLatToMeters(secondA, originLat);
-  const d = lonLatToMeters(secondB, originLat);
-  if (segmentsIntersect(a, b, c, d)) return 0;
-  return Math.min(pointToSegmentDistance(a, c, d), pointToSegmentDistance(b, c, d), pointToSegmentDistance(c, a, b), pointToSegmentDistance(d, a, b));
-}
-
-function distanceMeters(first: LonLat, second: LonLat, originLat: number) {
-  const a = lonLatToMeters(first, originLat);
-  const b = lonLatToMeters(second, originLat);
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function lonLatToMeters(point: LonLat, originLat: number) {
-  const scale = Math.cos((originLat * Math.PI) / 180);
-  return {
-    x: point[0] * 111_320 * Math.max(scale, 0.2),
-    y: point[1] * 111_320,
-  };
-}
-
-function pointToSegmentDistance(point: { x: number; y: number }, start: { x: number; y: number }, end: { x: number; y: number }) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  if (dx === 0 && dy === 0) return Math.hypot(point.x - start.x, point.y - start.y);
-  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy), 0, 1);
-  return Math.hypot(point.x - (start.x + t * dx), point.y - (start.y + t * dy));
-}
-
-function segmentsIntersect(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) {
-  const abC = orientation(a, b, c);
-  const abD = orientation(a, b, d);
-  const cdA = orientation(c, d, a);
-  const cdB = orientation(c, d, b);
-  if (abC === 0 && onSegment(a, c, b)) return true;
-  if (abD === 0 && onSegment(a, d, b)) return true;
-  if (cdA === 0 && onSegment(c, a, d)) return true;
-  if (cdB === 0 && onSegment(c, b, d)) return true;
-  return abC !== abD && cdA !== cdB;
-}
-
-function orientation(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) {
-  const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
-  if (Math.abs(value) < 1e-9) return 0;
-  return value > 0 ? 1 : 2;
-}
-
-function onSegment(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) {
-  return b.x <= Math.max(a.x, c.x) && b.x >= Math.min(a.x, c.x) && b.y <= Math.max(a.y, c.y) && b.y >= Math.min(a.y, c.y);
-}
-
-function averageLatitude(points: LonLat[]) {
-  if (!points.length) return 0;
-  return points.reduce((sum, point) => sum + point[1], 0) / points.length;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>(fallbackAgents);
+  const [agentTelemetry, setAgentTelemetry] = useState<Record<string, AgentUpdateEvent>>({});
   const [mapFeatures, setMapFeatures] = useState<MapFeature[]>(fallbackFeatures);
   const [geojson, setGeojson] = useState<FeatureCollection | undefined>();
   const [osmRoads, setOsmRoads] = useState<FeatureCollection | undefined>();
@@ -361,6 +177,8 @@ export default function App() {
   const [scenarioFeatureIds, setScenarioFeatureIds] = useState<string[]>([]);
   const [scenarioRoads, setScenarioRoads] = useState<FeatureCollection | undefined>();
   const [scenarioState, setScenarioState] = useState<{ library: ScenarioContextLibrary; activeId?: string }>(() => loadInitialScenarioState());
+  const [activeScenarioRuntime, setActiveScenarioRuntime] = useState<ScenarioLaunchResult | undefined>();
+  const [scenarioCatalog, setScenarioCatalog] = useState<ScenarioCatalogEntry[]>([]);
   const [pendingScenarioFeatureToAdd, setPendingScenarioFeatureToAdd] = useState<{ featureId: string; nonce: number } | undefined>();
   const [pendingScenarioAgentPlacement, setPendingScenarioAgentPlacement] = useState<ScenarioAgentPlacement | undefined>();
   const [placingScenarioAgentId, setPlacingScenarioAgentId] = useState<string | undefined>();
@@ -409,6 +227,8 @@ export default function App() {
       .catch((error) => setApiError(`Backend bootstrap unavailable, using fallback data. ${String(error)}`));
 
     getOsmRoads().then(setOsmRoads).catch(() => undefined);
+    getActiveScenario().then(setActiveScenarioRuntime).catch(() => undefined);
+    getScenarios().then((payload) => setScenarioCatalog(payload.scenarios)).catch(() => undefined);
     getMissionExamples()
       .then((payload) => {
         setExamples(payload.examples.length ? payload.examples : fallbackMissionExamples);
@@ -440,6 +260,7 @@ export default function App() {
     source.addEventListener("agent.updated", (event) => {
       const update = JSON.parse((event as MessageEvent).data) as AgentUpdateEvent;
       const updateAgentId = normalizeUuidish(update.agent_id);
+      setAgentTelemetry((current) => ({ ...current, [updateAgentId]: update }));
       setAgents((current) =>
         current.map((agent) =>
           normalizeUuidish(agent.agent_id) === updateAgentId
@@ -523,8 +344,32 @@ export default function App() {
     () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, scenarioFeatureIdSet)),
     [mapFeatures, scenarioFeatureIdSet],
   );
-  const c2Agents = activeScenarioContext ? scenarioAgents : agents;
-  const c2MapFeatures = activeScenarioContext ? scenarioVisibleMapFeatures : mapFeatures;
+  const runtimeScenarioContext = useMemo(
+    () => scenarioState.library.scenarios.find((scenario) => scenario.scenario_id === activeScenarioRuntime?.scenario_id),
+    [activeScenarioRuntime?.scenario_id, scenarioState.library.scenarios],
+  );
+  const runtimeFeatureIdSet = useMemo(() => new Set(runtimeScenarioContext?.feature_ids ?? []), [runtimeScenarioContext?.feature_ids]);
+  const runtimeMapFeatures = useMemo(
+    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, runtimeFeatureIdSet)),
+    [mapFeatures, runtimeFeatureIdSet],
+  );
+  const c2Agents = useMemo(() => {
+    if (!activeScenarioRuntime?.ready) return agents;
+
+    const scenarioAgents = activeScenarioRuntime.agents ?? runtimeScenarioContext?.agents ?? [];
+    const liveAgentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
+    return scenarioAgents.map((agent) => {
+      const agentId = normalizeUuidish(agent.agent_id);
+      const liveAgent = liveAgentsById.get(agentId);
+      const telemetry = agentTelemetry[agentId];
+      return {
+        ...agent,
+        status: telemetry?.status ?? liveAgent?.status ?? agent.status,
+        current_location: telemetry?.current_location ?? liveAgent?.current_location ?? agent.current_location,
+      };
+    });
+  }, [activeScenarioRuntime, agentTelemetry, agents, runtimeScenarioContext?.agents]);
+  const c2MapFeatures = activeScenarioRuntime?.ready ? runtimeMapFeatures : mapFeatures;
 
   const validation = useMemo(() => {
     if (!missionText.trim()) return [];
@@ -539,8 +384,8 @@ export default function App() {
   const mapMission = workspace === "scenario" ? undefined : mission;
   const mapTaskPlan = workspace === "scenario" ? undefined : taskPlan;
   const mapPlannerState = workspace === "scenario" ? undefined : plannerState;
-  const mapUsesScenarioContext = workspace === "scenario" || Boolean(activeScenarioContext);
-  const mapAgents = mapUsesScenarioContext ? scenarioAgents : agents;
+  const mapUsesScenarioContext = workspace === "scenario" || Boolean(activeScenarioRuntime?.ready);
+  const mapAgents = workspace === "scenario" ? scenarioAgents : c2Agents;
   const placingScenarioAgent = scenarioAgents.find((agent) => agent.agent_id === placingScenarioAgentId);
   const applyScenarioAgents = useCallback((nextAgents: Agent[]) => setScenarioAgents(nextAgents), []);
   const applyScenarioFeatureIds = useCallback((featureIds: string[]) => setScenarioFeatureIds(featureIds), []);
@@ -568,12 +413,16 @@ export default function App() {
     setMapDraftResetNonce(Date.now());
   }, []);
   const mapViewFeatures = useMemo(
-    () => (mapUsesScenarioContext ? scenarioVisibleMapFeatures : mapFeatures),
-    [mapFeatures, mapUsesScenarioContext, scenarioVisibleMapFeatures],
+    () => (workspace === "scenario" ? scenarioVisibleMapFeatures : c2MapFeatures),
+    [c2MapFeatures, scenarioVisibleMapFeatures, workspace],
   );
   const mapViewGeojson = useMemo(
-    () => (mapUsesScenarioContext ? filterGeojsonForScenario(geojson, scenarioFeatureIdSet) : geojson),
-    [geojson, mapUsesScenarioContext, scenarioFeatureIdSet],
+    () => workspace === "scenario"
+      ? filterGeojsonForScenario(geojson, scenarioFeatureIdSet)
+      : activeScenarioRuntime?.ready
+        ? filterGeojsonForScenario(geojson, runtimeFeatureIdSet)
+        : geojson,
+    [activeScenarioRuntime?.ready, geojson, runtimeFeatureIdSet, scenarioFeatureIdSet, workspace],
   );
 
   useEffect(() => {
@@ -593,26 +442,8 @@ export default function App() {
     setScenarioRoads(activeScenarioContext.roads);
   }, [activeScenarioContext]);
 
-  function selectActiveScenarioContext(scenarioId: string) {
-    if (!scenarioId) {
-      setScenarioState((current) => ({ ...current, activeId: undefined }));
-      focusedScenarioViewRef.current = undefined;
-      resetScenarioWorkspace();
-      return;
-    }
-    const library = saveActiveScenarioId(scenarioId);
-    const scenario = library.scenarios.find((item) => item.scenario_id === scenarioId);
-    setScenarioState({ library, activeId: scenario?.scenario_id ?? library.active_scenario_id });
-    focusedScenarioViewRef.current = undefined;
-    if (scenario?.map_view) setMapViewFocus({ view: scenario.map_view, nonce: Date.now() });
-    setSelectedFeatureId(undefined);
-    setPlacingScenarioAgentId(undefined);
-    setMapFocus(undefined);
-    setMapFocusPoints(undefined);
-  }
-
   useEffect(() => {
-    if (!mapUsesScenarioContext || !activeScenarioContext?.map_view) return;
+    if (workspace !== "scenario" || !activeScenarioContext?.map_view) return;
     const key = mapViewKey(activeScenarioContext.scenario_id, activeScenarioContext.map_view);
     if (focusedScenarioViewRef.current === key) return;
     focusedScenarioViewRef.current = key;
@@ -622,7 +453,7 @@ export default function App() {
     activeScenarioContext?.map_view?.center[0],
     activeScenarioContext?.map_view?.center[1],
     activeScenarioContext?.map_view?.zoom,
-    mapUsesScenarioContext,
+    workspace,
   ]);
 
   function beginPlaceScenarioAgent(agentId: string) {
@@ -999,12 +830,9 @@ export default function App() {
   }
 
   async function sendInitMission() {
-    let roadSelection: ScenarioRoadSelection | undefined;
-    const result = await runCommand("init", async () => {
+    await runCommand("init", async () => {
       const parsed = normalizeMission(JSON.parse(missionText));
-      const scenarioPayload = activeScenarioContext ? missionWithScenarioRoads(parsed, scenarioRoads, c2Agents, c2MapFeatures) : undefined;
-      roadSelection = scenarioPayload?.roadSelection;
-      const next = scenarioPayload?.mission ?? parsed;
+      const next = parsed;
       activeMissionIdRef.current = next.mission_id;
       setMission(next);
       setMissionState(undefined);
@@ -1018,12 +846,6 @@ export default function App() {
       setMissionConfigs((current) => ({ ...current, [result.mission_id]: updated }));
       return result;
     });
-    if (activeScenarioContext && roadSelection) {
-      const detail = roadSelection.usedCorridor
-        ? ` Sent ${roadSelection.selected}/${roadSelection.total} scenario road sections near this route.`
-        : ` Sent ${roadSelection.selected} scenario road section${roadSelection.selected === 1 ? "" : "s"}.`;
-      setCommandFeedback({ tone: "ok", message: `${commandSuccessMessage("init", result)}${detail}` });
-    }
   }
 
   async function sendApproveMission() {
@@ -1078,11 +900,15 @@ export default function App() {
   }
 
   async function launchScenarioFromLab(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
-    setCommandFeedback({ tone: "warn", message: "Launching scenario vehicle simulations..." });
+    setCommandFeedback({ tone: "warn", message: "Freezing and activating scenario reality..." });
     const result = await launchScenario(request);
+    setAgentTelemetry({});
+    if (result.agents) setAgents(result.agents);
+    setActiveScenarioRuntime(result);
+    getScenarios().then((payload) => setScenarioCatalog(payload.scenarios)).catch(() => undefined);
     setCommandFeedback({
-      tone: result.docker_started ? "ok" : "warn",
-      message: result.docker_started ? result.message : `${result.message} ${result.host_command ?? ""}`.trim(),
+      tone: result.ready ? "ok" : "warn",
+      message: result.message,
     });
     getDiagnostics().then(applyDiagnostics).catch(() => undefined);
     return result;
@@ -1147,7 +973,7 @@ export default function App() {
 
   const hasMission = Boolean(missionText.trim());
   const hasSelectedMission = hasMission || Boolean(missionState);
-  const canSendMission = hasMission && validation.length === 0;
+  const canSendMission = hasMission && validation.length === 0 && Boolean(activeScenarioRuntime?.ready);
   const currentStatus = missionState ? missionStatusLabel(missionState) : "";
   const missionMatchesState = Boolean(mission && missionState?.mission_id === mission.mission_id);
   const canApproveMission = missionMatchesState && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
@@ -1205,7 +1031,7 @@ export default function App() {
         features={mapViewFeatures}
         geojson={mapViewGeojson}
         osmRoads={mapUsesScenarioContext ? undefined : osmRoads}
-        scenarioRoads={mapUsesScenarioContext ? scenarioRoads : undefined}
+        scenarioRoads={workspace === "scenario" ? scenarioRoads : runtimeScenarioContext?.roads}
         mission={mapMission}
         taskPlan={mapTaskPlan}
         plannerState={mapPlannerState}
@@ -1271,11 +1097,9 @@ export default function App() {
                   { value: "diagnostics", label: "Diagnostics" },
                 ]}
               />
-              <ScenarioContextSelect
-                scenarios={scenarioState.library.scenarios}
-                activeScenarioId={activeScenarioContext?.scenario_id}
-                onChange={selectActiveScenarioContext}
-              />
+              <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
+                {activeScenarioRuntime?.ready ? `active: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}` : "no ready scenario"}
+              </Badge>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)}>
@@ -1354,6 +1178,7 @@ export default function App() {
               pendingAgentPlacement={pendingScenarioAgentPlacement}
               currentMapView={currentMapView}
               activeScenarioId={scenarioState.activeId}
+              catalogScenarios={scenarioCatalog}
               placingAgentId={placingScenarioAgentId}
               onScenarioAgentsChange={applyScenarioAgents}
               onActiveScenarioFeaturesChange={applyScenarioFeatureIds}
@@ -1392,34 +1217,6 @@ export default function App() {
         )}
       </aside>
     </main>
-  );
-}
-
-function ScenarioContextSelect({
-  scenarios,
-  activeScenarioId,
-  onChange,
-}: {
-  scenarios: ScenarioContext[];
-  activeScenarioId?: string;
-  onChange: (scenarioId: string) => void;
-}) {
-  return (
-    <label className="flex min-w-0 items-center gap-2 text-xs">
-      <span className="shrink-0 font-medium text-muted-foreground">Scenario</span>
-      <select
-        className="h-8 max-w-[240px] min-w-0 rounded-md border border-border bg-background px-2 outline-none focus:ring-2 focus:ring-ring"
-        value={activeScenarioId ?? ""}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">Live C2</option>
-        {scenarios.map((scenario) => (
-          <option key={scenario.scenario_id} value={scenario.scenario_id}>
-            {scenario.name}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 
@@ -1688,7 +1485,6 @@ function MissionEditor({
   return (
     <div className="space-y-3">
       {mission && <MissionSummaryCard mission={mission} state={missionState} />}
-      {mission && <MinimalMissionCard mission={mission} />}
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle icon={<FileJson className="h-4 w-4" />} label="Full Mission JSON" />
@@ -1843,35 +1639,6 @@ function RuntimeMissionDetails({ state }: { state: MissionState }) {
         <SectionTitle icon={<FileJson className="h-4 w-4" />} label="Runtime Details" />
         <Textarea className="mt-2 h-56 resize-none" value={JSON.stringify(state, null, 2)} readOnly spellCheck={false} />
       </div>
-    </div>
-  );
-}
-
-function MinimalMissionCard({ mission }: { mission: MissionConfig }) {
-  const minimal = minimalMissionPayload(mission);
-  const objective = mission.objective.geometries[0];
-  const objectiveText = objective?.feature_id
-    ? `feature ${objective.feature_id}`
-    : objective?.geometry
-      ? `${objective.geometry.geometry_type ?? objective.geometry.type ?? "geometry"} ${formatCoordinates(objective.geometry.coordinates)}`
-      : "none";
-  return (
-    <div className="rounded-md border border-border bg-panel p-3">
-      <div className="flex items-center justify-between gap-3">
-        <SectionTitle icon={<Target className="h-4 w-4" />} label="Minimal Mission" />
-        <Badge tone="ok">generated</Badge>
-      </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-        <div className="rounded-sm border border-border bg-background p-2">
-          <div className="font-semibold">Vehicle</div>
-          <div className="mt-1 break-all text-muted-foreground">{mission.vehicles[0] ?? "none"}</div>
-        </div>
-        <div className="rounded-sm border border-border bg-background p-2">
-          <div className="font-semibold">Objective</div>
-          <div className="mt-1 break-words text-muted-foreground">{objectiveText}</div>
-        </div>
-      </div>
-      <Textarea className="mt-2 h-52 resize-none" value={JSON.stringify(minimal, null, 2)} readOnly spellCheck={false} />
     </div>
   );
 }
@@ -2268,25 +2035,6 @@ function emptyMission(name: string, agentId: string): MissionConfig {
     objective: {
       geometries: [],
       maximize_coverage: false,
-    },
-  };
-}
-
-function minimalMissionPayload(mission: MissionConfig) {
-  return {
-    schema_version: mission.schema_version ?? "1.0",
-    mission_id: mission.mission_id,
-    phase: mission.phase ?? 1,
-    name: mission.name ?? "Navigation mission",
-    behavior: mission.behavior,
-    vehicles: mission.vehicles,
-    transit: {
-      optimization: mission.transit?.["optimization"] ?? mission.transit?.["optimalization"] ?? { road_usage: 1, energy: 0.8 },
-      desired_vehicle_constraints: mission.transit?.["desired_vehicle_constraints"] ?? { max_speed: 4 },
-    },
-    objective: {
-      geometries: mission.objective.geometries,
-      maximize_coverage: mission.objective.maximize_coverage ?? false,
     },
   };
 }

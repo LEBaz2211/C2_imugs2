@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import c2_imugs2.legacy_map as legacy_map
 from c2_imugs2.api import (
-    create_app,
+    create_app as _create_app,
     _inline_user_feature_refs,
     _load_forgotten_missions,
     _mission_state_from_legacy_feedback,
@@ -18,6 +18,7 @@ from c2_imugs2.api import (
 from c2_imugs2.domain import MissionRequest
 from c2_imugs2.legacy_rest import LegacyRestResponse, to_legacy_mission_config
 from c2_imugs2.scenario_launch import launch_scenario
+from c2_imugs2.scenario_runtime import ScenarioNotReadyError, ScenarioRuntimeManager, build_scenario_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +58,50 @@ class FakeRosbridgeClient:
         }
 
 
+class ReadyScenarioManager:
+    def active(self) -> dict[str, Any]:
+        return {
+            "scenario_id": "test-scenario",
+            "name": "Test scenario",
+            "version": "test-version",
+            "map_collection": "scenario_test_testversion",
+            "status": "ready",
+            "ready": True,
+        }
+
+    def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
+        return self.active()
+
+    def activate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {**self.active(), "agents": payload.get("agents") or [], "containers": [], "message": "ready"}
+
+    def list_scenarios(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "scenario_id": "test-scenario",
+                "name": "Test scenario",
+                "map": "rma",
+                "agents": [],
+                "feature_ids": [],
+                "road_imports": [],
+                "runtime_active": True,
+            }
+        ]
+
+
+class InactiveScenarioManager(ReadyScenarioManager):
+    def active(self) -> None:
+        return None
+
+    def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
+        raise ScenarioNotReadyError("activate a scenario first")
+
+
+def create_app(*args: Any, **kwargs: Any):
+    kwargs.setdefault("scenario_manager", ReadyScenarioManager())
+    return _create_app(*args, **kwargs)
+
+
 def test_health_and_diagnostics_shape() -> None:
     client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
 
@@ -68,6 +113,123 @@ def test_health_and_diagnostics_shape() -> None:
     assert diagnostics["legacy_rest"]["ok"] is True
     assert diagnostics["checks"][0]["id"] == "legacy_rest"
     assert diagnostics["ros"]["nodes"]
+
+
+def test_mission_init_is_rejected_until_scenario_is_ready() -> None:
+    rest = FakeRestClient()
+    app = _create_app(
+        ROOT,
+        rest_client=rest,
+        rosbridge_client=FakeRosbridgeClient(),
+        scenario_manager=InactiveScenarioManager(),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/missions/init",
+        json={
+            "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+            "behavior": 0,
+            "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+            "objective": {"geometry": {"geometry_type": "Point", "coordinates": [4.39218, 50.84417]}},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "activate a scenario" in response.json()["detail"]
+    assert rest.initialized == []
+
+
+def test_scenario_activation_endpoint_reports_authoritative_runtime() -> None:
+    client = TestClient(
+        _create_app(
+            ROOT,
+            rest_client=FakeRestClient(),
+            rosbridge_client=FakeRosbridgeClient(),
+            scenario_manager=ReadyScenarioManager(),
+        )
+    )
+
+    response = client.post(
+        "/api/scenarios/activate",
+        json={"scenario_id": "scenario-a", "map": "rma", "agents": [{"agent_id": "agent-a"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["agents"] == [{"agent_id": "agent-a"}]
+
+
+def test_scenario_catalog_endpoint_returns_activated_scenarios() -> None:
+    client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
+
+    response = client.get("/api/scenarios")
+
+    assert response.status_code == 200
+    assert response.json()["scenarios"][0]["scenario_id"] == "test-scenario"
+    assert response.json()["scenarios"][0]["runtime_active"] is True
+
+
+def test_scenario_snapshot_is_deterministic_and_normalizes_osm_to_mapdb_roads() -> None:
+    payload = {
+        "scenario_id": "Scenario One",
+        "name": "Scenario One",
+        "map": "rma",
+        "agents": [{"agent_id": "agent-a"}],
+        "feature_ids": ["dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e"],
+        "road_imports": [
+            {
+                "import_id": "polygon-roads",
+                "geojson": {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "id": "way/123",
+                            "properties": {"name": "Frozen road"},
+                            "geometry": {
+                                "type": "LineString",
+                                "coordinates": [[4.392, 50.844], [4.393, 50.845]],
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+    first = build_scenario_snapshot(ROOT, payload)
+    second = build_scenario_snapshot(ROOT, payload)
+
+    assert first["version"] == second["version"]
+    assert first["map_collection"] == second["map_collection"]
+    assert first["feature_count"] == 2
+    assert first["road_count"] == 1
+    road = next(feature for feature in first["features"] if feature["properties"]["feature_type"] == "road")
+    assert road["properties"]["source"] == "frozen_openstreetmap"
+
+
+def test_invalid_scenario_draft_does_not_replace_ready_active_runtime(tmp_path: Path) -> None:
+    runtime = tmp_path / "data" / "runtime"
+    runtime.mkdir(parents=True)
+    previous = {
+        "scenario_id": "already-active",
+        "status": "ready",
+        "ready": True,
+        "version": "v1",
+        "map_collection": "scenario_already_active_v1",
+    }
+    (runtime / "active_scenario.json").write_text(json.dumps(previous), encoding="utf-8")
+    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://unused", docker_socket="/missing")
+
+    try:
+        manager.activate({"scenario_id": "invalid", "map": "missing", "agents": [{"agent_id": "a"}]})
+    except ScenarioNotReadyError:
+        pass
+    else:
+        raise AssertionError("invalid scenario activation should fail")
+
+    assert manager.active() == previous
 
 
 def test_forget_mission_removes_adapter_runtime_record() -> None:
@@ -131,46 +293,6 @@ def test_create_map_feature_persists_user_geojson(tmp_path: Path) -> None:
     assert created["map_feature"]["name"] == "drawn point"
     assert created["map_feature"]["feature_type"] == "objective"
     assert any(item["properties"].get("name") == "drawn point" for item in reloaded["features"])
-
-
-def test_import_osm_roads_persists_as_user_road_features(tmp_path: Path, monkeypatch: Any) -> None:
-    legacy_map_dir = tmp_path / "legacy_ros" / "config" / "data" / "map" / "rma" / "free_polygons"
-    legacy_map_dir.mkdir(parents=True)
-    (legacy_map_dir / "workspace.geojson").write_text(
-        '{"type":"Feature","properties":{"feature_id":"legacy-workspace","feature_type":"workspace","name":"base"},'
-        '"geometry":{"type":"Polygon","coordinates":[[[4.0,50.0],[4.1,50.0],[4.1,50.1],[4.0,50.0]]]}}',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        legacy_map,
-        "_query_overpass_roads",
-        lambda bbox: {
-            "elements": [
-                {
-                    "type": "way",
-                    "id": 123,
-                    "tags": {"highway": "service", "name": "Test Service Road"},
-                    "geometry": [{"lon": 4.05, "lat": 50.05}, {"lon": 4.06, "lat": 50.06}],
-                }
-            ]
-        },
-    )
-    client = TestClient(create_app(tmp_path, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
-
-    imported = client.post("/api/map/osm-roads/import?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07]}).json()
-    reloaded = client.get("/api/map/features?map=rma").json()
-
-    assert imported["imported_count"] == 1
-    assert imported["features"][0]["properties"]["feature_type"] == "road"
-    assert imported["features"][0]["properties"]["source"] == "user"
-    assert imported["features"][0]["properties"]["import_source"] == "openstreetmap-overpass"
-    assert any(item["properties"].get("feature_id") == "osm-way-123" for item in reloaded["features"])
-
-    repeated = client.post("/api/map/osm-roads/import?map=rma", json={"bbox": [4.04, 50.04, 4.07, 50.07]}).json()
-    assert repeated["imported_count"] == 0
-    assert repeated["skipped_existing"] == 1
-    assert repeated["available_count"] == 1
-    assert repeated["features"][0]["properties"]["feature_id"] == "osm-way-123"
 
 
 def test_query_osm_roads_returns_scenario_overlay_without_persisting(tmp_path: Path, monkeypatch: Any) -> None:

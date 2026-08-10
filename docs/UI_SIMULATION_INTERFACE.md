@@ -31,7 +31,8 @@ The backend:
 | Contracts | `GET /api/contracts` |
 | Bootstrap | `GET /api/runtime/bootstrap`, `/api/agents`, `/api/mission-examples` |
 | Missions | `POST /api/missions/init`, `GET /api/missions/{id}`, `POST /approve`, `POST /start`, `DELETE /api/missions/{id}` |
-| Map | `GET/POST /api/map/features`, `PUT/DELETE /api/map/features/{id}`, `GET /api/map/osm-roads` |
+| Scenario | `GET /api/scenarios`, `GET /api/scenarios/active`, `POST /api/scenarios/activate` |
+| Map | `GET/POST /api/map/features`, `PUT/DELETE /api/map/features/{id}`, `POST /api/map/osm-roads/query` |
 | Live state | `GET /api/events` |
 
 The API implementation may include experimental map/scenario helpers. They are not compatibility contracts until documented as stable.
@@ -51,6 +52,14 @@ The API implementation may include experimental map/scenario helpers. They are n
 Deleting through the UI does not remove ROS or MongoDB mission records. Test database cleanup is a separate, destructive action.
 
 Important legacy limitation: approve/start are mission-specific only at the FastAPI route. The old REST status body contains no mission id and targets `/c2_node`'s last initialized mission. The adapter's immediate `ACCEPTED`/`STARTED` response is optimistic until ROS feedback confirms the state.
+
+Init additionally requires a ready active scenario and verifies that every mission vehicle belongs to it. Roads are never appended to `objective.geometries`; the planner reads them from the active scenario's immutable MapDB collection.
+
+## Scenario Activation
+
+The scenario selector exists only in Scenario Lab. Selecting a draft does not change C2 reality; pressing **Activate** freezes the map, restarts the planner on that version, replaces the robot simulation containers, and waits for matching ROS registrations. The C2 tab displays the active readiness state but cannot switch it.
+
+The Roads panel downloads OSM highways only through an explicit polygon action. Those roads remain draft data until activation. Once active, that frozen GeoJSON is the map source used by both the C2 display and legacy planner.
 
 ## Live Events
 
@@ -85,7 +94,7 @@ Important conventions:
 - ROS odometry is a local pose unless an adapter converts it.
 - Legacy aliases are accepted at input, normalized by the backend, and translated back only at the legacy boundary.
 - The current reverse translation covers `optimization -> optimalization`, but not every canonicalized coverage/formation alias.
-- UI-created features must be sent to the old planner as inline geometry because its baseline feature lookup does not know runtime feature ids.
+- UI-created mission objective references are inlined when the old mission parser cannot resolve them. Scenario roads remain in MapDB and are not sent in mission JSON.
 
 Allowed UI-created feature geometries:
 

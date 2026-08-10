@@ -33,6 +33,10 @@ POST   /api/map/features?map=rma
 PUT    /api/map/features/{feature_id}?map=rma
 DELETE /api/map/features/{feature_id}?map=rma
 GET    /api/map/osm-roads?map=rma
+POST   /api/map/osm-roads/query?map=rma
+GET    /api/scenarios
+GET    /api/scenarios/active
+POST   /api/scenarios/activate
 GET    /api/agents
 GET    /api/mission-examples
 POST   /api/missions/init
@@ -43,7 +47,9 @@ DELETE /api/missions/{mission_id}
 GET    /api/events
 ```
 
-`/api/missions/init` performs partial handwritten structural validation, normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge. The canonical JSON Schema is not currently executed by this handler.
+`/api/missions/init` requires a ready active scenario, performs partial handwritten structural validation, normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge. The canonical JSON Schema is not currently executed by this handler. Scenario roads are not added to mission JSON.
+
+`/api/scenarios/activate` content-addresses the complete scenario, writes its selected assets and downloaded OSM LineStrings to an immutable MapDB collection, clears prior mission runtime, restarts centralized coordination and the planner, replaces the prior scenario robot containers, and returns success only after the exact collection and all robot IDs are verified.
 
 `/api/missions/{id}/approve` and `/start` post `action=change_status` to the old REST bridge using the legacy numeric mission request values.
 

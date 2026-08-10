@@ -16,6 +16,8 @@ Browser UI (React, Vite, Leaflet)
 
 The browser uses JSON over HTTP and SSE. ROS message construction, legacy aliases, coordinate conversion, and runtime normalization stay in the backend adapter.
 
+Before Init, activate one scenario from Scenario Lab. Activation freezes its selected assets and polygon-downloaded OSM roads into a versioned MapDB collection, restarts the legacy planner on that collection, replaces the robot containers, and verifies their registrations. Mission JSON contains objectives and constraints only; roads stay in the scenario map.
+
 ## Run It
 
 Start the legacy ROS stack:

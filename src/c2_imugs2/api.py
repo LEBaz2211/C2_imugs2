@@ -18,12 +18,12 @@ from fastapi.responses import StreamingResponse
 
 from .contracts import build_contract_graph
 from .domain import MissionRequest, MissionStatus
-from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, import_osm_roads_as_user_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
+from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
 from .legacy_rest import LegacyRestClient
 from .mission_config import MissionValidationError, load_and_validate_mission
 from .repositories import read_json
 from .rosbridge import RosbridgeClient
-from .scenario_launch import launch_scenario
+from .scenario_runtime import ScenarioNotReadyError, ScenarioRuntimeManager
 
 
 LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
@@ -34,6 +34,7 @@ def create_app(
     repo_root: Path = REPO_ROOT,
     rest_client: LegacyRestClient | None = None,
     rosbridge_client: RosbridgeClient | None = None,
+    scenario_manager: ScenarioRuntimeManager | None = None,
 ) -> FastAPI:
     app = FastAPI(title="C2 iMUGS2 UI Adapter API")
     app.add_middleware(
@@ -48,6 +49,12 @@ def create_app(
     app.state.rest_client = rest_client or LegacyRestClient(os.environ.get("C2_IMUGS2_LEGACY_REST_URL", "http://localhost:5001/mission_control"))
     app.state.rosbridge_client = rosbridge_client or RosbridgeClient(os.environ.get("C2_IMUGS2_ROSBRIDGE_URL", "ws://localhost:9090"))
     app.state.mongodb_url = os.environ.get("C2_IMUGS2_MONGODB_URL", os.environ.get("MONGODB_CONNSTRING", "mongodb://127.0.0.1:27017"))
+    app.state.scenario_manager = scenario_manager or ScenarioRuntimeManager(
+        repo_root,
+        app.state.host_repo_root,
+        app.state.mongodb_url,
+        docker_socket=os.environ.get("C2_IMUGS2_DOCKER_SOCKET", "/var/run/docker.sock"),
+    )
     app.state.missions = {}
     app.state.agent_updates = {}
     app.state.planner_state = {}
@@ -200,21 +207,6 @@ def create_app(
     async def osm_roads(map: str = Query(default="rma")) -> dict[str, Any]:
         return load_osm_roads_overlay(app.state.repo_root, map)
 
-    @app.post("/api/map/osm-roads/import")
-    async def import_osm_roads(payload: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
-        bbox = payload.get("bbox")
-        if not isinstance(bbox, list | tuple) or len(bbox) != 4:
-            raise HTTPException(status_code=422, detail="bbox must be [west, south, east, north]")
-        try:
-            return import_osm_roads_as_user_features(
-                app.state.repo_root,
-                map,
-                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
-                max_features=int(payload.get("max_features") or 80),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
     @app.post("/api/map/osm-roads/query")
     async def query_osm_roads(payload: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
         polygon = payload.get("polygon")
@@ -241,20 +233,56 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.post("/api/scenarios/launch")
-    async def launch_scenario_runtime(payload: dict[str, Any]) -> dict[str, Any]:
+    @app.get("/api/scenarios")
+    async def scenario_catalog() -> dict[str, Any]:
         try:
-            return launch_scenario(
-                app.state.repo_root,
-                payload,
-                host_repo_root=app.state.host_repo_root,
-                docker_socket=os.environ.get("C2_IMUGS2_DOCKER_SOCKET", "/var/run/docker.sock"),
-            )
+            return {"scenarios": await asyncio.to_thread(app.state.scenario_manager.list_scenarios)}
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/scenarios/active")
+    async def active_scenario_runtime() -> dict[str, Any]:
+        active = app.state.scenario_manager.active()
+        return active or {
+            "status": "inactive",
+            "ready": False,
+            "message": "No scenario is active. Activate one from the Scenario tab before initializing a mission.",
+        }
+
+    @app.post("/api/scenarios/activate")
+    @app.post("/api/scenarios/launch")
+    async def activate_scenario_runtime(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = await asyncio.to_thread(app.state.scenario_manager.activate, payload)
+            app.state.missions.clear()
+            app.state.agent_updates.clear()
+            app.state.planner_state = {}
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ScenarioNotReadyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/agents")
     async def agents() -> dict[str, Any]:
+        active = app.state.scenario_manager.active()
+        if active and isinstance(active.get("agents"), list):
+            scenario_agents = deepcopy(active["agents"])
+            for agent in scenario_agents:
+                agent_id = str(agent.get("agent_id") or "")
+                update = next(
+                    (
+                        value
+                        for key, value in app.state.agent_updates.items()
+                        if key.replace("_", "-").lower() == agent_id.replace("_", "-").lower()
+                    ),
+                    {},
+                )
+                if update.get("current_location"):
+                    agent["current_location"] = update["current_location"]
+                if update.get("status"):
+                    agent["status"] = str(update["status"])
+            return {"agents": scenario_agents, "scenario": active}
         legacy_agent = {
             "agent_id": LEGACY_AGENT_ID,
             "name": "Themis Fr",
@@ -296,6 +324,10 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         normalized = _inline_user_feature_refs(normalized, app.state.repo_root)
         normalized["mission_id"] = _legacy_uuid(normalized.get("mission_id"))
+        try:
+            active_scenario = app.state.scenario_manager.require_ready(normalized.get("vehicles") or [])
+        except ScenarioNotReadyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         app.state.forgotten_missions.discard(normalized["mission_id"])
         _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
         response = app.state.rest_client.initialize_mission(normalized)
@@ -308,6 +340,9 @@ def create_app(
             "initialized_at": _utc_now_iso(),
             "updated_at": _utc_now_iso(),
             "config": normalized,
+            "scenario_id": active_scenario["scenario_id"],
+            "scenario_version": active_scenario["version"],
+            "map_collection": active_scenario["map_collection"],
             "adapter_adjustments": [],
             "legacy_rest": response.__dict__,
         }
@@ -424,6 +459,10 @@ def create_app(
     return app
 
 def _change_mission_status(app: FastAPI, mission_id: str, request: MissionRequest, status: int) -> dict[str, Any]:
+    try:
+        app.state.scenario_manager.require_ready()
+    except ScenarioNotReadyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     response = app.state.rest_client.change_status(request)
     mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}, "feedback": {}})
     mission["status"] = status

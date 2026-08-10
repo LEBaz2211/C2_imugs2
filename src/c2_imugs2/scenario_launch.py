@@ -183,7 +183,10 @@ def _docker_request(socket_path: str, method: str, path: str, payload: dict[str,
     conn = _DockerHTTPConnection(socket_path)
     conn.request(method, path, body=body, headers=headers)
     response = conn.getresponse()
-    raw = response.read().decode("utf-8")
+    # Docker log endpoints use an 8-byte multiplexing header around stdout and
+    # stderr chunks. Preserve the text markers even when those framing bytes
+    # are not valid UTF-8.
+    raw = response.read().decode("utf-8", errors="replace")
     conn.close()
     try:
         parsed = json.loads(raw) if raw else {}
@@ -206,6 +209,10 @@ def _start_containers_with_docker_socket(socket_path: str, containers: list[dict
         config = {
             "Image": EDGE_IMAGE,
             "Cmd": ["bash", "-lc", "bash /app/launch_edge_with_autonomy_sim.sh"],
+            "Labels": {
+                "c2-imugs2.role": "scenario-agent",
+                "c2-imugs2.agent-id": container["agent_id"],
+            },
             "Env": [
                 f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '112')}",
                 f"RMW_IMPLEMENTATION={os.environ.get('RMW_IMPLEMENTATION', 'rmw_cyclonedds_cpp')}",
