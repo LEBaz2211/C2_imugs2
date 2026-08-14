@@ -1,4 +1,5 @@
 import json
+import math
 from shapely.geometry import shape
 import geopandas as gpd
 
@@ -8,7 +9,7 @@ from .task_allocation import *
 from .max_coverage import *
 
 class MultiRobotPathPlanning:
-    def __init__(self , mapf , mongodb_url , db):
+    def __init__(self, mapf, mongodb_url, db, risk_polygons=None):
         """
         Initialize the MultiRobotPathPlanning with database parameters.
         :param mongodb_url: URL of the MongoDB database.
@@ -19,6 +20,7 @@ class MultiRobotPathPlanning:
         self.graph = None
         self.mongodb_url = mongodb_url
         self.db = db
+        self.risk_polygons = list(risk_polygons or [])
 
     def update_mission(self, mission_id, mission_str, map_feature_collection):
         """
@@ -40,7 +42,11 @@ class MultiRobotPathPlanning:
                 if fetched_features:
                     geometry = fetched_features[0].geometry.iloc[0]
                     geometry_type = geometry.geom_type
-                    coordinates = list(geometry.coords) if geometry_type != "Polygon" else [list(geometry.exterior.coords)]
+                    if geometry_type == "Polygon":
+                        coordinates = [list(geometry.exterior.coords)]
+                        coordinates.extend(list(ring.coords) for ring in geometry.interiors)
+                    else:
+                        coordinates = list(geometry.coords)
                     geometry_obj["geometry"] = {"coordinates": coordinates, "geometry_type": geometry_type}
 
         self.missions[mission_id] = data
@@ -100,11 +106,12 @@ class MultiRobotPathPlanning:
 
 
         elif behavior == 1:  # "explore" behavior
-            if points and not polygons_or_lines:
-                point_coordinates = [coord for _, coords in points for coord in coords]
-                allocations= coverage_algorithm("Point", point_coordinates, len(vehicles), return_paths=True)
-            else:
-                allocations = coverage_algorithm("Mixed", polygons_or_lines, len(vehicles), return_paths=True)
+            return self._solve_polygon_coverage(
+                mission,
+                agents_to_plan,
+                points,
+                polygons_or_lines,
+            )
     
         else:
             raise ValueError(f"Unsupported behavior: {behavior}")
@@ -133,11 +140,11 @@ class MultiRobotPathPlanning:
             # Perform A* pathfinding from the agent's current position to the destination
             route = self._search_route(agent, destination)
             
-            # Extract the path from the route and convert it to coordinates
-            path = []
-            for state in route:
-                node = state.get_node()
-                path.append([self.graph.nodes[node]['x'], self.graph.nodes[node]['y']])
+            path = self._navigation_path_from_route(
+                route,
+                agent.localization,
+                destination,
+            )
             
             # Store the calculated path for the agent
             new_paths[agent_id] = path
@@ -155,11 +162,11 @@ class MultiRobotPathPlanning:
                 # Create an A* pathfinder for this agent, considering its assigned destination
                 route = self._search_route(agent, destination)
 
-                # Extract the path from the route and convert it to coordinates
-                path = []
-                for state in route:
-                    node = state.get_node()
-                    path.append([self.graph.nodes[node]['x'], self.graph.nodes[node]['y']])
+                path = self._navigation_path_from_route(
+                    route,
+                    agent.localization,
+                    destination,
+                )
 
                 # Store the computed path for the agent
                 new_paths[agent_id] = path
@@ -170,18 +177,240 @@ class MultiRobotPathPlanning:
             cbs = CBS(self.graph)
             plan = cbs.search(agents_to_plan, allocations)
             for agent_id, route in plan.items():
-                path = []
-                for state in route:
-                    node = state.get_node()
-                    path.append([self.graph.nodes[node]['x'],self.graph.nodes[node]['y']])
-                # if(self.graph.nodes[destination_node]['x']!=destination[0] or self.graph.nodes[destination_node]['y']!=destination[1]):
-                #     path.append(destination)
+                agent = next(agent for agent in agents_to_plan if agent.agent_id == agent_id)
+                path = self._navigation_path_from_route(
+                    route,
+                    agent.localization,
+                    allocations[agent_id],
+                )
                 new_paths[agent_id] = path
         return new_paths
 
+    def _navigation_path_from_route(self, route, start, destination):
+        """Attach a graph route to its exact endpoints and remove graph noise."""
+        # Task allocation stores each robot's ordered goals as a list. Point
+        # navigation currently plans the first goal in that list, matching
+        # AStar's ordered-destination contract.
+        if destination and isinstance(destination[0], (list, tuple)):
+            destination = destination[0]
+        path = [[float(start[0]), float(start[1])]]
+        path.extend(
+            [
+                float(self.graph.nodes[state.get_node()]["x"]),
+                float(self.graph.nodes[state.get_node()]["y"]),
+            ]
+            for state in route
+        )
+        path.append([float(destination[0]), float(destination[1])])
+
+        deduplicated = []
+        for point in path:
+            if not deduplicated or point != deduplicated[-1]:
+                deduplicated.append(point)
+        return self._remove_collinear_waypoints(deduplicated)
+
+    def _remove_collinear_waypoints(self, path, tolerance_m=0.05):
+        """Collapse redundant lattice nodes without changing route geometry."""
+        simplified = []
+        for point in path:
+            simplified.append(point)
+            while len(simplified) >= 3:
+                start, middle, end = simplified[-3:]
+                if not self._is_between_on_same_line(
+                    start,
+                    middle,
+                    end,
+                    tolerance_m,
+                ):
+                    break
+                if not self._connector_is_risk_free(start, end):
+                    break
+                simplified.pop(-2)
+        return simplified
+
+    @staticmethod
+    def _is_between_on_same_line(start, middle, end, tolerance_m):
+        """Test collinearity in a small local metric approximation."""
+        mean_latitude = math.radians((start[1] + middle[1] + end[1]) / 3.0)
+        metres_per_lon_degree = 111320.0 * math.cos(mean_latitude)
+        metres_per_lat_degree = 110540.0
+
+        first = (
+            (middle[0] - start[0]) * metres_per_lon_degree,
+            (middle[1] - start[1]) * metres_per_lat_degree,
+        )
+        second = (
+            (end[0] - middle[0]) * metres_per_lon_degree,
+            (end[1] - middle[1]) * metres_per_lat_degree,
+        )
+        combined = (first[0] + second[0], first[1] + second[1])
+        combined_length = math.hypot(*combined)
+        if combined_length == 0:
+            return False
+
+        perpendicular_distance = abs(
+            first[0] * second[1] - first[1] * second[0]
+        ) / combined_length
+        continues_forward = first[0] * second[0] + first[1] * second[1] >= 0
+        return continues_forward and perpendicular_distance <= tolerance_m
+
+    def _solve_polygon_coverage(self, mission, agents_to_plan, points, polygons_or_lines):
+        """Plan complete lawnmower coverage for one Polygon objective."""
+        if points:
+            raise ValueError("Coverage behavior requires a Polygon objective, not Point geometry")
+        if len(polygons_or_lines) != 1 or polygons_or_lines[0][0] != "Polygon":
+            raise ValueError("Coverage behavior currently requires exactly one Polygon objective")
+        if mission["objective"].get("maximize_coverage") is False:
+            raise ValueError("Polygon coverage requires objective.maximize_coverage=true")
+
+        widths_by_vehicle = self._coverage_widths_by_vehicle(mission)
+        active_widths = [widths_by_vehicle[agent.agent_id] for agent in agents_to_plan]
+        # When robots have different swaths, using the narrowest swath for the
+        # shared pattern guarantees that the collective set of lanes has no
+        # wider gaps than any selected robot can cover.
+        swath_width = min(active_widths)
+        _, coordinates = polygons_or_lines[0]
+        coverage_path = lawnmower_coverage_path(
+            coordinates,
+            swath_width,
+            risk_polygons=self.risk_polygons,
+        )
+        chunks = self._split_continuous_path(coverage_path, len(agents_to_plan))
+
+        mission_vehicle_order = {
+            vehicle_id: index for index, vehicle_id in enumerate(mission["vehicles"])
+        }
+        ordered_agents = sorted(
+            agents_to_plan,
+            key=lambda agent: mission_vehicle_order.get(agent.agent_id, len(mission_vehicle_order)),
+        )
+
+        paths = {}
+        for agent, chunk in zip(ordered_agents, chunks):
+            paths[agent.agent_id] = self._route_agent_to_coverage_chunk(agent, chunk)
+
+        print(
+            f"Generated Polygon lawnmower coverage with {len(coverage_path)} sweep waypoints, "
+            f"{swath_width:.2f} m lane width, {len(self.risk_polygons)} risk exclusion(s), "
+            f"and {len(paths)} agent path(s)",
+            flush=True,
+        )
+        return paths
+
+    @staticmethod
+    def _coverage_widths_by_vehicle(mission):
+        objective = mission["objective"]
+        raw_widths = None
+        for field_name in (
+            "maximum_coverage_distances",
+            "maximize_coverage_distances",
+            "MaximizeCoverageDistances",
+        ):
+            if field_name in objective:
+                raw_widths = objective[field_name]
+                break
+
+        if not isinstance(raw_widths, list) or not raw_widths:
+            raise ValueError(
+                "Polygon coverage requires objective.maximum_coverage_distances=[swath_width_m]"
+            )
+
+        widths = []
+        for value in raw_widths:
+            try:
+                width = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Coverage swath widths must be numbers in metres") from exc
+            if width <= 0:
+                raise ValueError("Coverage swath widths must be greater than zero metres")
+            widths.append(width)
+
+        vehicles = mission["vehicles"]
+        if len(widths) == 1:
+            widths *= len(vehicles)
+        elif len(widths) != len(vehicles):
+            raise ValueError(
+                "Coverage width list must contain one shared width or one width per mission vehicle"
+            )
+        return dict(zip(vehicles, widths))
+
+    @staticmethod
+    def _split_continuous_path(path, chunk_count):
+        if chunk_count <= 0:
+            raise ValueError("Coverage planning requires at least one live agent")
+        segment_count = len(path) - 1
+        if segment_count <= 0:
+            return [path[:] for _ in range(chunk_count)]
+
+        chunks = []
+        for index in range(chunk_count):
+            start = round(index * segment_count / chunk_count)
+            end = round((index + 1) * segment_count / chunk_count)
+            chunks.append(path[start : end + 1])
+        return chunks
+
+    def _route_agent_to_coverage_chunk(self, agent, chunk):
+        if not chunk:
+            raise ValueError(f"Coverage path for agent {agent.agent_id} is empty")
+
+        orientations = [chunk, list(reversed(chunk))]
+        orientations.sort(
+            key=lambda candidate: sum(
+                (candidate[0][axis] - agent.localization[axis]) ** 2 for axis in (0, 1)
+            )
+        )
+        failures = []
+        for coverage_points in orientations:
+            entry = coverage_points[0]
+            candidate_nodes = sorted(
+                self.graph.nodes,
+                key=lambda node: (
+                    (self.graph.nodes[node]["x"] - entry[0]) ** 2
+                    + (self.graph.nodes[node]["y"] - entry[1]) ** 2
+                ),
+            )
+            for candidate_node in candidate_nodes:
+                candidate = [
+                    self.graph.nodes[candidate_node]["x"],
+                    self.graph.nodes[candidate_node]["y"],
+                ]
+                if not self._connector_is_risk_free(candidate, entry):
+                    continue
+                try:
+                    route = self._search_route(agent, [candidate])
+                except RuntimeError as exc:
+                    failures.append(str(exc))
+                    continue
+
+                path = [
+                    [self.graph.nodes[state.get_node()]["x"], self.graph.nodes[state.get_node()]["y"]]
+                    for state in route
+                ]
+                if not path or path[-1] != candidate:
+                    continue
+                for point in coverage_points:
+                    point = [float(point[0]), float(point[1])]
+                    if not path or point != path[-1]:
+                        path.append(point)
+                return path
+
+        raise RuntimeError(
+            f"No route from agent {agent.agent_id} to either end of its coverage sweep: "
+            + "; ".join(failures)
+        )
+
+    def _connector_is_risk_free(self, start, destination):
+        connector = LineString([start, destination])
+        return not any(risk_polygon.intersects(connector) for risk_polygon in self.risk_polygons)
+
     def _search_route(self, agent, destination):
         """Run A* and turn an unreachable destination into a clear failure."""
-        result = AStar(self.graph, agent, destination).search()
+        result = AStar(
+            self.graph,
+            agent,
+            destination,
+            risk_polygons=self.risk_polygons,
+        ).search()
         if not result:
             raise RuntimeError(
                 f"No route found for agent {agent.agent_id} "

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 from typing import Any
 
 
@@ -98,6 +99,31 @@ def validate_mission_config(config: dict[str, Any]) -> None:
         if has_feature == has_geometry:
             raise MissionValidationError(
                 f"objective.geometries[{index}] must contain exactly one of feature_id or geometry"
+            )
+
+    coverage_widths = objective.get("maximum_coverage_distances")
+    if int(config["behavior"]) == 1 and not coverage_widths:
+        raise MissionValidationError(
+            "Coverage missions require objective.maximum_coverage_distances=[swath_width_m]"
+        )
+    if coverage_widths is not None:
+        if not isinstance(coverage_widths, list) or not coverage_widths:
+            raise MissionValidationError(
+                "objective.maximum_coverage_distances must be a non-empty list"
+            )
+        if any(
+            isinstance(width, bool)
+            or not isinstance(width, int | float)
+            or not math.isfinite(width)
+            or width <= 0
+            for width in coverage_widths
+        ):
+            raise MissionValidationError(
+                "objective.maximum_coverage_distances must contain positive finite widths in metres"
+            )
+        if len(coverage_widths) not in (1, len(vehicles)):
+            raise MissionValidationError(
+                "Coverage width list must contain one shared width or one width per mission vehicle"
             )
 
 

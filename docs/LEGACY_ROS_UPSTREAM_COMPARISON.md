@@ -1,5 +1,8 @@
 # Legacy ROS Compared With `multi-agent-framework`
 
+> **Documentation label: REFERENCE**
+> Dated provenance and comparison evidence for the frozen source tree.
+
 Comparison date: 2026-08-07.
 
 ## Result

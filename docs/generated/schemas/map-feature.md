@@ -1,5 +1,10 @@
 # MapFeature
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 Extracted from `schemas/map_feature.schema.json` · [`schemas/map_feature.schema.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/schemas/map_feature.schema.json#L1)
 
 | JSON path | Type | Required | Constraints / description |

@@ -1,17 +1,19 @@
 # `/planner_node`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
-`/planner_node` is the legacy ROS boundary around map loading, mission
-interpretation, route calculation, planner state, and task-plan JSON. This page
-describes the `multi-agent-framework` revision `b154575f5a5f` baseline plus the
-small compatibility patches deployed in `legacy_ros/`, not the separately
-editable `backend/` fork.
+`/planner_node` is the ROS boundary around map loading, mission interpretation,
+route calculation, planner state, and task-plan JSON. The source links on this
+page describe the frozen `multi-agent-framework` revision `b154575f5a5f`
+reference in `legacy_ros/`. That tree is read-only; deployed fixes and new
+planner behavior belong exclusively to the separately editable `backend/`
+fork.
 
-The node still plans from `MapDB.rma`. The local compose stack now seeds its
-three valid baseline features idempotently before starting the planner, and
-`CreatePlanner` can initialize the graph lazily if the three-second poll has not
-finished.
+The frozen node plans from `MapDB.rma`. Backend deployment and scenario behavior
+can differ and must be documented against `backend/`, not retroactively
+described as changes to these reference files.
 
 Source:
 
@@ -238,6 +240,8 @@ and objective UUIDs even if `self.paths` has not changed.
 - With more points than vehicles, the code enters `solve_mtsp()`, but that
   function indexes the agent list with string robot IDs and currently raises.
 - Behavior `1` calls an undefined `coverage_algorithm` and currently raises.
+  The lawnmower implementation exists only in the editable `backend/`; this
+  document describes the frozen legacy node.
 - Behavior `0` with polygon/line objectives has a separate maximum-coverage
   point-selection branch, but it still depends on a valid graph and cached
   robots and is not a complete lawnmower sweep.

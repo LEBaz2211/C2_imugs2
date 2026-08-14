@@ -1,5 +1,9 @@
 # LLM Assistant Context And Memory Architecture
 
+> **Documentation label: FUTURE**
+> Proposed later design. It is not authorization to build LLM benchmarking or
+> assistant integration during the current implementation phase.
+
 This is a future design for natural-language mission generation and runtime explanation. It does not authorize current benchmark work. Project priorities and compatibility rules are in [PROJECT_PLANNING.md](../PROJECT_PLANNING.md).
 
 ## Core Rule

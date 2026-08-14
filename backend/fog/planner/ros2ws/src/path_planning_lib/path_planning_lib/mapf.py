@@ -9,6 +9,7 @@ import itertools
 import time
 
 import matplotlib.pyplot as plt# for plotting cost map
+from shapely.geometry import LineString
 # fromprint tools.bresenham import *
 from .graph import *
 from .models import *
@@ -16,11 +17,12 @@ from .models import *
 
     
 class AStar():
-    def __init__(self, graph, agent, ordered_destinations):
+    def __init__(self, graph, agent, ordered_destinations, risk_polygons=None):
         # Associated with a specific graph and a specific agent
         self.graph = graph
         self.agent = agent 
         self.destination = ordered_destinations[0]
+        self.risk_polygons = list(risk_polygons or [])
 
     # def set_preferred_start_direction(self,initial_state,preferred_start_direction):
     #     if preferred_start_direction:
@@ -33,10 +35,10 @@ class AStar():
         # Set the cost of a step to a neighbor to its value in the cost graph:
         # step_cost = self.cost_graph[neighbor.location.y,neighbor.location.x]
 
-        step_cost = self.graph.edges[current_node, neighbor_node, 0]['length']
-        if self.graph.edges[current_node, neighbor_node, 0]['risk']:
-            step_cost*=100
-        return step_cost
+        edge = self.graph.edges[current_node, neighbor_node, 0]
+        if edge.get('risk', False):
+            return float("inf")
+        return edge['length']
 
     def heuristic_cost(self, current_node, destination_node):
         current_x = self.graph.nodes[current_node]['x']
@@ -73,9 +75,9 @@ class AStar():
         low level A* search 
         """
         # start_state= State(0, ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1]))
-        start_node = ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1])
-        
-        destination_node= ox.nearest_nodes(self.graph,self.destination[0],self.destination[1])
+        start_node = self.nearest_routable_node(self.agent.localization, for_start=True)
+
+        destination_node = self.nearest_routable_node(self.destination, for_start=False)
         
         closed_set = set()
         open_set = {start_node}
@@ -109,6 +111,13 @@ class AStar():
                 if not neighbor_node or neighbor_node in closed_set:
                     continue
 
+                # Risk polygons are hard exclusion zones. A finite multiplier
+                # can still select a risk edge when every alternative is long;
+                # skipping it guarantees that the emitted transit path never
+                # commands the robot through a marked risk area.
+                if self.graph.edges[current_node, neighbor_node, 0].get('risk', False):
+                    continue
+
                 tentative_g_score = g_score.setdefault(current_node, float("inf")) + self.step_cost(current_node, neighbor_node)
 
                 if neighbor_node not in open_set:
@@ -125,6 +134,42 @@ class AStar():
         # Keep the return shape stable for every caller.  Some callers unpack
         # the result before checking whether a path was found.
         return None, float("inf")
+
+    def nearest_routable_node(self, location, for_start):
+        """Snap to the nearest node that is not trapped behind risk edges."""
+        candidates = sorted(
+            self.graph.nodes,
+            key=lambda node: (
+                (self.graph.nodes[node]['x'] - location[0]) ** 2
+                + (self.graph.nodes[node]['y'] - location[1]) ** 2
+            ),
+        )
+        for node in candidates:
+            node_location = [
+                self.graph.nodes[node]['x'],
+                self.graph.nodes[node]['y'],
+            ]
+            if not self.connector_is_risk_free(location, node_location):
+                continue
+            neighbors = self.graph.neighbors(node) if for_start else self.graph.predecessors(node)
+            for neighbor in neighbors:
+                edge_data = (
+                    self.graph.get_edge_data(node, neighbor)
+                    if for_start
+                    else self.graph.get_edge_data(neighbor, node)
+                )
+                if any(not data.get('risk', False) for data in edge_data.values()):
+                    return node
+        role = "start" if for_start else "destination"
+        raise RuntimeError(f"No non-risk {role} node is available in the routing graph")
+
+    def connector_is_risk_free(self, start, destination):
+        """Keep the off-graph endpoint connector out of risk interiors."""
+        connector = LineString([start, destination])
+        return not any(
+            risk_polygon.intersection(connector).length > 1e-12
+            for risk_polygon in self.risk_polygons
+        )
 
 class CBS_Node(object):
     def __init__(self):

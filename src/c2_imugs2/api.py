@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .contracts import build_contract_graph
-from .domain import MissionRequest, MissionStatus
+from .domain import MissionIssue, MissionRequest, MissionStatus
 from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
 from .legacy_rest import LegacyRestClient
 from .mission_config import MissionValidationError, load_and_validate_mission
@@ -242,7 +242,7 @@ def create_app(
 
     @app.get("/api/scenarios/active")
     async def active_scenario_runtime() -> dict[str, Any]:
-        active = app.state.scenario_manager.active()
+        active = app.state.scenario_manager.validated_active()
         return active or {
             "status": "inactive",
             "ready": False,
@@ -265,7 +265,7 @@ def create_app(
 
     @app.get("/api/agents")
     async def agents() -> dict[str, Any]:
-        active = app.state.scenario_manager.active()
+        active = app.state.scenario_manager.validated_active()
         if active and isinstance(active.get("agents"), list):
             scenario_agents = deepcopy(active["agents"])
             for agent in scenario_agents:
@@ -319,36 +319,40 @@ def create_app(
     @app.post("/api/missions/init")
     async def init_mission(mission_config: dict[str, Any]) -> dict[str, Any]:
         try:
-            normalized = load_and_validate_mission(mission_config)
+            canonical = load_and_validate_mission(mission_config)
+            canonical["mission_id"] = _legacy_uuid(canonical.get("mission_id"))
+            legacy_config = _inline_user_feature_refs(canonical, app.state.repo_root)
         except MissionValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        normalized = _inline_user_feature_refs(normalized, app.state.repo_root)
-        normalized["mission_id"] = _legacy_uuid(normalized.get("mission_id"))
         try:
-            active_scenario = app.state.scenario_manager.require_ready(normalized.get("vehicles") or [])
+            active_scenario = app.state.scenario_manager.require_ready(canonical.get("vehicles") or [])
         except ScenarioNotReadyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        app.state.forgotten_missions.discard(normalized["mission_id"])
+        app.state.forgotten_missions.discard(canonical["mission_id"])
         _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
-        response = app.state.rest_client.initialize_mission(normalized)
-        app.state.missions[normalized["mission_id"]] = {
-            "mission_id": normalized["mission_id"],
+        response = app.state.rest_client.initialize_mission(legacy_config)
+        adapter_adjustments = []
+        if legacy_config != canonical:
+            adapter_adjustments.append("inlined runtime feature references for legacy ROS compatibility")
+        app.state.missions[canonical["mission_id"]] = {
+            "mission_id": canonical["mission_id"],
             "status": 0,
             "status_name": _mission_status_name(0),
+            "status_source": "adapter_acknowledgement",
             "command_phase": "init_acknowledged",
             "planner_status": "waiting_for_feedback",
             "initialized_at": _utc_now_iso(),
             "updated_at": _utc_now_iso(),
-            "config": normalized,
+            "config": canonical,
             "scenario_id": active_scenario["scenario_id"],
             "scenario_version": active_scenario["version"],
             "map_collection": active_scenario["map_collection"],
-            "adapter_adjustments": [],
+            "adapter_adjustments": adapter_adjustments,
             "legacy_rest": response.__dict__,
         }
         if not response.ok:
             raise HTTPException(status_code=502, detail={"message": "legacy REST mission init failed", "legacy_rest": response.__dict__})
-        return app.state.missions[normalized["mission_id"]]
+        return app.state.missions[canonical["mission_id"]]
 
     @app.get("/api/missions/{mission_id}")
     async def mission_runtime_state(mission_id: str) -> dict[str, Any]:
@@ -467,6 +471,7 @@ def _change_mission_status(app: FastAPI, mission_id: str, request: MissionReques
     mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}, "feedback": {}})
     mission["status"] = status
     mission["status_name"] = _mission_status_name(status)
+    mission["status_source"] = "adapter_acknowledgement"
     mission["requested_status"] = int(request)
     mission["requested_status_name"] = request.name
     mission["command_phase"] = request.name.lower()
@@ -500,7 +505,7 @@ def _backfill_mission_from_legacy_mongo(app: FastAPI, mission_id: str) -> dict[s
         update["mission_id"] = mission_id
     mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}})
     if _should_preserve_local_command_status(mission, update):
-        status_fields = {"status", "status_name", "requested_status"}
+        status_fields = {"status", "status_name", "status_source", "requested_status"}
         mission.update({key: value for key, value in update.items() if key not in status_fields})
     else:
         mission.update(update)
@@ -536,13 +541,17 @@ def _mission_state_from_legacy_feedback(feedback: dict[str, Any]) -> dict[str, A
     mission_id = _feedback_value(feedback, "mission_id", "MissionId")
     status = _feedback_value(feedback, "status", "Status")
     requested_status = _feedback_value(feedback, "requested_status", "RequestedStatus")
+    issue = _feedback_value(feedback, "issue", "Issue")
     planned_paths = _planned_paths_from_feedback(feedback)
     path_status = "received" if planned_paths else ("missing" if status in (1, 2, "1", "2") else "none")
     return {
         "mission_id": _normalize_uuidish_id(mission_id) if mission_id else "",
         "status": status,
         "status_name": _mission_status_name(status),
+        "status_source": "mission_feedback",
         "requested_status": requested_status,
+        "issue": issue,
+        "issue_name": _mission_issue_name(issue),
         "planned_paths": planned_paths,
         "path_status": path_status,
         "feedback": feedback,
@@ -1176,6 +1185,13 @@ def _mission_status_name(status: Any) -> str:
         return "UNKNOWN"
 
 
+def _mission_issue_name(issue: Any) -> str:
+    try:
+        return MissionIssue(int(issue)).name
+    except (TypeError, ValueError):
+        return "UNKNOWN" if issue is not None else "NONE"
+
+
 def _legacy_uuid(value: Any) -> str:
     try:
         return str(uuid.UUID(str(value)))
@@ -1216,11 +1232,20 @@ def _normalize_edge_feedback(msg: dict[str, Any]) -> dict[str, Any]:
     location = None
     if isinstance(position, dict) and isinstance(position.get("x"), int | float) and isinstance(position.get("y"), int | float):
         location = [float(position["x"]), float(position["y"])]
+    tasks = []
+    for raw_task in msg.get("tasks", []):
+        if not isinstance(raw_task, dict):
+            continue
+        task = dict(raw_task)
+        task["task_state_name"] = _task_state_name(task.get("task_state"))
+        tasks.append(task)
+    state = msg.get("state")
     return {
         "agent_id": agent_id,
-        "status": str(msg.get("state", "unknown")),
+        "status": str(state if state is not None else "unknown"),
+        "status_name": _edge_state_name(state),
         "current_location": location,
-        "tasks": msg.get("tasks", []),
+        "tasks": tasks,
         "raw": msg,
     }
 
@@ -1231,13 +1256,17 @@ def _normalize_mission_feedback(msg: dict[str, Any]) -> dict[str, Any]:
     mission_id = _mission_id_from_ros_msg(msg) or (_feedback_value(feedback, "mission_id", "MissionId") if isinstance(feedback, dict) else None)
     status = _feedback_value(feedback, "status", "Status") if isinstance(feedback, dict) else None
     requested_status = _feedback_value(feedback, "requested_status", "RequestedStatus") if isinstance(feedback, dict) else None
+    issue = _feedback_value(feedback, "issue", "Issue") if isinstance(feedback, dict) else None
     planned_paths = _planned_paths_from_feedback(feedback) if isinstance(feedback, dict) else {}
     path_status = "received" if planned_paths else ("missing" if status in (1, 2, "1", "2") else "none")
     return {
         "mission_id": _normalize_uuidish_id(mission_id) if mission_id else "",
         "status": status,
         "status_name": _mission_status_name(status),
+        "status_source": "mission_feedback",
         "requested_status": requested_status,
+        "issue": issue,
+        "issue_name": _mission_issue_name(issue),
         "planned_paths": planned_paths,
         "path_status": path_status,
         "feedback": feedback,
@@ -1250,6 +1279,29 @@ def _feedback_value(feedback: dict[str, Any], *keys: str) -> Any:
         if key in feedback:
             return feedback[key]
     return None
+
+
+def _edge_state_name(state: Any) -> str:
+    try:
+        state_id = int(state)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    return {0: "INACTIVE", 1: "ACTIVE"}.get(state_id, f"UNKNOWN ({state_id})")
+
+
+def _task_state_name(state: Any) -> str:
+    try:
+        state_id = int(state)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    return {
+        0: "STOPPED",
+        1: "STARTED",
+        2: "PAUSED",
+        3: "COMPLETED",
+        4: "ABORTED",
+        5: "DELETED",
+    }.get(state_id, f"UNKNOWN ({state_id})")
 
 
 def _normalize_planner_state(msg: dict[str, Any]) -> dict[str, Any]:
@@ -1351,11 +1403,44 @@ def _user_feature_geometry_index(repo_root: Path, map_name: str) -> dict[str, di
         feature_id = str(properties.get("feature_id") or feature.get("id") or "")
         geometry = feature.get("geometry")
         if feature_id and isinstance(geometry, dict):
-            geometries[feature_id] = {
-                "geometry_type": geometry.get("type"),
-                "coordinates": geometry.get("coordinates"),
-            }
+            geometries[feature_id] = deepcopy(geometry)
     return geometries
+
+
+def _legacy_inline_geometry_literal(geometry: dict[str, Any], feature_id: str) -> dict[str, Any]:
+    """Translate GeoJSON geometry to the older C++ MissionGeometry JSON shape.
+
+    GeoJSON polygons store an array of rings. The ROS mission parser predates
+    GeoJSON polygon rings and accepts a single flat array of coordinate pairs.
+    Runtime UI polygons are therefore flattened only at the REST/ROS boundary;
+    the canonical mission retained by the adapter still contains feature ids.
+    """
+    geometry_type = geometry.get("type") or geometry.get("geometry_type")
+    coordinates = deepcopy(geometry.get("coordinates"))
+    if geometry_type == "Polygon":
+        if not isinstance(coordinates, list) or not coordinates:
+            raise MissionValidationError(f"runtime Polygon feature {feature_id!r} has no exterior ring")
+        if _is_coordinate_pair(coordinates[0]):
+            pass
+        elif len(coordinates) == 1 and isinstance(coordinates[0], list) and coordinates[0]:
+            if not _is_coordinate_pair(coordinates[0][0]):
+                raise MissionValidationError(f"runtime Polygon feature {feature_id!r} has invalid coordinates")
+            coordinates = coordinates[0]
+        elif len(coordinates) > 1:
+            raise MissionValidationError(
+                f"runtime Polygon feature {feature_id!r} contains interior rings, which the legacy ROS mission contract cannot represent"
+            )
+        else:
+            raise MissionValidationError(f"runtime Polygon feature {feature_id!r} has invalid coordinates")
+    return {"geometry_type": geometry_type, "coordinates": coordinates}
+
+
+def _is_coordinate_pair(value: Any) -> bool:
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) >= 2
+        and all(isinstance(coordinate, (int, float)) and not isinstance(coordinate, bool) for coordinate in value[:2])
+    )
 
 
 def _inline_objective_geometry_ref(value: Any, user_geometries: dict[str, dict[str, Any]]) -> Any:
@@ -1363,19 +1448,21 @@ def _inline_objective_geometry_ref(value: Any, user_geometries: dict[str, dict[s
         return value
     feature_id = str(value.get("feature_id") or "")
     if feature_id in user_geometries:
-        return {"geometry": deepcopy(user_geometries[feature_id])}
+        return {"geometry": _legacy_inline_geometry_literal(user_geometries[feature_id], feature_id)}
     return value
 
 
 def _inline_direct_geometry_ref(value: dict[str, Any], user_geometries: dict[str, dict[str, Any]]) -> dict[str, Any]:
     feature_id = str(value.get("feature_id") or "")
     if feature_id in user_geometries:
-        return deepcopy(user_geometries[feature_id])
+        return {"geometry": _legacy_inline_geometry_literal(user_geometries[feature_id], feature_id)}
     geometry = value.get("geometry")
     if isinstance(geometry, dict):
         nested_feature_id = str(geometry.get("feature_id") or "")
         if nested_feature_id in user_geometries:
-            return deepcopy(user_geometries[nested_feature_id])
+            return {
+                "geometry": _legacy_inline_geometry_literal(user_geometries[nested_feature_id], nested_feature_id)
+            }
     return value
 
 

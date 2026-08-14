@@ -8,7 +8,7 @@ import numpy as np
 from libpysal import weights
 # from shapely.prepared import prep
 from shapely.geometry import Point, Polygon,LineString
-from scipy.spatial import Delaunay
+from scipy.spatial import Delaunay, cKDTree
 from itertools import combinations
 from .utils import *
 
@@ -426,49 +426,129 @@ def connect_graphs(g1,g2,maximum_distance,projected_graph=False):
     """
     
     
-    if(projected_graph):
-        constant=1
+    out = nx.compose(g1, g2)
+    nodes1 = list(g1.nodes)
+    nodes2 = list(g2.nodes)
+    if not nodes1 or not nodes2:
+        return out
+
+    if projected_graph:
+        points1 = np.array([(float(g1.nodes[node]['x']), float(g1.nodes[node]['y'])) for node in nodes1])
+        points2 = np.array([(float(g2.nodes[node]['x']), float(g2.nodes[node]['y'])) for node in nodes2])
+        query_radius = maximum_distance
     else:
-        constant=100000
-        
-        
-    pre_graph= nx.compose(g1,g2)
-    G= nx.MultiGraph()
-    
-    for node2 in g2.nodes:
-        
-#         t2=gpd.GeoSeries([Point(g2.nodes[node2]['x'],g2.nodes[node2]['y'])])
-        lat2= g2.nodes[node2]['y']
-        lon2=g2.nodes[node2]['x']
-        
-        for node1 in g1.nodes:
-            lat1 = g1.nodes[node1]['y']
-            lon1 = g1.nodes[node1]['x']
-            
-            
-#             if(constant*np.linalg.norm(np.array((g1.nodes[node1]['y'],g1.nodes[node1]['x']))-np.array((g2.nodes[node2]['y'],g2.nodes[node2]['x'])))<=maximum_distance):            
-            
-            if(distance_between_coordinates(lat1,lon1,lat2,lon2)<maximum_distance):
-                
-                if node1 not in G.nodes:
-                    G.add_node(node1)
-                    G.nodes[node1]['y']= lat1 #g1.nodes[node1]['y']
-                    G.nodes[node1]['x']= lon1 #g1.nodes[node1]['x']
-                        
-                if node2 not in G.nodes:  
-                    G.add_node(node2)
-                    G.nodes[node2]['y']= lat2 #g2.nodes[node2]['y']
-                    G.nodes[node2]['x']= lon2 #g2.nodes[node2]['x']   
-                
+        # Index latitude/longitude nodes on a 3-D Earth sphere. This preserves
+        # the legacy metric threshold while avoiding a full nested scan.
+        earth_radius_m = 6_371_000.0
 
-                G.add_edge(node1,node2)
+        def earth_centered_points(graph, nodes):
+            latitudes = np.radians([float(graph.nodes[node]['y']) for node in nodes])
+            longitudes = np.radians([float(graph.nodes[node]['x']) for node in nodes])
+            cos_latitudes = np.cos(latitudes)
+            return earth_radius_m * np.column_stack(
+                (
+                    cos_latitudes * np.cos(longitudes),
+                    cos_latitudes * np.sin(longitudes),
+                    np.sin(latitudes),
+                )
+            )
 
-    G= nx.MultiDiGraph(G)
-    
-                
-    out=nx.compose(pre_graph,G)
-    ox.distance.add_edge_lengths(out)
-    out=add_edge_lengths(out)
+        points1 = earth_centered_points(g1, nodes1)
+        points2 = earth_centered_points(g2, nodes2)
+        query_radius = 2.0 * earth_radius_m * np.sin(maximum_distance / (2.0 * earth_radius_m))
+
+    tree = cKDTree(points1)
+    new_edges = []
+    for node2, point2 in zip(nodes2, points2):
+        lat2 = float(g2.nodes[node2]['y'])
+        lon2 = float(g2.nodes[node2]['x'])
+        for index1 in tree.query_ball_point(point2, query_radius):
+            node1 = nodes1[index1]
+            lat1 = float(g1.nodes[node1]['y'])
+            lon1 = float(g1.nodes[node1]['x'])
+            within_threshold = (
+                np.hypot(lon1 - lon2, lat1 - lat2) < maximum_distance
+                if projected_graph
+                else distance_between_coordinates(lat1, lon1, lat2, lon2) < maximum_distance
+            )
+            if not within_threshold:
+                continue
+            forward_key = out.add_edge(node1, node2)
+            reverse_key = out.add_edge(node2, node1)
+            new_edges.extend(((node1, node2, forward_key), (node2, node1, reverse_key)))
+
+    # Existing edges already have lengths. Recomputing every accumulated edge
+    # for every imported LineString was the dominant scenario activation cost.
+    if new_edges:
+        out = add_edge_lengths(out, edges=tuple(new_edges))
+    return out
+
+
+def connect_graph_collection(base_graph, graphs, maximum_distance, projected_graph=False):
+    """Compose and connect a collection with the same cross-graph rule as connect_graphs.
+
+    The legacy caller appended hundreds of OSM LineStrings one at a time. That
+    repeatedly copied the whole accumulated graph. A single spatial query is
+    equivalent: add connector edges only between nodes belonging to different
+    source graphs, while preserving every source graph's own edges.
+    """
+    source_graphs = [base_graph, *graphs]
+    nonempty_graphs = [graph for graph in source_graphs if graph.number_of_nodes()]
+    if not nonempty_graphs:
+        return nx.MultiDiGraph()
+    out = nx.compose_all(nonempty_graphs)
+
+    nodes = []
+    groups = []
+    coordinates = []
+    for group_index, graph in enumerate(source_graphs):
+        for node in graph.nodes:
+            nodes.append(node)
+            groups.append(group_index)
+            coordinates.append((float(graph.nodes[node]['x']), float(graph.nodes[node]['y'])))
+    if len(nodes) < 2:
+        return out
+
+    coordinate_array = np.asarray(coordinates)
+    if projected_graph:
+        points = coordinate_array
+        query_radius = maximum_distance
+    else:
+        earth_radius_m = 6_371_000.0
+        longitudes = np.radians(coordinate_array[:, 0])
+        latitudes = np.radians(coordinate_array[:, 1])
+        cos_latitudes = np.cos(latitudes)
+        points = earth_radius_m * np.column_stack(
+            (
+                cos_latitudes * np.cos(longitudes),
+                cos_latitudes * np.sin(longitudes),
+                np.sin(latitudes),
+            )
+        )
+        query_radius = 2.0 * earth_radius_m * np.sin(maximum_distance / (2.0 * earth_radius_m))
+
+    new_edges = []
+    tree = cKDTree(points)
+    for index1, index2 in tree.query_pairs(query_radius):
+        if groups[index1] == groups[index2]:
+            continue
+        node1 = nodes[index1]
+        node2 = nodes[index2]
+        lon1, lat1 = coordinates[index1]
+        lon2, lat2 = coordinates[index2]
+        within_threshold = (
+            np.hypot(lon1 - lon2, lat1 - lat2) < maximum_distance
+            if projected_graph
+            else distance_between_coordinates(lat1, lon1, lat2, lon2) < maximum_distance
+        )
+        if not within_threshold:
+            continue
+        forward_key = out.add_edge(node1, node2)
+        reverse_key = out.add_edge(node2, node1)
+        new_edges.extend(((node1, node2, forward_key), (node2, node1, reverse_key)))
+
+    if new_edges:
+        out = add_edge_lengths(out, edges=tuple(new_edges))
     return out
 
 

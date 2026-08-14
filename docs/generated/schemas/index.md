@@ -1,5 +1,10 @@
 # JSON Schemas
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 Schema pages are generated directly from `schemas/*.schema.json`.
 
 | Schema | Title | Required top-level fields |

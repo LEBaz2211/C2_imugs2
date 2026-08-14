@@ -1,5 +1,9 @@
 # UI To Simulation Interface
 
+> **Documentation label: CONTRACT**
+> Stable browser-facing boundary. Runtime implementation belongs in the
+> adapter and editable ROS runtime described by [Architecture](ARCHITECTURE.md).
+
 This is the stable boundary between the operator UI and the current simulation runtime. For implementation details, see [UI_BACKEND_LEGACY_ADAPTER.md](UI_BACKEND_LEGACY_ADAPTER.md). For lower-level ROS contracts, see [ROS_COMPATIBILITY_ICD.md](ROS_COMPATIBILITY_ICD.md).
 
 ## Boundary
@@ -9,7 +13,7 @@ Operator
   -> React UI
   -> FastAPI JSON/SSE interface
   -> legacy REST and rosbridge adapters
-  -> legacy ROS fog, planner, fleet, edge, and autonomy simulation
+  -> editable backend fog, planner, fleet, edge, and autonomy simulation
 ```
 
 The UI renders state and sends operator commands. It does not construct ROS messages, query MongoDB, run planning algorithms, or connect directly to rosbridge.
@@ -93,8 +97,17 @@ Important conventions:
 - Leaflet marker coordinates are `[lat, lon]`.
 - ROS odometry is a local pose unless an adapter converts it.
 - Legacy aliases are accepted at input, normalized by the backend, and translated back only at the legacy boundary.
-- The current reverse translation covers `optimization -> optimalization`, but not every canonicalized coverage/formation alias.
-- UI-created mission objective references are inlined when the old mission parser cannot resolve them. Scenario roads remain in MapDB and are not sent in mission JSON.
+- Reverse translation covers `optimization -> optimalization` and the coverage
+  swath field `maximum_coverage_distances -> maximize_coverage_distances`; not
+  every other canonicalized formation alias is translated yet.
+- The mission editor keeps selected saved assets traceable by `feature_id`;
+  selecting **Use geofence** creates a coverage mission and writes the same ID
+  to `transit.geofence.feature_id` and `objective.geometries[0].feature_id`.
+  It sets `behavior=1`, `maximize_coverage=true`, and uses a `6 m` default swath
+  unless the draft already specifies coverage widths. At mission initialization,
+  the adapter inlines runtime user-feature geometry only in the translated copy
+  sent to old REST/ROS when the planner cannot resolve that ID. Scenario roads
+  remain in MapDB and are not sent in mission JSON.
 
 Allowed UI-created feature geometries:
 
@@ -105,6 +118,10 @@ Allowed UI-created feature geometries:
 | `geofence`, `workspace`, `risk` | `Polygon` |
 
 The current simple navigation flow should not create arbitrary polygon objectives.
+Coverage missions use one Polygon objective, `behavior=1`,
+`maximize_coverage=true`, and `objective.maximum_coverage_distances`. That array
+contains either one shared swath width in metres or one width per mission
+vehicle.
 
 ## Operational Expectations
 

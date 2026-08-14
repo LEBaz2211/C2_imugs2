@@ -1,5 +1,7 @@
 # `/fleet_manager_node`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/fleet_manager_node` is the fog-side registry and dispatcher for agents. It learns which edge agents are alive, exposes them to mission managers and the planner, sends task JSON to edge agents, and forwards edge odometry to the planner.
@@ -176,4 +178,3 @@ task_config: "{...the agent task JSON above...}"
 - The planner receives an agent only after both profile and feedback have been processed.
 - Registering a new agent waits for its edge services. If an edge service is missing, the fleet manager can block while waiting.
 - The active collision avoidance code path is mostly commented; do not assume it is protecting moving robots.
-

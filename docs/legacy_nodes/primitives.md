@@ -1,5 +1,7 @@
 # Task Primitives
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` contract evidence.
+
 ## Short Version
 
 A primitive is the smallest action unit inside a legacy edge task. The planner builds a task from objectives; each objective contains one or more primitive references. The edge supervisor sends the current objective's primitives to autonomy.
@@ -212,4 +214,3 @@ The verifier should reject or warn on non-`waypoint` primitives unless the opera
 - The current autonomy simulator only targets the first `waypoint` primitive found in an objective.
 - The current planner does not emit mixed primitive objectives; it emits one waypoint primitive reused across waypoint objectives.
 - `search_mine` and `dispose_mine` are useful design hints, not currently safe execution contracts.
-

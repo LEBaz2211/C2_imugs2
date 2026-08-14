@@ -1,5 +1,7 @@
 # `/autonomy_test_node_Themis_Fr`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/autonomy_test_node_Themis_Fr` is the simple autonomy simulator launched with the edge supervisor. It receives the edge's current objective, moves its odometry toward the first waypoint primitive, and publishes vehicle profile plus autonomy status.

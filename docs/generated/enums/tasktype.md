@@ -1,5 +1,10 @@
 # TaskType
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 ## autonomy_msgs.TaskType
 
 Language: **C++** · Evidence: [`backend/edge/agent-tasks-supervisor/ros2ws/src/message_packages/autonomy_msgs/json/Enums.hpp:34`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/edge/agent-tasks-supervisor/ros2ws/src/message_packages/autonomy_msgs/json/Enums.hpp#L34)
@@ -39,4 +44,14 @@ Language: **C++** · Evidence: [`backend/fog/centralized-coordination/src/messag
 | `0` | `DRIVE` | waypoint drive task |
 | `1` | `EXAMPLE_PERIPHERAL_CAMERA` | move camera task (example) |
 | `2` | `EXAMPLE_DEFENSE_SHIELDS` | move camera task (example) |
+
+## Values used by the verified navigation run
+
+The [one-robot Point-navigation run](../examples/single-robot-point-navigation.md) exercised these values:
+
+| Value | Member | Where it appeared |
+|---:|---|---|
+| `0` | `DRIVE` | Fleet AddTask request |
+
+Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md:11`](https://github.com/LEBaz2211/C2_imugs2/blob/main/docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md#L11)
 

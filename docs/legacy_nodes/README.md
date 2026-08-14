@@ -1,5 +1,9 @@
 # Legacy ROS Node Contracts
 
+> **Documentation label: REFERENCE**
+> Source-level evidence for the frozen `legacy_ros/` comparison runtime. It is
+> not current editable-backend guidance.
+
 This folder documents the runnable legacy ROS stack one node at a time. Each page answers four questions:
 
 - What enters the node?

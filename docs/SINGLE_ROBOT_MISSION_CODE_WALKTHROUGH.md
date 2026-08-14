@@ -1,5 +1,10 @@
 # Single-Robot Mission: Complete Code Walkthrough
 
+> **Documentation label: NEEDS REVIEW**
+> This walkthrough contains implementation details that have not yet been
+> revalidated against the evolving scenario-based planner. Do not use it as
+> current implementation authority; start with [Architecture](ARCHITECTURE.md).
+
 This walkthrough follows one real backend use case from beginning to end:
 send the configured **Themis Fr** robot from its simulated position to one GPS
 point, then observe the mission become complete. It intentionally starts at the

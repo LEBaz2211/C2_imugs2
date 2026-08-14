@@ -1,6 +1,10 @@
-# UI to Legacy ROS Adapter
+# UI to Editable ROS Backend Adapter
 
-This phase keeps the old ROS stack as the execution engine and places a stable FastAPI adapter between the browser UI and legacy ROS.
+> **Documentation label: CURRENT**
+> Evolving adapter implementation. Use [Architecture](ARCHITECTURE.md) for
+> ownership boundaries and verify volatile details against source and tests.
+
+This phase preserves the old ROS contracts in the editable `backend/` runtime and places a stable FastAPI adapter between the browser UI and ROS.
 
 Compatibility rules and project priorities are in [PROJECT_PLANNING.md](../PROJECT_PLANNING.md).
 
@@ -12,8 +16,8 @@ Browser UI (Vite/React/Leaflet)
 Backend Adapter (FastAPI)
   -> http://localhost:5001/mission_control for mission commands
   -> ws://localhost:9090 for ROS diagnostics and live read-side events
-  -> legacy_ros/config/data/map/<map> for GeoJSON overlays
-Legacy ROS Docker stack
+  -> backend/config/data/map/<map> for GeoJSON overlays
+Editable backend Docker stack
   -> c2_node, c2_interface_node, orchestrator_node, fleet_manager_node, planner_node, edge agent, autonomy sim
 ```
 
@@ -87,12 +91,12 @@ The event source reads rosbridge topics:
 
 Planner `READY` is only node readiness. The adapter reports a usable path only after mission feedback contains non-empty waypoint tasks.
 
-## Legacy Smoke Test
+## Backend Smoke Test
 
-After starting `docker-compose.legacy-ros.yml`, run:
+After starting `docker-compose.backend.yml`, run:
 
 ```bash
-./scripts/check_legacy_ros_stack.sh
+./scripts/check_backend_ros_stack.sh
 ```
 
 The script checks required containers, required ROS nodes, required ROS topics, old REST reachability, and rosbridge WebSocket reachability.

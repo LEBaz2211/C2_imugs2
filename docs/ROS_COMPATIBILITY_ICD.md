@@ -1,107 +1,99 @@
 # ROS Compatibility ICD
 
-This document maps the old multi-agent framework ROS interfaces that must stay compatible while `c2_imugs2` is rebuilt. The runnable source of truth is the vendored old ROS code in `legacy_ros/`, especially the embedded message packages under each fog/planner/edge package.
+> **Documentation label: CONTRACT**
+> Stable ROS, REST, JSON, enum, and coordinate requirements. Current runtime
+> architecture and behavior belong in [Architecture](ARCHITECTURE.md), not here.
 
-The preservation rules in [PROJECT_PLANNING.md](../PROJECT_PLANNING.md) apply to every interface listed here.
+## Scope And Authority
 
-## Runtime Approach
+This ICD defines interfaces that the editable runtime in `backend/` and its
+adapters must preserve. The embedded message and service definitions in
+`legacy_ros/` are the frozen comparison evidence for the inherited interface;
+they are not the current implementation target. New ROS work belongs only in
+`backend/`.
 
-Run the actual old ROS stack through Docker from this repository:
+The preservation and migration rules in
+[PROJECT_PLANNING.md](../PROJECT_PLANNING.md) apply to every interface below.
+Do not change a message layout, field type, name, enum value, topic, service, or
+mission/task JSON shape without an explicit contract-migration request,
+compatibility handling, tests, and documentation.
 
-```bash
-docker compose -f docker-compose.legacy-ros.yml up --build
-```
-
-That compose file builds these old packages directly from `legacy_ros/`:
-
-- `legacy_ros/fog/centralized-coordination`
-- `legacy_ros/fog/planner`
-- `legacy_ros/fog/command-control` ROS REST/rosbridge image
-- `legacy_ros/edge/agent-tasks-supervisor`
-
-The new Python core remains separate. Later, it should integrate through real ROS adapters or service clients, not through a simulated runtime.
+Generated documentation is a static inventory of the editable source tree. It
+can help find declarations, but it does not replace this policy or prove that
+an interface was observed on a running ROS graph.
 
 ## ROS Environment
-
-The legacy stack mostly targets ROS 2 Humble in Docker, with some older launch scripts still sourcing Galactic. The compatibility target is:
 
 ```text
 ROS_DOMAIN_ID=112
 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
-Old launch scripts sometimes use `rmw_fastrtps_dynamic_cpp`; keep that as a deployment option if integrating with old containers.
-
-## Old Runtime Nodes
-
-| Area | Legacy node/package | Role |
-| --- | --- | --- |
-| C2 interface | `centralized_coordination/c2_interface_node.cpp` | Mission init/status JSON ingress and feedback egress |
-| Orchestrator | `centralized_coordination/orchestrator_node.cpp` | Mission lifecycle command/delete/log coordination |
-| Mission manager | `centralized_coordination/mission_manager.cpp` | Per-mission planning and task dispatch orchestration |
-| Fleet manager | `centralized_coordination/fleet_manager_node.cpp` | Agent registry, edge task dispatch, edge feedback |
-| Planner | `planner/planner_node.py` | Old path planner service |
-| Edge supervisor | `agent_tasks_supervisor_node.cpp` | Per-agent AddTask/ChangeState compatibility |
-| Autonomy sim | `test_autonomy.cpp` | Optional mock autonomy status/localization source |
+Older deployments may use `rmw_fastrtps_dynamic_cpp`; supporting it must not
+alter the contracts below.
 
 ## C2 And Fog Topics
 
 | Name | Direction | Type | Payload |
 | --- | --- | --- | --- |
 | `/multi_robot/mission_init_request` | C2 -> fog | `c2_msgs/msg/InitMissionRequest` | `mission_id UUID`, `mission_config string<=10000` |
-| `/multi_robot/mission_init_response` | declared fog -> C2 | `c2_msgs/msg/InitMissionResponse` | Publisher/subscriber exist, but the active Interface callback constructs and never publishes the response |
+| `/multi_robot/mission_init_response` | fog -> C2 | `c2_msgs/msg/InitMissionResponse` | Mission id, status, and error response fields |
 | `/multi_robot/change_mission_status_request` | C2 -> fog | `c2_msgs/msg/ChangeMissionStatusRequest` | `mission_id UUID`, `mission_request_status uint8` |
 | `/multi_robot/change_mission_status_response` | fog -> C2 | `c2_msgs/msg/ChangeMissionStatusResponse` | `mission_id UUID`, `mission_status uint8`, `error_message string<=2000` |
-| `/multi_robot/change_mission_vehicle_request` | C2 -> fog | `c2_msgs/msg/ChangeMissionVehicleRequest` | `mission_id UUID`, `vehicule_id_list`, `vehicle_changes uint8` |
+| `/multi_robot/change_mission_vehicle_request` | C2 -> fog | `c2_msgs/msg/ChangeMissionVehicleRequest` | `mission_id UUID`, vehicle ids, `vehicle_changes uint8` |
 | `/multi_robot/change_mission_vehicle_response` | fog -> C2 | `c2_msgs/msg/ChangeMissionVehicleResponse` | `mission_id UUID` |
-| `/multi_robot/mission_feedback` | fog -> C2 | `c2_msgs/msg/MissionFeedback` | `mission_id UUID`, `mission_feedback JSON string` |
-| `/multi_robot/log` | internal/fog -> C2 | `c2_msgs/msg/SwarmLog` | `mission_id UUID`, `log`, `date`, `log_type uint8` |
-| `/multi_robot/swarm_log` | C2 Interface only | `c2_msgs/msg/SwarmLog` | Separate publisher with no active runtime subscriber; it is not an alias bridge for `/multi_robot/log` |
+| `/multi_robot/mission_feedback` | fog -> C2 | `c2_msgs/msg/MissionFeedback` | `mission_id UUID`, `mission_feedback` JSON string |
+| `/multi_robot/log` | fog/internal -> C2 | `c2_msgs/msg/SwarmLog` | `mission_id UUID`, log text, date, and type |
+| `/multi_robot/swarm_log` | C2 interface | `c2_msgs/msg/SwarmLog` | Separate interface; not an alias for `/multi_robot/log` |
 
 ## Planner Services And Topics
 
 | Name | Kind | Type | Payload |
 | --- | --- | --- | --- |
-| `/multi_robot/planner/create` | service | `centralized_msgs/srv/CreatePlanner` | request: `id`, `priority`, `Agent[]`, `config JSON`; response: `id`, `state` |
-| `/multi_robot/planner/get_plan` | service | `centralized_msgs/srv/GetPlan` | request: `id`; response: `id`, `plan JSON` |
-| `/multi_robot/planner/set_agents` | unmatched client | `centralized_msgs/srv/UpdatePlannerAgents` | MissionManager declares a client; the active planner has no provider |
-| `/multi_robot/planner/delete` | unmatched client | `centralized_msgs/srv/DeletePlanner` | Orchestrator calls this name; the active planner does not provide it |
-| `/multi_robot/planner/delete_planner` | active service | `centralized_msgs/srv/DeletePlanner` | request: `id`; response: `id`, `state` |
-| `/multi_robot/planner/state` | topic | `std_msgs/msg/String` | planner state JSON/string |
-| `/multi_robot/planner/planner_calculated` | unmatched subscriber | `centralized_msgs/msg/PlanCalculated` | MissionManager subscribes, but the active planner never publishes it |
-| `/multi_robot/planner/agent` | topic | `centralized_msgs/msg/Agent` | active planner package uses `agent_id string`, `agent_profile JSON`, `nav_msgs/Odometry` |
+| `/multi_robot/planner/create` | service | `centralized_msgs/srv/CreatePlanner` | request: `id`, `priority`, `Agent[]`, config JSON; response: `id`, `state` |
+| `/multi_robot/planner/get_plan` | service | `centralized_msgs/srv/GetPlan` | request: `id`; response: `id`, plan JSON |
+| `/multi_robot/planner/set_agents` | service name retained by clients | `centralized_msgs/srv/UpdatePlannerAgents` | Agent update request and planner state response |
+| `/multi_robot/planner/delete` | service name retained by clients | `centralized_msgs/srv/DeletePlanner` | Planner deletion request and state response |
+| `/multi_robot/planner/delete_planner` | service name provided by the inherited planner | `centralized_msgs/srv/DeletePlanner` | Planner deletion request and state response |
+| `/multi_robot/planner/state` | topic | `std_msgs/msg/String` | Planner state JSON/string |
+| `/multi_robot/planner/planner_calculated` | topic name retained by subscribers | `centralized_msgs/msg/PlanCalculated` | Plan-calculation notification |
+| `/multi_robot/planner/agent` | topic | `centralized_msgs/msg/Agent` | Agent id, agent-profile JSON, and odometry |
 
-## Fleet And Edge Services
+The presence of a retained name in this ICD does not claim that both a client
+and provider currently exist. Current topology must be checked in the generated
+inventory and on the running ROS graph.
+
+## Fleet And Edge Interfaces
 
 | Name | Kind | Type | Payload |
 | --- | --- | --- | --- |
-| `multi_robot/fleet_manager/get_agents` | service | `centralized_msgs/srv/GetAgents` | request: `agent_id_list`; response: `Agent[]`, `error_message` |
-| `multi_robot/fleet_manager/send_tasks` | service | `c2_msgs/srv/InitMission` | request identifies the mission; Fleet ignores the config field and reads `RuntimeDB.Planning` by mission id |
-| `multi_robot/fleet_manager/change_mission_status` | service | `c2_msgs/srv/ChangeMissionStatus` | request: mission id + status; response: status |
-| `/multi_robot/edge/agent_profile` | topic | `std_msgs/msg/String` | agent profile JSON |
-| `/multi_robot/edge/feedback` | topic | `task_msgs/msg/Feedback` | `agent_id`, `state`, `TaskFeedback[]`, `nav_msgs/Odometry`; the old speed field is commented out |
-| `multi_robot/edge/connection_check` | topic | `std_msgs/msg/String` | heartbeat/check string |
-| `multi_robot/edge/agent_<uuid>/add_task` | service | `task_msgs/srv/AddTask` | `task_id`, `task_type`, `override`, `task_config JSON`, `std` |
-| `multi_robot/edge/agent_<uuid>/change_state` | service | `task_msgs/srv/ChangeState` | `requested_state -> state + feedback` |
-| `multi_robot/edge/agent_<uuid>/change_task_state` | service | `task_msgs/srv/ChangeTaskState` | `task_id`, requested state -> state |
-| `multi_robot/edge/agent_<uuid>/cmd` | service | `std_srvs/srv/Trigger` | command trigger |
+| `multi_robot/fleet_manager/get_agents` | service | `centralized_msgs/srv/GetAgents` | requested agent ids; response `Agent[]` and error text |
+| `multi_robot/fleet_manager/send_tasks` | service | `c2_msgs/srv/InitMission` | Mission id/config request and mission response |
+| `multi_robot/fleet_manager/change_mission_status` | service | `c2_msgs/srv/ChangeMissionStatus` | Mission id and requested/status values |
+| `/multi_robot/edge/agent_profile` | topic | `std_msgs/msg/String` | Agent-profile JSON |
+| `/multi_robot/edge/feedback` | topic | `task_msgs/msg/Feedback` | Agent id, state, task feedback, and odometry |
+| `multi_robot/edge/connection_check` | topic | `std_msgs/msg/String` | Heartbeat/check string |
+| `multi_robot/edge/agent_<uuid>/add_task` | service | `task_msgs/srv/AddTask` | Task id/type, override, task-config JSON, and start time |
+| `multi_robot/edge/agent_<uuid>/change_state` | service | `task_msgs/srv/ChangeState` | Requested state; returned state and feedback |
+| `multi_robot/edge/agent_<uuid>/change_task_state` | service | `task_msgs/srv/ChangeTaskState` | Task id and requested/returned state |
+| `multi_robot/edge/agent_<uuid>/cmd` | service | `std_srvs/srv/Trigger` | Development command trigger |
 
 ## Edge To Autonomy Topics
 
-`AUTONOMY_TOPIC_PREFIX` examples in the old stack include `Themis_Fr`, `Themis_Ge`, and `Themis_Es`.
+`<PREFIX>` is the configured autonomy topic prefix, for example `Themis_Fr`.
 
 | Name | Direction | Type | Payload |
 | --- | --- | --- | --- |
-| `<PREFIX>/edge/multi_robot/autonomy_set_objective` | edge -> autonomy | `autonomy_msgs/msg/AutonomySetObjective` | `null_objective`, `AutonomyObjective` |
-| `<PREFIX>/edge/multi_robot/localization` | autonomy -> edge | `nav_msgs/msg/Odometry` | pose/twist |
-| `<PREFIX>/edge/multi_robot/vehicle_profile` | autonomy -> edge | `autonomy_msgs/msg/VehicleProfile` | vehicle state/capabilities |
-| `<PREFIX>/edge/multi_robot/detected_obstacle` | autonomy -> edge | `autonomy_msgs/msg/DetectedObstacle` | obstacle id + geofence |
-| `<PREFIX>/edge/multi_robot/autonomy_status` | autonomy -> edge | `autonomy_msgs/msg/AutonomyStatus` | objective UUID, status enum, `PrimitiveStatus[]` |
-| `<PREFIX>/edge/multi_robot/autonomy_trajectory` | autonomy -> edge | `autonomy_msgs/msg/AutonomyTrajectory` | trajectory JSON/GeoJSON |
+| `<PREFIX>/edge/multi_robot/autonomy_set_objective` | edge -> autonomy | `autonomy_msgs/msg/AutonomySetObjective` | Null flag and autonomy objective |
+| `<PREFIX>/edge/multi_robot/localization` | autonomy -> edge | `nav_msgs/msg/Odometry` | Pose and twist |
+| `<PREFIX>/edge/multi_robot/vehicle_profile` | autonomy -> edge | `autonomy_msgs/msg/VehicleProfile` | Vehicle state and capabilities |
+| `<PREFIX>/edge/multi_robot/detected_obstacle` | autonomy -> edge | `autonomy_msgs/msg/DetectedObstacle` | Obstacle id and geofence |
+| `<PREFIX>/edge/multi_robot/autonomy_status` | autonomy -> edge | `autonomy_msgs/msg/AutonomyStatus` | Objective id, status, and primitive statuses |
+| `<PREFIX>/edge/multi_robot/autonomy_trajectory` | autonomy -> edge | `autonomy_msgs/msg/AutonomyTrajectory` | Trajectory JSON/GeoJSON |
 
-## JSON ICDs
+## JSON Contracts
 
-The new canonical schemas are:
+Canonical schemas:
 
 ```text
 schemas/mission_config.schema.json
@@ -110,12 +102,12 @@ schemas/agent_profile.schema.json
 schemas/map_feature.schema.json
 ```
 
-Old JSON snippets are normalized before planning:
+Legacy input aliases are normalized at the adapter boundary:
 
-| Old field | New field |
+| Legacy field | Canonical field |
 | --- | --- |
 | `objective.geometry` | `objective.geometries[]` |
-| `objective.geometry.feature_id` | `objective.geometries[].feature_id` |
+| `objective.feature_id` | `objective.geometries[].feature_id` |
 | `transit.optimalization` | `transit.optimization` |
 | `transit.vehicle_constraints` | `transit.desired_vehicle_constraints` |
 | `transit.desired_speed` | `transit.desired_vehicle_constraints.max_speed` |
@@ -125,49 +117,48 @@ Old JSON snippets are normalized before planning:
 | `maximize_coverage_distances` | `maximum_coverage_distances` |
 | `transit.geofence_maximum_coverage` | `transit.geofence_maximize_coverage` |
 
-The schemas describe the intended canonical shapes, but `/api/missions/init` currently uses a partial handwritten validator rather than full JSON Schema validation. Runtime invariants can therefore be stricter than these files.
+The adapter translates canonical `optimization` back to inherited
+`optimalization` before posting through the REST bridge.
 
-## Verified Active Contract Gaps
+## Numeric Enums
 
-- FastAPI approve/start URLs contain a mission id, but the old REST status envelope contains only `requested_state`. `/c2_node` targets its last initialized mission.
-- The planner keeps global `current_mission_id`, `paths`, and `mission_defined` state. `GetPlan` returns the current cache rather than selecting by request id.
-- MissionManager's empty-plan check recognizes only literal `"tasks":[]`. The
-  current planner now waits in state `1` for a matching cached robot and reports
-  state `4` for empty or unreachable results, so the normal path does not promote
-  `tasks: {}` to `PLANNED`; the check remains a compatibility hazard for other
-  planner implementations.
-- MissionFeedback is capped to the first 50 waypoints per task; `RuntimeDB.Planning` may contain a longer path.
-- Planner/UI waypoints are `[lon, lat]`; MissionFeedback serializes `[lat, lng]`; the FastAPI adapter swaps them back for the UI.
-- Canonical-to-legacy translation currently handles `optimization -> optimalization` but does not reverse every other canonical alias listed above.
+Mission request values:
 
-## Planner Algorithms To Preserve
+```text
+INIT=0 APPROVE=1 START=2 PAUSE=3 STOP=4 DELETE=5
+```
 
-The old planner algorithms should be wrapped behind `PlannerPort`, not imported throughout the app:
+Mission status values:
 
-| Algorithm area | Legacy source |
-| --- | --- |
-| Mission interpretation and feature lookup | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/multi_robot_path_planning.py` |
-| A*/CBS/risk-weighted graph search | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/mapf.py` |
-| Graph utilities | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/graph.py`, `utils.py` |
-| Hungarian / mTSP allocation | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/task_allocation.py` |
-| Coverage spread | `legacy_ros/fog/planner/ros2ws/src/path_planning_lib/path_planning_lib/max_coverage.py` |
-| Edge task execution model | `legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/agent_tasks_supervisor_node.cpp` |
+```text
+NONE=0 PLANNED=1 PLANNED_ALTERNATIVE=2 PLANNED_FAILED=3 ACCEPTED=4
+STARTED=5 PAUSED=6 FAILED=7 STOPPED=8 DELETED=9 COMPLETED=10
+```
 
-## Compatibility Notes
+Mission behavior values:
 
-- Active embedded message packages differ from root `custom-msgs` in places. Prefer the message packages colocated with `centralized_coordination`, `planner`, and `agent_tasks_supervisor`.
-- The legacy planner initializes from `MapDB.rma` in practice; its direct
-  local-folder initialization remains disabled. `docker-compose.legacy-ros.yml`
-  now flattens, validates, and idempotently seeds the three valid baseline RMA
-  features before the planner starts.
-- The deployed RMA configuration uses `25 m` polygon/line graph connection
-  thresholds, and the local road graph is bidirectional. These small local
-  compatibility fixes connect the seeded geometry to the current OSM component.
-- `CreatePlanner` initializes the graph on demand when necessary and maps
-  readiness or route failures to planner state `4` without terminating ROS spin.
-  A missing live agent remains in state `1` and is retried. The FastAPI adapter
-  normalizes state `3` as `DISCONNECTED`, state `4` as `FAILED`, and treats both
-  as planner status `failed`.
-- `legacy_ros/` is based on the pinned old ROS components and preserves their
-  message, service, topic, enum, and JSON contracts. It now carries documented
-  planner reliability patches rather than being a byte-identical runtime copy.
+```text
+NAVIGATE=0 COVERAGE=1 NAVIGATE_NO_PLANNING=2
+```
+
+Numeric values are compatibility data. Do not reorder or renumber them.
+
+## Coordinate And State Semantics
+
+```text
+GeoJSON and canonical mission coordinates: [longitude, latitude]
+Leaflet marker APIs:                       [latitude, longitude]
+ROS odometry:                              local pose unless explicitly converted
+```
+
+Coordinate conversion belongs in adapters, not UI mission construction.
+Planner readiness is not proof of a usable mission path. A usable path is
+confirmed only by mission feedback containing non-empty waypoint tasks.
+
+## Out Of Scope
+
+This ICD deliberately does not describe planner algorithms, scenario loading,
+risk policy, coverage behavior, deployment fixes, current defects, or runtime
+workarounds. Those details evolve with `backend/` and belong in
+[Architecture](ARCHITECTURE.md), focused `CURRENT` documents, source, and
+tests. Keep this document limited to compatibility requirements.

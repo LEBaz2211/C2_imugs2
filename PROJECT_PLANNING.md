@@ -1,10 +1,18 @@
 # Project Planning
 
+> **Documentation label: CURRENT**
+> Living roadmap and migration constraints. Read
+> [Architecture](docs/ARCHITECTURE.md) first for the current system boundaries.
+
 ## Purpose
 
 This file is the living high-level plan for the project. It records the main objective, the order of major work, and the compatibility rules that should guide implementation choices.
 
 Read it at the start of every new working session involving architecture, ROS integration, mission contracts, the UI/backend boundary, LLM integration, scenarios, or benchmarking. Keep detailed implementation notes in their relevant technical documents; keep this file focused on project-wide goals.
+
+Prefer minimal, reviewable changes. Change only the layer needed for the stated
+requirement, preserve existing contracts by default, and avoid combining a
+focused fix with unrelated refactoring or cleanup.
 
 If a new session reveals a recurring problem, compatibility trap, or important fact that future sessions could otherwise miss, add a short entry to the **Session Problem Log** at the end. Do not log temporary progress, routine test results, or problems already explained in the documentation.
 
@@ -18,9 +26,100 @@ The LLM and benchmark must build on a working multi-robot system; they should no
 
 ## Non-Negotiable Compatibility Rules
 
-Do not edit `legacy_ros/` unless the task explicitly asks for a legacy-code change, and do not replace real legacy nodes with mocks during compatibility testing. Prefer fixes in adapters, configuration, tests, UI, or documentation.
+`legacy_ros/` is a frozen, read-only compatibility reference. Never implement fixes, features, configuration changes, or documentation updates inside that directory. All ROS backend development belongs in `backend/`; compatibility work must inspect and test `legacy_ros/` without modifying it. Do not copy backend changes back into the legacy tree or require the two trees to remain synchronized.
 
-Preserve message and service structures, topic and service names, numeric enums, mission and task-plan shapes, and coordinate conventions. Keep legacy normalization and ROS behavior in the backend. Any necessary contract migration requires documentation, compatibility handling, tests, and user approval. Explicit legacy changes should be minimal and verified against the actual Dockerized stack.
+Preserve message and service structures, topic and service names, numeric enums, mission and task-plan shapes, and coordinate conventions. Keep legacy normalization and ROS behavior in the editable backend. Any necessary contract migration requires documentation, compatibility handling, tests, and user approval. Verify compatibility against the frozen Dockerized legacy stack without changing its source.
+
+## Scenario Model And Invariants
+
+A scenario is the complete input that defines one simulated reality: its
+selected map assets, frozen OSM road imports, robot definitions and starting
+locations. A mission is an operation performed inside that reality. Roads and
+other scenario assets therefore belong to the scenario snapshot, not to the
+mission description.
+
+There are three related concepts which must not be conflated:
+
+| Concept | Purpose | Source of truth |
+| --- | --- | --- |
+| Scenario catalog | All saved scenarios and immutable versions available for later selection | `MapDB._scenario_versions` and the versioned MapDB collections |
+| Selected draft scenario | The one scenario currently being edited or previewed in Scenario Lab | Browser scenario-library state, reconciled with `GET /api/scenarios` |
+| Active runtime scenario | The only scenario currently controlling the planner, ROS coordination, robot containers and C2 mission validation | Validated `active_scenario.json`, the active Mongo marker, planner config and live Docker/ROS/Mongo checks |
+
+Selecting a scenario in the Scenario Lab dropdown changes only the draft being
+edited. It does **not** change simulated reality. Only a successful Activate
+operation changes the active runtime scenario.
+
+```mermaid
+flowchart LR
+    Library[Global map authoring library] --> Draft[One selected scenario draft]
+    Roads[Polygon-bounded OSM download] --> Draft
+    Robots[Robot definitions and starts] --> Draft
+    Draft -->|Activate| Freeze[Content-addressed immutable MapDB collection]
+    Freeze --> Planner[Planner configured for exact collection and token]
+    Freeze --> Runtime[Replace coordination and scenario robot runtime]
+    Planner --> Verify{Exact graph loaded?}
+    Runtime --> Verify2{Containers running and every robot registered?}
+    Verify --> Ready[One active scenario ready]
+    Verify2 --> Ready
+    Ready --> Mission[Mission Init allowed]
+```
+
+Activation is a transaction boundary:
+
+1. Validate the draft and resolve only its referenced map features.
+2. Normalize its downloaded OSM LineStrings as scenario `road` features.
+3. Hash the complete definition and create or reuse
+   `MapDB.scenario_<scenario-id>_<version>`. A published version is immutable.
+4. Write the planner configuration with that exact collection and a unique
+   activation token.
+5. Stop the previous scenario containers, clear scenario-dependent runtime
+   records, and restart central coordination and the planner.
+6. Create only the requested scenario robot containers.
+7. Mark the scenario ready only after the planner reports the exact collection
+   and token, required containers are running, and every configured canonical
+   robot ID is registered.
+
+The following rules are non-negotiable for scenario work:
+
+- Exactly one runtime scenario may be active. Retained immutable collections
+  are history/catalog entries and must never be merged into the active graph.
+- `MapDB.rma` and the full `map_features`/GeoJSON response are authoring
+  libraries, not a fallback runtime reality.
+- Scenario Lab must render only the selected draft's feature IDs, road imports
+  and robots. C2 must render only the active runtime scenario's snapshot. A
+  failed, activating or stale runtime may disable missions and show an error,
+  but it must never reveal all global map features or combine scenarios.
+- OSM road imports remain owned by one scenario. Do not put roads in mission
+  JSON, append them to another scenario during selection, or use the general
+  OSM reference overlay as planner input.
+- Changing any scenario content creates a new immutable version on activation.
+  Never edit an existing versioned collection in place.
+- A running robot container is not proof of readiness. Docker state, ROS/Mongo
+  registration and the planner's exact collection/token marker must all agree.
+- A previously verified `stale` runtime may recover automatically only after
+  those checks all agree again, including the exact planner collection/token
+  marker. `activating` and `failed` states never auto-promote to ready.
+- Browser-local selection, the catalog's `runtime_active` label and backend
+  readiness are different facts. Use stable scenario IDs when reconciling
+  them; do not synchronize them by unioning arrays or by copying the previous
+  scenario's non-empty state.
+- Scenario switching must replace state atomically from the consumer's point
+  of view. Clear or key cached Leaflet layers, selected features, pending edits,
+  roads and robot overlays by scenario ID so the previous scenario cannot
+  survive a switch or appear during an intermediate render.
+
+Before changing Scenario Lab, map filtering, scenario persistence, activation,
+planner loading or robot launching, trace and test both directions:
+
+```text
+select A -> only A is previewed -> activate A -> only A is runtime-visible
+select B -> only B is previewed, A stays runtime-active -> activate B -> only B is runtime-visible
+```
+
+Also test the same sequence when activation is `activating`, `failed` or
+`stale`; none of those states authorizes a fallback to the global feature
+library.
 
 ## ZE Plan
 
@@ -34,15 +133,25 @@ Preserve message and service structures, topic and service names, numeric enums,
 - [ ] Test for small reapetable mission.
 - [ ] Create large level scenarios for benchmarking.
 
-## Refactor Legacy backend
+## Evolve The Editable ROS Runtime
 
 This is the subtasks of task 3 of ZE Plan
 
-- [x] Create new backend that is the copy of the legacy, but that we will modify to adapt to our needs. This totally is a place holder as there might be some architectural changes.
-- [x] List out all the present feature and different use cases (examples of workflows), detailed with code block explanation. One document with first the list of features and list of possible workflows/use cases and when we click it goes to the specific explanation. Also need a short review of the architecturein general, and how it is done in ros.
+- [x] Create an editable ROS runtime derived from the frozen compatibility reference so it can evolve without modifying `legacy_ros/`.
 - [ ] We select and think of different behaviour of different elements to our needs. Maybe architectural changes.
 - [ ] We implement the changes one by one and test them, with unit tests where possible.
 - [ ] Test with the UI.
 
 
 ## ZE Log
+
+## Session Problem Log
+
+- **2026-08-12 — Cross-scenario map leakage:** C2 used the global map feature
+  library whenever `activeScenarioRuntime.ready` was false. A transient missing
+  robot registration changed the active scenario to a latched `stale` state;
+  although all five containers and registrations were subsequently present,
+  the UI then rendered assets belonging to multiple saved scenarios. Runtime
+  readiness and map visibility must be handled independently: a non-ready
+  scenario blocks mission commands, while the map remains scoped to that one
+  scenario (or explicitly empty), never to all authoring assets.

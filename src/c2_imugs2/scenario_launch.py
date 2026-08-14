@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 
-EDGE_IMAGE = "c2-imugs2/edge-agent-sim:local"
+EDGE_IMAGE = "c2-imugs2/backend-edge-agent-sim:local"
+BACKEND_CONFIG_DIR = Path("backend/config")
 
 
 def launch_scenario(
@@ -37,7 +38,7 @@ def launch_scenario(
         prefix = _topic_prefix(agent, index)
         config_path = launch_dir / f"{prefix}_autonomy.yaml"
         config_path.write_text(_autonomy_config(prefix, agent), encoding="utf-8")
-        container_name = f"c2-imugs2-scenario-{scenario_id}-{_safe_name(agent_id)[:12]}"
+        container_name = f"c2-imugs2-backend-scenario-{scenario_id}-{_safe_name(agent_id)[:12]}"
         containers.append(
             {
                 "agent_id": agent_id,
@@ -155,11 +156,11 @@ def _compose_yaml(containers: list[dict[str, Any]], host_root: Path) -> str:
                 f"      AGENT_ID: {container['agent_env_id']}",
                 f"      AUTONOMY_TOPIC_PREFIX: {container['topic_prefix']}",
                 "    volumes:",
-                f"      - {host_root / 'legacy_ros/config/config_agent-tasks-supervisor.yaml'}:/app/config.yaml:ro",
+                f"      - {host_root / BACKEND_CONFIG_DIR / 'config_agent-tasks-supervisor.yaml'}:/app/config.yaml:ro",
                 f"      - {container['host_autonomy_config']}:/app/autonomy_config.yaml:ro",
-                f"      - {host_root / 'legacy_ros/config/launch_agent_tasks_supervisor.sh'}:/app/launch_agent_tasks_supervisor.sh:ro",
-                f"      - {host_root / 'legacy_ros/config/launch_autonomy_sim.sh'}:/app/launch_autonomy_sim.sh:ro",
-                f"      - {host_root / 'legacy_ros/config/launch_edge_with_autonomy_sim.sh'}:/app/launch_edge_with_autonomy_sim.sh:ro",
+                f"      - {host_root / BACKEND_CONFIG_DIR / 'launch_agent_tasks_supervisor.sh'}:/app/launch_agent_tasks_supervisor.sh:ro",
+                f"      - {host_root / BACKEND_CONFIG_DIR / 'launch_autonomy_sim.sh'}:/app/launch_autonomy_sim.sh:ro",
+                f"      - {host_root / BACKEND_CONFIG_DIR / 'launch_edge_with_autonomy_sim.sh'}:/app/launch_edge_with_autonomy_sim.sh:ro",
                 '    command: bash -lc "bash /app/launch_edge_with_autonomy_sim.sh"',
             ]
         )
@@ -198,10 +199,10 @@ def _docker_request(socket_path: str, method: str, path: str, payload: dict[str,
 def _start_containers_with_docker_socket(socket_path: str, containers: list[dict[str, Any]], host_root: Path) -> list[str]:
     started = []
     binds_common = [
-        f"{host_root / 'legacy_ros/config/config_agent-tasks-supervisor.yaml'}:/app/config.yaml:ro",
-        f"{host_root / 'legacy_ros/config/launch_agent_tasks_supervisor.sh'}:/app/launch_agent_tasks_supervisor.sh:ro",
-        f"{host_root / 'legacy_ros/config/launch_autonomy_sim.sh'}:/app/launch_autonomy_sim.sh:ro",
-        f"{host_root / 'legacy_ros/config/launch_edge_with_autonomy_sim.sh'}:/app/launch_edge_with_autonomy_sim.sh:ro",
+        f"{host_root / BACKEND_CONFIG_DIR / 'config_agent-tasks-supervisor.yaml'}:/app/config.yaml:ro",
+        f"{host_root / BACKEND_CONFIG_DIR / 'launch_agent_tasks_supervisor.sh'}:/app/launch_agent_tasks_supervisor.sh:ro",
+        f"{host_root / BACKEND_CONFIG_DIR / 'launch_autonomy_sim.sh'}:/app/launch_autonomy_sim.sh:ro",
+        f"{host_root / BACKEND_CONFIG_DIR / 'launch_edge_with_autonomy_sim.sh'}:/app/launch_edge_with_autonomy_sim.sh:ro",
     ]
     for container in containers:
         name = container["container_name"]

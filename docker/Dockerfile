@@ -6,11 +6,12 @@ COPY src /app/src
 COPY fixtures /app/fixtures
 COPY schemas /app/schemas
 COPY docs /app/docs
-COPY docker-compose.yml docker-compose.legacy-ros.yml /app/
+COPY docker-compose.yml docker-compose.backend.yml docker-compose.legacy-ros.yml /app/
 COPY frontend/src /app/frontend/src
 COPY legacy_ros/config /app/legacy_ros/config
 COPY legacy_ros/fog /app/legacy_ros/fog
 COPY legacy_ros/edge /app/legacy_ros/edge
+COPY backend /app/backend
 
 RUN pip install --no-cache-dir -e .
 

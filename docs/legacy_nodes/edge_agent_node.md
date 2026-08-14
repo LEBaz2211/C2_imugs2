@@ -1,5 +1,7 @@
 # `/agent_<agent_id>`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/agent_f9992bb3_9871_451f_90a0_9207eb9fe6c5` is the edge task supervisor for the simulated Themis UGV. It receives task JSON from the fleet manager, translates the current objective into autonomy messages, monitors autonomy feedback, and publishes task feedback back to fog. For the primitive vocabulary used in task JSON, see [primitives.md](primitives.md).

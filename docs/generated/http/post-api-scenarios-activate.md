@@ -1,5 +1,10 @@
 # POST /api/scenarios/activate
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 FastAPI handler `activate_scenario_runtime`
 
 | Property | Extracted value |
@@ -14,7 +19,7 @@ FastAPI handler `activate_scenario_runtime`
 | Relationship | Contract | Evidence |
 |---|---|---|
 | handled by activate_scenario_runtime | `—` | [`src/c2_imugs2/api.py:254`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L254) |
-| launchScenario | `—` | [`frontend/src/api.ts:431`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L431) |
+| launchScenario | `—` | [`frontend/src/api.ts:444`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L444) |
 
 ## Definition evidence
 

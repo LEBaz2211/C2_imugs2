@@ -15,7 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import type { Feature, FeatureCollection } from "geojson";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import type { OsmRoadImportRequest, QueriedOsmRoads, ScenarioCatalogEntry, ScenarioLaunchRequest, ScenarioLaunchResult } from "./api";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -96,11 +96,11 @@ export type ScenarioContextLibrary = {
 
 type ScenarioLabProps = {
   mapFeatures: MapFeature[];
+  mapFeaturesReady: boolean;
   selectedFeatureId?: string;
-  pendingFeatureToAdd?: { featureId: string; nonce: number };
+  pendingFeatureToAdd?: { featureId: string; scenarioId: string; nonce: number };
   pendingAgentPlacement?: ScenarioAgentPlacement;
   currentMapView?: ScenarioMapView;
-  activeScenarioId?: string;
   catalogScenarios?: ScenarioCatalogEntry[];
   placingAgentId?: string;
   onScenarioAgentsChange: (agents: Agent[]) => void;
@@ -154,11 +154,11 @@ const DEFAULT_VEHICLE_MODELS: VehicleModel[] = [
 
 export function ScenarioLab({
   mapFeatures,
+  mapFeaturesReady,
   selectedFeatureId,
   pendingFeatureToAdd,
   pendingAgentPlacement,
   currentMapView,
-  activeScenarioId,
   catalogScenarios = [],
   placingAgentId,
   onScenarioAgentsChange,
@@ -183,18 +183,36 @@ export function ScenarioLab({
   const selectedFeature = mapFeatures.find((feature) => feature.feature_id === selectedFeatureId);
   const activeRoadImports = activeScenario.road_imports ?? EMPTY_ROAD_IMPORTS;
   const featureById = useMemo(() => new Map(mapFeatures.map((feature) => [feature.feature_id, feature])), [mapFeatures]);
+  const missingScenarioFeatureIds = useMemo(
+    () => activeScenario.feature_ids.filter((featureId) => !featureById.has(featureId)),
+    [activeScenario.feature_ids, featureById],
+  );
   const scenarioFeatureIds = useMemo(
-    () => activeScenario.feature_ids.filter((featureId) => !isScenarioLabImportedRoad(featureById.get(featureId))),
+    () => activeScenario.feature_ids.filter((featureId) => featureById.has(featureId) && !isScenarioLabImportedRoad(featureById.get(featureId))),
     [activeScenario.feature_ids, featureById],
   );
   const scenarioFeatures = useMemo(
     () => scenarioFeatureIds.flatMap((featureId) => featureById.get(featureId) ?? []),
     [featureById, scenarioFeatureIds],
   );
+  const availableScenarioFeatures = useMemo(
+    () => mapFeatures.filter((feature) => !activeScenario.feature_ids.includes(feature.feature_id) && !isScenarioLabImportedRoad(feature)),
+    [activeScenario.feature_ids, mapFeatures],
+  );
   const scenarioRoads = useMemo(() => roadImportsToFeatureCollection(activeRoadImports), [activeRoadImports]);
+  const hasRoutingRoads = useMemo(
+    () => activeRoadImports.some((roadImport) => roadImport.feature_count > 0)
+      || scenarioFeatures.some((feature) => feature.feature_type === "road" && feature.geometry.type === "LineString"),
+    [activeRoadImports, scenarioFeatures],
+  );
+  const activationIssue = activeScenario.agents.length === 0
+    ? "Add at least one vehicle before activation."
+    : !hasRoutingRoads
+      ? "Add a road LineString or download an OSM road section inside a polygon before activation."
+      : "";
   const selectedAgent = activeScenario.agents.find((agent) => agent.agent_id === activeScenario.selected_agent_id) ?? activeScenario.agents[0];
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     saveScenarioLibrary(library);
     onScenarioLibraryChange(scenarioContextLibraryFromLibrary(library));
     onScenarioAgentsChange(activeScenario.agents.map(toAgent));
@@ -205,19 +223,27 @@ export function ScenarioLab({
     setLibrary((current) => mergeScenarioCatalog(current, catalogScenarios));
   }, [catalogScenarios]);
 
-  useEffect(() => {
-    if (!activeScenarioId || activeScenarioId === library.active_scenario_id) return;
-    if (!library.scenarios.some((scenario) => scenario.scenario_id === activeScenarioId)) return;
-    setLibrary((current) => ({ ...current, active_scenario_id: activeScenarioId }));
-  }, [activeScenarioId, library.active_scenario_id, library.scenarios]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     onActiveScenarioFeaturesChange(scenarioFeatureIds);
   }, [activeScenario.scenario_id, onActiveScenarioFeaturesChange, scenarioFeatureIds]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onScenarioRoadsChange(scenarioRoads);
   }, [activeScenario.scenario_id, onScenarioRoadsChange, scenarioRoads]);
+
+  useLayoutEffect(() => {
+    if (!mapFeaturesReady || missingScenarioFeatureIds.length === 0) return;
+    const missing = new Set(missingScenarioFeatureIds);
+    setLibrary((current) => ({
+      ...current,
+      scenarios: current.scenarios.map((scenario) => {
+        const featureIds = scenario.feature_ids.filter((featureId) => !missing.has(featureId));
+        return featureIds.length === scenario.feature_ids.length
+          ? scenario
+          : { ...scenario, feature_ids: featureIds, updated_at: new Date().toISOString() };
+      }),
+    }));
+  }, [mapFeaturesReady, missingScenarioFeatureIds]);
 
   useEffect(() => {
     const importedRoads = activeScenario.feature_ids.flatMap((featureId) => {
@@ -231,11 +257,12 @@ export function ScenarioLab({
     });
   }, [activeScenario.scenario_id, activeScenario.feature_ids.join("|"), featureById]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pendingFeatureToAdd || pendingFeatureToAdd.nonce === appliedPendingFeatureNonce) return;
+    if (!library.scenarios.some((scenario) => scenario.scenario_id === pendingFeatureToAdd.scenarioId)) return;
     setAppliedPendingFeatureNonce(pendingFeatureToAdd.nonce);
-    addFeatureIdsToActiveScenario([pendingFeatureToAdd.featureId]);
-  }, [pendingFeatureToAdd?.nonce, activeScenario.scenario_id]);
+    addFeatureIdsToScenario(pendingFeatureToAdd.scenarioId, [pendingFeatureToAdd.featureId]);
+  }, [appliedPendingFeatureNonce, library.scenarios, pendingFeatureToAdd]);
 
   useEffect(() => {
     if (!pendingAgentPlacement || pendingAgentPlacement.nonce === appliedPlacementNonce) return;
@@ -308,9 +335,23 @@ export function ScenarioLab({
   }
 
   function addFeatureIdsToActiveScenario(featureIds: string[]) {
-    const next = unique([...activeScenario.feature_ids, ...featureIds]);
-    if (next.length === activeScenario.feature_ids.length) return;
-    updateActiveScenario({ feature_ids: next });
+    addFeatureIdsToScenario(activeScenario.scenario_id, featureIds);
+  }
+
+  function addFeatureIdsToScenario(scenarioId: string, featureIds: string[]) {
+    setLibrary((current) => {
+      const scenario = current.scenarios.find((item) => item.scenario_id === scenarioId);
+      if (!scenario) return current;
+      const next = unique([...scenario.feature_ids, ...featureIds]);
+      if (next.length === scenario.feature_ids.length) return current;
+      const updatedAt = new Date().toISOString();
+      return {
+        ...current,
+        scenarios: current.scenarios.map((item) =>
+          item.scenario_id === scenarioId ? { ...item, feature_ids: next, updated_at: updatedAt } : item,
+        ),
+      };
+    });
   }
 
   function removeFeature(featureId: string) {
@@ -382,6 +423,10 @@ export function ScenarioLab({
   }
 
   async function launchActiveScenario() {
+    if (activationIssue) {
+      setLaunchError(activationIssue);
+      return;
+    }
     setLaunchBusy(true);
     setLaunchError("");
     setLaunchResult(undefined);
@@ -420,7 +465,8 @@ export function ScenarioLab({
             className="h-8 max-w-56 min-w-0 rounded-md border border-border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
             value={activeScenario.scenario_id}
             onChange={(event) => {
-              onScenarioContextReset();
+              setLaunchError("");
+              setLaunchResult(undefined);
               setLibrary((current) => ({ ...current, active_scenario_id: event.target.value }));
             }}
           >
@@ -433,7 +479,7 @@ export function ScenarioLab({
           <Button size="icon" variant="outline" onClick={createScenario} title="New scenario">
             <Plus className="h-4 w-4" />
           </Button>
-          <Button size="sm" disabled={launchBusy || activeScenario.agents.length === 0} onClick={launchActiveScenario} title="Freeze the scenario map, switch the planner, and verify its ROS vehicles">
+          <Button size="sm" disabled={launchBusy || Boolean(activationIssue)} onClick={launchActiveScenario} title={activationIssue || "Freeze the scenario map, switch the planner, and verify its ROS vehicles"}>
             <Play className="h-4 w-4" />
             {launchBusy ? "Activating" : "Activate"}
           </Button>
@@ -445,6 +491,13 @@ export function ScenarioLab({
           </Button>
         </div>
       </div>
+
+      {activationIssue && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          <span className="font-semibold">Scenario is not activatable yet.</span>{" "}
+          {activationIssue} Streets visible in the base map are display tiles and are not frozen planner roads.
+        </div>
+      )}
 
       {(launchResult || launchError) && (
         <div className={`rounded-md border px-3 py-2 text-xs ${launchError ? "border-red-200 bg-red-50 text-red-900" : "border-border bg-panel text-muted-foreground"}`}>
@@ -475,8 +528,10 @@ export function ScenarioLab({
           scenario={activeScenario}
           selectedFeature={selectedFeature}
           scenarioFeatures={scenarioFeatures}
+          availableFeatures={availableScenarioFeatures}
           onUpdateScenario={updateActiveScenario}
           onAddSelectedFeature={addSelectedFeature}
+          onAddFeature={(featureId) => addFeatureIdsToActiveScenario([featureId])}
           onRemoveFeature={removeFeature}
           onSelectFeature={onSelectFeature}
           currentMapView={currentMapView}
@@ -518,8 +573,10 @@ function SituationPanel({
   scenario,
   selectedFeature,
   scenarioFeatures,
+  availableFeatures,
   onUpdateScenario,
   onAddSelectedFeature,
+  onAddFeature,
   onRemoveFeature,
   onSelectFeature,
   currentMapView,
@@ -529,8 +586,10 @@ function SituationPanel({
   scenario: ScenarioRecord;
   selectedFeature?: MapFeature;
   scenarioFeatures: MapFeature[];
+  availableFeatures: MapFeature[];
   onUpdateScenario: (patch: Partial<ScenarioRecord>) => void;
   onAddSelectedFeature: () => void;
+  onAddFeature: (featureId: string) => void;
   onRemoveFeature: (featureId: string) => void;
   onSelectFeature: (featureId: string) => void;
   currentMapView?: ScenarioMapView;
@@ -591,6 +650,28 @@ function SituationPanel({
           </Button>
         </div>
       )}
+
+      <div className="rounded-md border border-border bg-panel p-3">
+        <label className="block text-xs font-medium text-muted-foreground" htmlFor="scenario-existing-asset">
+          Attach existing map asset
+        </label>
+        <select
+          id="scenario-existing-asset"
+          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+          value=""
+          disabled={availableFeatures.length === 0}
+          onChange={(event) => {
+            if (event.target.value) onAddFeature(event.target.value);
+          }}
+        >
+          <option value="">{availableFeatures.length ? "Choose an unassigned asset..." : "All map assets are already attached"}</option>
+          {availableFeatures.map((feature) => (
+            <option key={feature.feature_id} value={feature.feature_id}>
+              {feature.name} ({feature.feature_type})
+            </option>
+          ))}
+        </select>
+      </div>
 
       <div className="grid grid-cols-3 gap-2">
         {["objective", "road", "workspace", "geofence", "risk"].map((type) => (
@@ -914,6 +995,12 @@ function RoadImportPanel({
 
   return (
     <div className="space-y-4">
+      {!polygon && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-950">
+          <div className="font-semibold">Define the road-download area first.</div>
+          Draw a geofence or workspace polygon with the map toolbar, or attach an existing polygon in Situation. Keep it selected, choose <span className="font-medium">From Selected Polygon</span>, then download the roads inside it.
+        </div>
+      )}
       <div className="rounded-md border border-border bg-panel p-4">
         <div className="flex items-center justify-between">
           <LabTitle icon={<Route className="h-4 w-4" />} label="Frozen OSM Roads" />

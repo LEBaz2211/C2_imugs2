@@ -1,5 +1,7 @@
 # `/mission_<mission_id>`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/mission_<mission_id>` is a dynamic node created by the orchestrator for each mission. It is the real mission state machine: it creates planner jobs, retrieves plans, publishes mission feedback, asks the fleet manager to send tasks, and watches edge feedback for progress/completion.

@@ -1,5 +1,9 @@
 # Legacy ROS Mission Flow Diagram
 
+> **Documentation label: REFERENCE**
+> Frozen compatibility-reference flow. For the current system, use
+> [Architecture](ARCHITECTURE.md).
+
 For per-node contracts, inputs/outputs, internal behavior, and concrete workflow examples, see [legacy_nodes/README.md](legacy_nodes/README.md).
 
 ## System View

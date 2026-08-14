@@ -83,6 +83,7 @@ export type ScenarioLaunchResult = {
   status: "inactive" | "activating" | "ready" | "failed" | string;
   ready: boolean;
   message: string;
+  error?: string;
   docker_started?: boolean;
   scenario_id?: string;
   name?: string;
@@ -107,14 +108,20 @@ export type MissionState = {
   mission_id: string;
   status?: number | string | null;
   status_name?: string;
+  status_source?: "adapter_acknowledgement" | "mission_feedback" | string;
   requested_status?: number;
   requested_status_name?: string;
+  issue?: number | string | null;
+  issue_name?: string;
   command_phase?: string;
   planner_status?: string;
+  planner_state?: number | string | null;
+  planner_state_name?: string;
   path_status?: string;
   initialized_at?: string;
   updated_at?: string;
   planned_paths?: Record<string, LonLat[]>;
+  feedback?: Record<string, unknown>;
   config?: MissionConfig;
   adapter_adjustments?: {
     type: string;
@@ -369,8 +376,14 @@ export type ContractGraph = {
 export type AgentUpdateEvent = {
   agent_id: string;
   status?: string;
+  status_name?: string;
   current_location?: [number, number] | null;
-  tasks?: unknown[];
+  tasks?: {
+    task_id?: string;
+    task_state?: number | string;
+    task_state_name?: string;
+    current_objective_id?: string;
+  }[];
   raw?: unknown;
 };
 
@@ -503,7 +516,7 @@ export function createEventSource() {
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
 }
 
@@ -513,13 +526,13 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
 }
 
 async function deleteJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, { method: "DELETE" });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
 }
 
@@ -529,6 +542,18 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
+}
+
+async function responseError(response: Response) {
+  const body = await response.text();
+  try {
+    const payload = JSON.parse(body) as { detail?: unknown; message?: unknown };
+    const detail = payload.detail ?? payload.message;
+    if (typeof detail === "string" && detail.trim()) return new Error(detail);
+  } catch {
+    // Fall back to the response body for non-JSON errors.
+  }
+  return new Error(body || `${response.status} ${response.statusText}`);
 }

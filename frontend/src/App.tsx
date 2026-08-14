@@ -1,6 +1,6 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, GripVertical, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
-import type { ReactNode, RefObject } from "react";
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveMission,
@@ -8,6 +8,7 @@ import {
   createEventSource,
   deleteMapFeature,
   forgetMission as forgetMissionRecord,
+  getContracts,
   getActiveScenario,
   getDiagnostics,
   getLegacyTrace,
@@ -24,6 +25,7 @@ import {
   startMission,
   updateMapFeature,
   type AgentUpdateEvent,
+  type ContractGraph,
   type DiagnosticsState,
   type LegacyResetResult,
   type LegacyTrace,
@@ -43,13 +45,35 @@ import { Button } from "./components/ui/button";
 import { Tabs } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
 import { agents as fallbackAgents, mapFeatures as fallbackFeatures, missionExamples as fallbackMissionExamples } from "./data/demo";
+import { editJsonForKey, jsonCursorPosition } from "./jsonEditor";
 import { createTaskPlan, normalizeMission, validateMission } from "./mission";
+import { ContractExplorer } from "./ContractExplorer";
 import { MapView, type DraftMapFeature } from "./MapView";
 import { ScenarioLab, loadScenarioContextLibrary, type ScenarioAgentPlacement, type ScenarioContextLibrary, type ScenarioMapView } from "./ScenarioLab";
 import type { Agent, MapFeature, MissionConfig } from "./types";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
+const RIGHT_PANE_WIDTHS_STORAGE_KEY = "c2_imugs2_right_pane_widths";
+const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, scenario: 860 } as const;
+const MIN_RIGHT_PANE_WIDTHS = { c2: 380, scenario: 520 } as const;
+const MIN_MAP_WIDTH = 360;
+const RESIZE_HANDLE_WIDTH = 8;
+
+type ResizableWorkspace = keyof typeof DEFAULT_RIGHT_PANE_WIDTHS;
+
+function readRightPaneWidths(): Record<ResizableWorkspace, number> {
+  if (typeof window === "undefined") return { ...DEFAULT_RIGHT_PANE_WIDTHS };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(RIGHT_PANE_WIDTHS_STORAGE_KEY) ?? "{}") as Partial<Record<ResizableWorkspace, unknown>>;
+    return {
+      c2: typeof saved.c2 === "number" && Number.isFinite(saved.c2) ? Math.max(MIN_RIGHT_PANE_WIDTHS.c2, saved.c2) : DEFAULT_RIGHT_PANE_WIDTHS.c2,
+      scenario: typeof saved.scenario === "number" && Number.isFinite(saved.scenario) ? Math.max(MIN_RIGHT_PANE_WIDTHS.scenario, saved.scenario) : DEFAULT_RIGHT_PANE_WIDTHS.scenario,
+    };
+  } catch {
+    return { ...DEFAULT_RIGHT_PANE_WIDTHS };
+  }
+}
 
 function loadInitialScenarioState() {
   const library = loadScenarioContextLibrary();
@@ -141,6 +165,7 @@ export default function App() {
   const [agents, setAgents] = useState<Agent[]>(fallbackAgents);
   const [agentTelemetry, setAgentTelemetry] = useState<Record<string, AgentUpdateEvent>>({});
   const [mapFeatures, setMapFeatures] = useState<MapFeature[]>(fallbackFeatures);
+  const [mapFeaturesReady, setMapFeaturesReady] = useState(false);
   const [geojson, setGeojson] = useState<FeatureCollection | undefined>();
   const [osmRoads, setOsmRoads] = useState<FeatureCollection | undefined>();
   const [examples, setExamples] = useState<MissionExample[]>(fallbackMissionExamples);
@@ -153,6 +178,9 @@ export default function App() {
   const [showNewMission, setShowNewMission] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState | undefined>();
   const [legacyTrace, setLegacyTrace] = useState<LegacyTrace | undefined>();
+  const [contractGraph, setContractGraph] = useState<ContractGraph | undefined>();
+  const [contractsBusy, setContractsBusy] = useState(false);
+  const [contractsError, setContractsError] = useState("");
   const [planningDiagnostics, setPlanningDiagnostics] = useState<PlanningDiagnostics | undefined>();
   const [planningDiagnosticsBusy, setPlanningDiagnosticsBusy] = useState(false);
   const [selectedPlanningScenarioId, setSelectedPlanningScenarioId] = useState<string | undefined>();
@@ -165,7 +193,7 @@ export default function App() {
   const [initRequestedAt, setInitRequestedAt] = useState<number | undefined>();
   const [nowMs, setNowMs] = useState(Date.now());
   const [tab, setTab] = useState("mission");
-  const [workspace, setWorkspace] = useState<"c2" | "scenario">("c2");
+  const [workspace, setWorkspace] = useState<"c2" | "scenario" | "contracts">("c2");
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | undefined>();
   const [scenarioAgents, setScenarioAgents] = useState<Agent[]>([]);
   const [scenarioFeatureIds, setScenarioFeatureIds] = useState<string[]>([]);
@@ -173,7 +201,7 @@ export default function App() {
   const [scenarioState, setScenarioState] = useState<{ library: ScenarioContextLibrary; activeId?: string }>(() => loadInitialScenarioState());
   const [activeScenarioRuntime, setActiveScenarioRuntime] = useState<ScenarioLaunchResult | undefined>();
   const [scenarioCatalog, setScenarioCatalog] = useState<ScenarioCatalogEntry[]>([]);
-  const [pendingScenarioFeatureToAdd, setPendingScenarioFeatureToAdd] = useState<{ featureId: string; nonce: number } | undefined>();
+  const [pendingScenarioFeatureToAdd, setPendingScenarioFeatureToAdd] = useState<{ featureId: string; scenarioId: string; nonce: number } | undefined>();
   const [pendingScenarioAgentPlacement, setPendingScenarioAgentPlacement] = useState<ScenarioAgentPlacement | undefined>();
   const [placingScenarioAgentId, setPlacingScenarioAgentId] = useState<string | undefined>();
   const [mapFocus, setMapFocus] = useState<{ featureIds: string[]; nonce: number } | undefined>();
@@ -183,10 +211,17 @@ export default function App() {
   const [mapDraftResetNonce, setMapDraftResetNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("Send Themis Fr to the selected objective point using roads.");
+  const [rightPaneWidths, setRightPaneWidths] = useState<Record<ResizableWorkspace, number>>(() => readRightPaneWidths());
   const activeMissionIdRef = useRef<string | undefined>();
+  const draftMissionIdRef = useRef<string | undefined>();
   const focusedScenarioViewRef = useRef<string | undefined>();
   const missionJsonRef = useRef<HTMLTextAreaElement | null>(null);
+  const rightPaneRef = useRef<HTMLElement | null>(null);
   const [jsonFocus, setJsonFocus] = useState<{ needle: string; label: string; nonce: number } | undefined>();
+
+  useEffect(() => {
+    window.localStorage.setItem(RIGHT_PANE_WIDTHS_STORAGE_KEY, JSON.stringify(rightPaneWidths));
+  }, [rightPaneWidths]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -215,6 +250,7 @@ export default function App() {
       .then((bootstrap) => {
         setAgents(bootstrap.agents);
         setMapFeatures(bootstrap.map_features);
+        setMapFeaturesReady(true);
         setGeojson(bootstrap.geojson);
         if (bootstrap.osm_roads) setOsmRoads(bootstrap.osm_roads);
       })
@@ -229,6 +265,7 @@ export default function App() {
       })
       .catch(() => setExamples(fallbackMissionExamples));
     getDiagnostics().then(applyDiagnostics).catch(() => undefined);
+    refreshContracts(false);
 
     const source = createEventSource();
     source.addEventListener("diagnostics.updated", (event) => {
@@ -242,8 +279,8 @@ export default function App() {
     source.addEventListener("planner.updated", (event) => {
       const update = JSON.parse((event as MessageEvent).data) as PlannerUpdateEvent;
       const activeMissionId = activeMissionIdRef.current;
+      if (!activeMissionId) return;
       if (update.mission_id && activeMissionId && update.mission_id !== activeMissionId) return;
-      if (!activeMissionId && update.mission_id) return;
       setPlannerState((current) => {
         if (update.paths) return update;
         if (current?.paths) return { ...current, state: update.state, raw: update.raw };
@@ -271,7 +308,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const missionId = mission?.mission_id ?? missionState?.mission_id;
+    let cancelled = false;
+    const refreshScenarioReadiness = () => {
+      getActiveScenario()
+        .then((scenario) => {
+          if (!cancelled) setActiveScenarioRuntime(scenario);
+        })
+        .catch(() => undefined);
+    };
+    const timer = window.setInterval(refreshScenarioReadiness, 10_000);
+    window.addEventListener("focus", refreshScenarioReadiness);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshScenarioReadiness);
+    };
+  }, []);
+
+  useEffect(() => {
+    const missionId = activeMissionIdRef.current;
     if (!missionId) return;
     const current = missionState?.mission_id === missionId ? missionState : undefined;
     if (!shouldPollMissionState(current)) return;
@@ -323,7 +378,7 @@ export default function App() {
       if (activeUpdate) applyMissionRuntimeUpdate(activeUpdate, "diagnostics");
     }
     const plannerUpdate = asPlannerUpdate(update.planner_state);
-    if (plannerUpdate && (!plannerUpdate.mission_id || !activeMissionId || plannerUpdate.mission_id === activeMissionId)) {
+    if (plannerUpdate && activeMissionId && (!plannerUpdate.mission_id || plannerUpdate.mission_id === activeMissionId)) {
       setPlannerState(plannerUpdate);
     }
   }
@@ -332,7 +387,14 @@ export default function App() {
     () => scenarioState.library.scenarios.find((scenario) => scenario.scenario_id === scenarioState.activeId),
     [scenarioState.activeId, scenarioState.library.scenarios],
   );
-  const scenarioFeatureIdSet = useMemo(() => new Set(scenarioFeatureIds), [scenarioFeatureIds]);
+  const scenarioFeatureIdSet = useMemo(() => {
+    const featureIds = new Set(scenarioFeatureIds);
+    const pending = pendingScenarioFeatureToAdd;
+    if (pending && pending.scenarioId === activeScenarioContext?.scenario_id) {
+      featureIds.add(pending.featureId);
+    }
+    return featureIds;
+  }, [activeScenarioContext?.scenario_id, pendingScenarioFeatureToAdd, scenarioFeatureIds]);
   const scenarioVisibleMapFeatures = useMemo(
     () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, scenarioFeatureIdSet)),
     [mapFeatures, scenarioFeatureIdSet],
@@ -346,8 +408,9 @@ export default function App() {
     () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, runtimeFeatureIdSet)),
     [mapFeatures, runtimeFeatureIdSet],
   );
+  const hasRuntimeScenario = Boolean(activeScenarioRuntime?.scenario_id);
   const c2Agents = useMemo(() => {
-    if (!activeScenarioRuntime?.ready) return agents;
+    if (!activeScenarioRuntime?.scenario_id) return [];
 
     const scenarioAgents = activeScenarioRuntime.agents ?? runtimeScenarioContext?.agents ?? [];
     const liveAgentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
@@ -362,7 +425,7 @@ export default function App() {
       };
     });
   }, [activeScenarioRuntime, agentTelemetry, agents, runtimeScenarioContext?.agents]);
-  const c2MapFeatures = activeScenarioRuntime?.ready ? runtimeMapFeatures : mapFeatures;
+  const c2MapFeatures = hasRuntimeScenario ? runtimeMapFeatures : [];
 
   const validation = useMemo(() => {
     if (!missionText.trim()) return [];
@@ -377,7 +440,7 @@ export default function App() {
   const mapMission = workspace === "scenario" ? undefined : mission;
   const mapTaskPlan = workspace === "scenario" ? undefined : taskPlan;
   const mapPlannerState = workspace === "scenario" ? undefined : plannerState;
-  const mapUsesScenarioContext = workspace === "scenario" || Boolean(activeScenarioRuntime?.ready);
+  const mapUsesScenarioContext = workspace === "scenario" || hasRuntimeScenario;
   const mapAgents = workspace === "scenario" ? scenarioAgents : c2Agents;
   const placingScenarioAgent = scenarioAgents.find((agent) => agent.agent_id === placingScenarioAgentId);
   const applyScenarioAgents = useCallback((nextAgents: Agent[]) => setScenarioAgents(nextAgents), []);
@@ -390,6 +453,11 @@ export default function App() {
         ? requestedId
         : library.scenarios[0]?.scenario_id;
       return { library, activeId };
+    });
+    setPendingScenarioFeatureToAdd((pending) => {
+      if (!pending) return pending;
+      const target = library.scenarios.find((scenario) => scenario.scenario_id === pending.scenarioId);
+      return target?.feature_ids.includes(pending.featureId) ? undefined : pending;
     });
   }, []);
   const resetScenarioWorkspace = useCallback(() => {
@@ -412,10 +480,10 @@ export default function App() {
   const mapViewGeojson = useMemo(
     () => workspace === "scenario"
       ? filterGeojsonForScenario(geojson, scenarioFeatureIdSet)
-      : activeScenarioRuntime?.ready
+      : hasRuntimeScenario
         ? filterGeojsonForScenario(geojson, runtimeFeatureIdSet)
-        : geojson,
-    [activeScenarioRuntime?.ready, geojson, runtimeFeatureIdSet, scenarioFeatureIdSet, workspace],
+        : filterGeojsonForScenario(geojson, new Set()),
+    [geojson, hasRuntimeScenario, runtimeFeatureIdSet, scenarioFeatureIdSet, workspace],
   );
 
   useEffect(() => {
@@ -480,10 +548,11 @@ export default function App() {
   }
 
   function updateMission(next: MissionConfig, focus?: { needle: string; label: string }) {
-    activeMissionIdRef.current = next.mission_id;
+    activeMissionIdRef.current = undefined;
     setMission(next);
-    setMissionConfigs((current) => ({ ...current, [next.mission_id]: next }));
-    setMissionState(missionStates[next.mission_id]);
+    storeDraftMission(next);
+    setMissionState(undefined);
+    setPlannerState(undefined);
     setMissionText(JSON.stringify(next, null, 2));
     if (focus) setJsonFocus({ ...focus, nonce: Date.now() });
     setCommandFeedback(undefined);
@@ -492,8 +561,13 @@ export default function App() {
 
   function updateMissionText(value: string) {
     setMissionText(value);
+    activeMissionIdRef.current = undefined;
+    setMissionState(undefined);
+    setPlannerState(undefined);
+    setJsonFocus(undefined);
+    setCommandFeedback(undefined);
+    setInitRequestedAt(undefined);
     if (!value.trim()) {
-      activeMissionIdRef.current = undefined;
       setMission(undefined);
       return;
     }
@@ -501,14 +575,25 @@ export default function App() {
       const next = normalizeMission(JSON.parse(value));
       const errors = validateMission(next, c2Agents, c2MapFeatures);
       if (errors.length === 0) {
-        activeMissionIdRef.current = next.mission_id;
         setMission(next);
-        setMissionConfigs((current) => ({ ...current, [next.mission_id]: next }));
-        setMissionState(missionStates[next.mission_id]);
+        storeDraftMission(next);
+      } else {
+        setMission(undefined);
       }
     } catch {
-      // Keep the last valid local mission preview while the user is typing.
+      setMission(undefined);
     }
+  }
+
+  function storeDraftMission(next: MissionConfig) {
+    const previousDraftId = draftMissionIdRef.current;
+    setMissionConfigs((current) => {
+      const updated = { ...current };
+      if (previousDraftId && previousDraftId !== next.mission_id && !missionStates[previousDraftId]) delete updated[previousDraftId];
+      if (!missionStates[next.mission_id]) updated[next.mission_id] = next;
+      return updated;
+    });
+    draftMissionIdRef.current = missionStates[next.mission_id] ? undefined : next.mission_id;
   }
 
   function loadExample(example: MissionExample) {
@@ -522,6 +607,7 @@ export default function App() {
 
   function clearMission() {
     activeMissionIdRef.current = undefined;
+    draftMissionIdRef.current = undefined;
     setMission(undefined);
     setMissionText("");
     setMissionState(undefined);
@@ -533,7 +619,8 @@ export default function App() {
   function selectMission(missionId: string) {
     const config = missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config);
     const state = missionStates[missionId];
-    activeMissionIdRef.current = missionId;
+    activeMissionIdRef.current = state ? missionId : undefined;
+    draftMissionIdRef.current = state ? undefined : missionId;
     setShowNewMission(false);
     setMissionState(state);
     setPlannerState(hasPlannedPaths(state?.planned_paths) ? { mission_id: missionId, paths: state?.planned_paths, source: "adapter_state", received_at: state?.updated_at } : undefined);
@@ -586,6 +673,7 @@ export default function App() {
   }
 
   async function createDrawnFeature(draft: DraftMapFeature) {
+    const targetScenarioId = workspace === "scenario" ? activeScenarioContext?.scenario_id ?? scenarioState.activeId : undefined;
     const featureId = crypto.randomUUID();
     const name = draft.name || `${draft.feature_type} ${mapFeatures.length + 1}`;
     const geometry = toGeoJsonGeometry(draft);
@@ -604,10 +692,11 @@ export default function App() {
       const result = await createMapFeature(feature);
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
+      setMapFeaturesReady(true);
       setSelectedFeatureId(featureId);
       setMapFocus({ featureIds: [featureId], nonce: Date.now() });
       setMapFocusPoints(undefined);
-      if (workspace === "scenario") setPendingScenarioFeatureToAdd({ featureId, nonce: Date.now() });
+      if (targetScenarioId) setPendingScenarioFeatureToAdd({ featureId, scenarioId: targetScenarioId, nonce: Date.now() });
       setCommandFeedback({ tone: "ok", message: `Added ${draft.feature_type} feature '${name}'.` });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -642,6 +731,7 @@ export default function App() {
       const result = await updateMapFeature(featureId, feature);
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
+      setMapFeaturesReady(true);
       setSelectedFeatureId(featureId);
       setMapFocus({ featureIds: [featureId], nonce: Date.now() });
       setMapFocusPoints(undefined);
@@ -716,18 +806,33 @@ export default function App() {
       );
       setCommandFeedback({ tone: "ok", message: `Added objective '${feature.name}' to the mission.` });
     } else if ((feature.feature_type === "geofence" || feature.feature_type === "workspace") && feature.geometry.type === "Polygon") {
+      const coverageDistances = base.objective.maximum_coverage_distances?.length
+        ? base.objective.maximum_coverage_distances
+        : [6];
       updateMission(
         {
           ...base,
+          mission_id: crypto.randomUUID(),
+          name: `Cover ${feature.name}`,
+          behavior: 1,
           vehicles,
           transit: {
             ...base.transit,
-            geofence: directGeometryRefFromFeature(feature),
+            // Keep the editor-facing mission canonical and traceable to the
+            // selected asset. The adapter inlines user-created feature refs
+            // only in the copy sent across the legacy REST/ROS boundary.
+            geofence: { feature_id: feature.feature_id },
+          },
+          objective: {
+            ...base.objective,
+            geometries: [{ feature_id: feature.feature_id }],
+            maximize_coverage: true,
+            maximum_coverage_distances: coverageDistances,
           },
         },
-        { needle: '"geofence"', label: "geofence" },
+        { needle: '"objective"', label: "coverage geofence" },
       );
-      setCommandFeedback({ tone: "ok", message: `Added '${feature.name}' as mission geofence.` });
+      setCommandFeedback({ tone: "ok", message: `Added '${feature.name}' as the coverage geofence and objective.` });
     } else if (feature.feature_type === "road" && feature.geometry.type === "LineString") {
       const transit = base.transit ?? {};
       const roads = Array.isArray(transit["roads"]) ? transit["roads"] : [];
@@ -759,6 +864,7 @@ export default function App() {
       updateMission(
         {
           ...base,
+          mission_id: crypto.randomUUID(),
           vehicles,
           objective: {
             ...base.objective,
@@ -789,6 +895,7 @@ export default function App() {
       const result = await deleteMapFeature(feature.feature_id);
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
+      setMapFeaturesReady(true);
       setScenarioFeatureIds((current) => current.filter((featureId) => featureId !== feature.feature_id));
       if (selectedFeatureId === feature.feature_id) setSelectedFeatureId(undefined);
       const missionUsesFeature = mission?.objective.geometries.some((geometryRef) => geometryRef.feature_id === feature.feature_id);
@@ -834,6 +941,7 @@ export default function App() {
       const returnedConfig = asMissionConfig(result.config);
       const updated = returnedConfig ? { ...returnedConfig, mission_id: result.mission_id } : { ...next, mission_id: result.mission_id };
       activeMissionIdRef.current = result.mission_id;
+      draftMissionIdRef.current = undefined;
       setMission(updated);
       setMissionText(JSON.stringify(updated, null, 2));
       setMissionConfigs((current) => ({ ...current, [result.mission_id]: updated }));
@@ -907,6 +1015,21 @@ export default function App() {
     return result;
   }
 
+  async function refreshContracts(showBusy = true) {
+    if (showBusy) setContractsBusy(true);
+    setContractsError("");
+    try {
+      const graph = await getContracts(true);
+      setContractGraph(graph);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setContractsError(message);
+      if (showBusy) setCommandFeedback({ tone: "error", message: `Contract graph refresh failed: ${message}` });
+    } finally {
+      if (showBusy) setContractsBusy(false);
+    }
+  }
+
   async function cleanLegacyRuntimeForExamples() {
     setApiError("");
     setLegacyResetBusy(true);
@@ -952,6 +1075,16 @@ export default function App() {
   const hasMission = Boolean(missionText.trim());
   const hasSelectedMission = hasMission || Boolean(missionState);
   const canSendMission = hasMission && validation.length === 0 && Boolean(activeScenarioRuntime?.ready);
+  const scenarioReadinessMessage = activeScenarioRuntime?.ready
+    ? ""
+    : activeScenarioRuntime?.status === "stale"
+      ? "The scenario runtime became stale after backend containers stopped. Open Scenario and activate it again."
+      : activeScenarioRuntime?.error || activeScenarioRuntime?.message || "Open Scenario and activate one before initializing a mission.";
+  const initDisabledReason = !hasMission
+    ? "Load or create a valid mission first."
+    : validation.length > 0
+      ? `Resolve the mission validation issue${validation.length === 1 ? "" : "s"} first.`
+      : scenarioReadinessMessage;
   const currentStatus = missionState ? missionStatusLabel(missionState) : "";
   const missionMatchesState = Boolean(mission && missionState?.mission_id === mission.mission_id);
   const canApproveMission = missionMatchesState && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
@@ -968,6 +1101,52 @@ export default function App() {
     () => planningDiagnostics?.scenario_analysis?.scenarios?.find((scenario) => scenario.id === selectedPlanningScenarioId),
     [planningDiagnostics, selectedPlanningScenarioId],
   );
+  const resizableWorkspace: ResizableWorkspace = workspace === "scenario" ? "scenario" : "c2";
+  const rightPaneWidth = rightPaneWidths[resizableWorkspace];
+  const rightPaneMinWidth = MIN_RIGHT_PANE_WIDTHS[resizableWorkspace];
+  const assistantPaneWidth = assistantOpen ? 340 : 48;
+
+  function resizeRightPane(width: number) {
+    setRightPaneWidths((current) => ({ ...current, [resizableWorkspace]: Math.round(width) }));
+  }
+
+  function maxRightPaneWidth() {
+    if (typeof window === "undefined") return rightPaneWidth;
+    return Math.max(rightPaneMinWidth, window.innerWidth - assistantPaneWidth - MIN_MAP_WIDTH - RESIZE_HANDLE_WIDTH);
+  }
+
+  if (workspace === "contracts") {
+    return (
+      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#07111f] text-slate-100">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800 bg-[#091522] px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Workflow className="h-5 w-5 shrink-0 text-cyan-400" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-slate-100">System Contract Atlas</h2>
+              <p className="truncate text-xs text-slate-400">Evidence-backed map of the legacy mission, planning, execution, and feedback contracts.</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Tabs
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              items={[
+                { value: "c2", label: "C2" },
+                { value: "scenario", label: "Scenario" },
+                { value: "contracts", label: "Contracts" },
+              ]}
+            />
+            <Badge tone={contractsError ? "error" : "ok"}>
+              {contractGraph?.atlas ? `${contractGraph.atlas.components.length} systems · ${contractGraph.atlas.interactions.length} contracts` : "atlas"}
+            </Badge>
+          </div>
+        </header>
+        <section className="min-h-0 flex-1 overflow-hidden">
+          <ContractExplorer graph={contractGraph} busy={contractsBusy} error={contractsError} onRefresh={() => refreshContracts()} />
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="flex h-screen min-h-[720px] overflow-hidden bg-background text-foreground">
@@ -1001,7 +1180,24 @@ export default function App() {
         onClearSelection={() => setSelectedFeatureId(undefined)}
       />
 
-      <aside className={`flex min-w-0 shrink-0 flex-col border-l border-border bg-background ${workspace === "scenario" ? "w-[min(860px,52vw)]" : "w-[min(540px,42vw)]"}`}>
+      <VerticalResizeHandle
+        paneRef={rightPaneRef}
+        width={rightPaneWidth}
+        minWidth={rightPaneMinWidth}
+        defaultWidth={DEFAULT_RIGHT_PANE_WIDTHS[resizableWorkspace]}
+        getMaxWidth={maxRightPaneWidth}
+        onResize={resizeRightPane}
+      />
+
+      <aside
+        ref={rightPaneRef}
+        className="flex min-w-0 shrink-0 flex-col bg-background"
+        style={{
+          width: rightPaneWidth,
+          minWidth: rightPaneMinWidth,
+          maxWidth: `calc(100vw - ${assistantPaneWidth + MIN_MAP_WIDTH + RESIZE_HANDLE_WIDTH}px)`,
+        }}
+      >
         <header className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
             {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
@@ -1013,13 +1209,13 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Tabs
               value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario")}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
               items={[
                 { value: "c2", label: "C2" },
                 { value: "scenario", label: "Scenario" },
+                { value: "contracts", label: "Contracts" },
               ]}
             />
-            {workspace === "c2" && mission && <PlannerProgressTag mission={mission} missionState={missionState} plannerState={plannerState} busyCommand={busyCommand} initRequestedAt={initRequestedAt} nowMs={nowMs} />}
             {workspace === "c2" ? (
               !hasSelectedMission ? <Badge>empty</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
             ) : (
@@ -1041,12 +1237,37 @@ export default function App() {
                   { value: "diagnostics", label: "Diagnostics" },
                 ]}
               />
-              <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
-                {activeScenarioRuntime?.ready ? `active: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}` : "no ready scenario"}
-              </Badge>
+              <span title={activeScenarioRuntime?.error}>
+                <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
+                  {activeScenarioRuntime?.ready
+                    ? `active: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}`
+                    : activeScenarioRuntime?.status === "stale"
+                      ? "scenario stale"
+                      : "no ready scenario"}
+                </Badge>
+              </span>
             </div>
+            {!activeScenarioRuntime?.ready && (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                <span>{scenarioReadinessMessage}</span>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
+                  Open Scenario
+                </Button>
+              </div>
+            )}
+            {hasSelectedMission && (
+              <MissionRuntimeStatus
+                mission={mission}
+                missionState={missionState}
+                plannerState={plannerState}
+                agentTelemetry={agentTelemetry}
+                busyCommand={busyCommand}
+                initRequestedAt={initRequestedAt}
+                nowMs={nowMs}
+              />
+            )}
             <div className="grid grid-cols-3 gap-2">
-              <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)}>
+              <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)} title={canSendMission ? "Initialize this mission in the active scenario" : initDisabledReason}>
                 <ShieldCheck className="h-4 w-4" />
                 {busyCommand === "init" ? "Initializing" : "Init"}
               </Button>
@@ -1117,11 +1338,11 @@ export default function App() {
           ) : (
             <ScenarioLab
               mapFeatures={mapFeatures}
+              mapFeaturesReady={mapFeaturesReady}
               selectedFeatureId={selectedFeatureId}
               pendingFeatureToAdd={pendingScenarioFeatureToAdd}
               pendingAgentPlacement={pendingScenarioAgentPlacement}
               currentMapView={currentMapView}
-              activeScenarioId={scenarioState.activeId}
               catalogScenarios={scenarioCatalog}
               placingAgentId={placingScenarioAgentId}
               onScenarioAgentsChange={applyScenarioAgents}
@@ -1164,59 +1385,340 @@ export default function App() {
   );
 }
 
-function PlannerProgressTag({
-  mission,
-  missionState,
-  plannerState,
-  busyCommand,
-  initRequestedAt,
-  nowMs,
+function VerticalResizeHandle({
+  paneRef,
+  width,
+  minWidth,
+  defaultWidth,
+  getMaxWidth,
+  onResize,
 }: {
-  mission: MissionConfig;
-  missionState?: MissionState;
-  plannerState?: PlannerUpdateEvent;
-  busyCommand?: "init" | "approve" | "start";
-  initRequestedAt?: number;
-  nowMs: number;
+  paneRef: RefObject<HTMLElement | null>;
+  width: number;
+  minWidth: number;
+  defaultWidth: number;
+  getMaxWidth: () => number;
+  onResize: (width: number) => void;
 }) {
-  const status = missionState ? missionStatusLabel(missionState) : busyCommand === "init" ? "INIT_REQUEST_SENT" : "LOCAL_ONLY";
-  const pathSummary = plannerPathSummary(plannerState);
-  const startedAt = missionState?.initialized_at ? Date.parse(missionState.initialized_at) : initRequestedAt;
-  const elapsedSeconds = startedAt ? Math.max(0, Math.floor((nowMs - startedAt) / 1000)) : 0;
-  const progress = plannerProgress(status, missionState?.planner_status, Boolean(pathSummary), busyCommand, missionState?.path_status);
-  const isTerminal = ["COMPLETED", "FAILED", "PLANNED_FAILED", "STOPPED", "DELETED"].includes(status);
+  const [dragging, setDragging] = useState(false);
+
+  function clampWidth(nextWidth: number) {
+    return Math.min(getMaxWidth(), Math.max(minWidth, nextWidth));
+  }
+
+  function beginResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = paneRef.current?.getBoundingClientRect().width ?? width;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    setDragging(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function move(moveEvent: PointerEvent) {
+      onResize(clampWidth(startWidth + startX - moveEvent.clientX));
+    }
+
+    function finish() {
+      setDragging(false);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    }
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+
+  function resizeWithKeyboard(event: KeyboardEvent<HTMLDivElement>) {
+    const step = event.shiftKey ? 64 : 24;
+    let nextWidth: number | undefined;
+    if (event.key === "ArrowLeft") nextWidth = width + step;
+    if (event.key === "ArrowRight") nextWidth = width - step;
+    if (event.key === "Home") nextWidth = minWidth;
+    if (event.key === "End") nextWidth = getMaxWidth();
+    if (nextWidth === undefined) return;
+    event.preventDefault();
+    onResize(clampWidth(nextWidth));
+  }
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-border bg-panel px-2 py-1 text-xs" title={`${progress.message} ${pathSummary ? `${pathSummary.pathCount} path(s), ${pathSummary.waypointCount} waypoint(s).` : ""}`}>
-      {!isTerminal && <Clock className="h-3.5 w-3.5 text-primary" />}
-      <Badge tone={progress.tone}>{progress.label}</Badge>
-      <span className="text-muted-foreground">{status}</span>
-      {startedAt && !isTerminal && <span className="text-muted-foreground">{formatDuration(elapsedSeconds)}</span>}
+    <div
+      role="separator"
+      aria-label="Resize map and control pane"
+      aria-orientation="vertical"
+      aria-valuemin={Math.round(minWidth)}
+      aria-valuemax={Math.round(getMaxWidth())}
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      className={`group relative z-[500] flex w-2 shrink-0 touch-none cursor-col-resize items-center justify-center border-x border-border outline-none transition-colors hover:bg-primary/10 focus:bg-primary/10 focus:ring-2 focus:ring-inset focus:ring-ring ${dragging ? "bg-primary/15" : "bg-background"}`}
+      title="Drag to resize. Double-click to reset."
+      onPointerDown={beginResize}
+      onKeyDown={resizeWithKeyboard}
+      onDoubleClick={() => onResize(clampWidth(defaultWidth))}
+    >
+      <span className={`flex h-12 w-3 items-center justify-center rounded-full border shadow-sm transition-colors ${dragging ? "border-primary bg-primary text-primary-foreground" : "border-border bg-panel text-muted-foreground group-hover:border-primary group-hover:text-primary"}`}>
+        <GripVertical className="h-3.5 w-3.5" />
+      </span>
     </div>
   );
 }
 
-function plannerProgress(status: string, plannerStatus: string | undefined, hasPath: boolean, busyCommand?: "init" | "approve" | "start", pathStatus?: string) {
-  if (busyCommand === "init") return { tone: "warn" as const, label: "sending", message: "Sending mission_config to the adapter and old REST bridge." };
-  if (status === "COMPLETED") return { tone: "ok" as const, label: "completed", message: "Legacy mission feedback reports completion." };
-  if (["PLANNED_FAILED", "FAILED"].includes(status) || plannerStatus === "failed") return { tone: "error" as const, label: "failed", message: "Legacy feedback reports planning failure. Open Diagnostics / Legacy Trace for raw ROS state." };
-  if (hasPath) return { tone: "ok" as const, label: "path received", message: "A planned path has been received from legacy mission feedback." };
-  if (pathStatus === "missing" && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status)) return { tone: "warn" as const, label: "no path", message: "Legacy mission feedback says planned, but it contains no waypoint Tasks. The planner probably could not resolve the objective." };
-  if (["PLANNED", "PLANNED_ALTERNATIVE"].includes(status)) return { tone: "ok" as const, label: "planned", message: "Legacy mission feedback says planning completed. Waiting for normalized path data if none is visible yet." };
-  if (status === "STARTED") return { tone: "ok" as const, label: "started", message: "Mission was started. Waiting for edge/autonomy feedback to move the UI marker." };
-  if (status === "ACCEPTED") return { tone: "ok" as const, label: "accepted", message: "Plan was approved. Click Start to request execution." };
-  if (status === "NONE") return { tone: "warn" as const, label: "planning", message: "Old REST accepted Init. Waiting for /multi_robot/mission_feedback from the legacy planner chain." };
-  if (status === "INIT_REQUEST_SENT") return { tone: "warn" as const, label: "init sent", message: "The UI has sent Init; waiting for adapter/REST acknowledgement." };
-  return { tone: "default" as const, label: "idle", message: "Load a mission and click Init to begin the legacy planning chain." };
+type RuntimeTone = "default" | "ok" | "warn" | "error";
+
+type RuntimeSignal = {
+  label: string;
+  value: string;
+  detail: string;
+  tone: RuntimeTone;
+  icon: ReactNode;
+};
+
+function MissionRuntimeStatus({
+  mission,
+  missionState,
+  plannerState,
+  agentTelemetry,
+  busyCommand,
+  initRequestedAt,
+  nowMs,
+}: {
+  mission?: MissionConfig;
+  missionState?: MissionState;
+  plannerState?: PlannerUpdateEvent;
+  agentTelemetry: Record<string, AgentUpdateEvent>;
+  busyCommand?: "init" | "approve" | "start";
+  initRequestedAt?: number;
+  nowMs: number;
+}) {
+  const missionSignal = missionRuntimeSignal(missionState, busyCommand);
+  const plannerSignal = plannerRuntimeSignal(mission?.mission_id ?? missionState?.mission_id, missionState, plannerState);
+  const routeSignal = routeRuntimeSignal(mission?.mission_id ?? missionState?.mission_id, missionState, plannerState);
+  const executionSignal = executionRuntimeSignal(mission, missionState, agentTelemetry);
+  const signals = [missionSignal, plannerSignal, routeSignal, executionSignal];
+  const startedAt = missionState?.initialized_at ? Date.parse(missionState.initialized_at) : initRequestedAt;
+  const elapsedSeconds = startedAt ? Math.max(0, Math.floor((nowMs - startedAt) / 1000)) : 0;
+  const status = missionState ? missionStatusLabel(missionState) : "DRAFT";
+  const isTerminal = ["COMPLETED", "FAILED", "PLANNED_FAILED", "STOPPED", "DELETED"].includes(status);
+  const issue = missionIssueSnapshot(missionState);
+  const headline = missionRuntimeHeadline(status, routeSignal.value, busyCommand);
+
+  return (
+    <div className="rounded-md border border-border bg-panel p-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <ListChecks className="h-4 w-4 shrink-0 text-primary" />
+        <span className="shrink-0 text-xs font-semibold">Runtime</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={headline}>{headline}</span>
+        {startedAt && !isTerminal && (
+          <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title="Time since initialization was requested">
+            <Clock className="h-3.5 w-3.5" />
+            {formatDuration(elapsedSeconds)}
+          </div>
+        )}
+      </div>
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
+        {signals.map((signal) => <RuntimeSignalChip key={signal.label} signal={signal} />)}
+      </div>
+      {issue && (
+        <div className={`mt-1.5 flex items-start gap-2 rounded-md border px-2 py-1.5 text-[11px] ${issue.tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="min-w-0"><span className="font-medium">{issue.label}:</span> {issue.detail}</div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function plannerPathSummary(plannerState?: PlannerUpdateEvent) {
-  if (plannerState?.path_summary) {
-    return { pathCount: plannerState.path_summary.path_count, waypointCount: plannerState.path_summary.waypoint_count };
+function RuntimeSignalChip({ signal }: { signal: RuntimeSignal }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-background px-1.5 py-1" title={`${signal.label}: ${signal.value}. ${signal.detail}`}>
+      <div className="flex min-w-0 items-center justify-center gap-1 text-muted-foreground">
+        <span className="shrink-0">{signal.icon}</span>
+        <span className="truncate text-[10px] font-medium">{signal.label}</span>
+      </div>
+      <Badge tone={signal.tone} className="w-full justify-center truncate whitespace-nowrap px-1">{signal.value}</Badge>
+    </div>
+  );
+}
+
+function missionRuntimeSignal(state?: MissionState, busyCommand?: "init" | "approve" | "start"): RuntimeSignal {
+  if (!state) {
+    return {
+      label: "Mission",
+      value: busyCommand === "init" ? "Submitting" : "Draft",
+      detail: busyCommand === "init" ? "Sending INIT through the adapter and legacy REST bridge." : "The mission exists only in the UI and has not been initialized.",
+      tone: busyCommand === "init" ? "warn" : "default",
+      icon: <ShieldCheck className="h-3.5 w-3.5" />,
+    };
   }
-  if (!plannerState?.paths) return undefined;
-  const paths = Object.values(plannerState.paths);
-  return { pathCount: paths.length, waypointCount: paths.reduce((sum, path) => sum + path.length, 0) };
+  const status = missionStatusLabel(state);
+  const confirmed = state.status_source === "mission_feedback" || Boolean(state.feedback);
+  const detail = confirmed
+    ? "Confirmed by legacy mission feedback."
+    : state.status_source === "adapter_acknowledgement"
+      ? "Command acknowledged by the adapter; mission feedback may still follow."
+      : "Reported by the adapter mission runtime.";
+  const tone: RuntimeTone = ["PLANNED_FAILED", "FAILED"].includes(status)
+    ? "error"
+    : ["NONE", "PAUSED", "PLANNED_ALTERNATIVE"].includes(status)
+      ? "warn"
+      : ["PLANNED", "ACCEPTED", "STARTED", "COMPLETED"].includes(status)
+        ? "ok"
+        : "default";
+  return { label: "Mission", value: humanizeEnum(status), detail, tone, icon: <ShieldCheck className="h-3.5 w-3.5" /> };
+}
+
+function plannerRuntimeSignal(missionId: string | undefined, state?: MissionState, plannerState?: PlannerUpdateEvent): RuntimeSignal {
+  const plannerId = plannerRuntimeStateId(missionId, state, plannerState);
+  const values: Record<number, Omit<RuntimeSignal, "label" | "icon">> = {
+    0: { value: "Initialized", detail: "Planner instance exists and is idle.", tone: "default" },
+    1: { value: "Calculating", detail: "The planner is computing a plan.", tone: "warn" },
+    2: { value: "Ready", detail: "Planner cache is ready; route receipt is verified separately.", tone: "ok" },
+    3: { value: "Disconnected", detail: "Mission manager reports that the planner is disconnected.", tone: "error" },
+    4: { value: "Failed", detail: "The planner reported a planning failure.", tone: "error" },
+  };
+  const fallback = state?.planner_status;
+  const snapshot = plannerId !== undefined
+    ? values[plannerId] ?? { value: `Unknown (${plannerId})`, detail: "Unrecognized planner state value.", tone: "warn" as const }
+    : fallback === "failed"
+      ? { value: "Failed", detail: "Failure was inferred from mission feedback; no raw planner state is available.", tone: "error" as const }
+      : fallback === "planning"
+        ? { value: "Calculating", detail: "Planning is in progress; no raw planner state is available.", tone: "warn" as const }
+        : { value: "Not observed", detail: "No planner instance state has been received for this mission.", tone: "default" as const };
+  return { label: "Planner", icon: <Workflow className="h-3.5 w-3.5" />, ...snapshot };
+}
+
+function routeRuntimeSignal(missionId: string | undefined, state?: MissionState, plannerState?: PlannerUpdateEvent): RuntimeSignal {
+  const summary = missionPathSummary(missionId, state, plannerState);
+  if (summary) {
+    return {
+      label: "Route",
+      value: `${summary.pathCount} path${summary.pathCount === 1 ? "" : "s"} · ${summary.waypointCount} wp`,
+      detail: "Non-empty waypoint tasks were received and can be rendered on the map.",
+      tone: "ok",
+      icon: <Route className="h-3.5 w-3.5" />,
+    };
+  }
+  const status = state ? missionStatusLabel(state) : "DRAFT";
+  if (state?.path_status === "missing" || ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status)) {
+    return { label: "Route", value: "Missing", detail: "Mission says planned, but mission feedback contains no waypoint tasks.", tone: "error", icon: <Route className="h-3.5 w-3.5" /> };
+  }
+  if (plannerRuntimeStateId(missionId, state, plannerState) === 2) {
+    return { label: "Route", value: "Awaiting feedback", detail: "Planner is ready, but no waypoint path has reached mission feedback yet.", tone: "warn", icon: <Route className="h-3.5 w-3.5" /> };
+  }
+  return {
+    label: "Route",
+    value: state ? "Pending" : "Not requested",
+    detail: state ? "Waiting for a non-empty planned path." : "Initialize the mission to request planning.",
+    tone: state ? "warn" : "default",
+    icon: <Route className="h-3.5 w-3.5" />,
+  };
+}
+
+function executionRuntimeSignal(mission: MissionConfig | undefined, state: MissionState | undefined, telemetry: Record<string, AgentUpdateEvent>): RuntimeSignal {
+  const missionStatus = state ? missionStatusLabel(state) : "DRAFT";
+  const agentUpdates = (mission?.vehicles ?? []).map((agentId) => telemetry[normalizeUuidish(agentId)]).filter((update): update is AgentUpdateEvent => Boolean(update));
+  const tasks = agentUpdates.flatMap((update) => update.tasks ?? []);
+  const taskStates = tasks.map((task) => taskStateId(task.task_state)).filter((value): value is number => value !== undefined);
+  const completed = taskStates.filter((value) => value === 3).length;
+  const detailSuffix = tasks.length ? `${completed}/${tasks.length} task${tasks.length === 1 ? "" : "s"} completed.` : `${agentUpdates.length}/${mission?.vehicles.length ?? 0} vehicle feedback streams observed.`;
+  if (missionStatus === "COMPLETED" || (taskStates.length > 0 && completed === taskStates.length)) {
+    return { label: "Execution", value: "Completed", detail: detailSuffix, tone: "ok", icon: <Play className="h-3.5 w-3.5" /> };
+  }
+  if (taskStates.includes(4)) return { label: "Execution", value: "Aborted", detail: detailSuffix, tone: "error", icon: <Play className="h-3.5 w-3.5" /> };
+  if (taskStates.includes(1)) return { label: "Execution", value: "Executing", detail: detailSuffix, tone: "ok", icon: <Play className="h-3.5 w-3.5" /> };
+  if (taskStates.includes(2)) return { label: "Execution", value: "Paused", detail: detailSuffix, tone: "warn", icon: <Play className="h-3.5 w-3.5" /> };
+  if (taskStates.length > 0 && taskStates.every((value) => value === 0)) return { label: "Execution", value: "Staged", detail: "Tasks are dispatched in STOPPED state and await START.", tone: "ok", icon: <Play className="h-3.5 w-3.5" /> };
+  if (taskStates.length > 0 && taskStates.every((value) => value === 5)) return { label: "Execution", value: "Deleted", detail: detailSuffix, tone: "default", icon: <Play className="h-3.5 w-3.5" /> };
+  if (missionStatus === "STARTED") return { label: "Execution", value: "Awaiting tasks", detail: "START was acknowledged, but edge task feedback has not reported an executing task.", tone: "warn", icon: <Play className="h-3.5 w-3.5" /> };
+  if (missionStatus === "ACCEPTED") return { label: "Execution", value: "Ready to start", detail: "Mission is approved; dispatched task feedback has not been observed yet.", tone: "ok", icon: <Play className="h-3.5 w-3.5" /> };
+  return { label: "Execution", value: "Not started", detail: "Execution begins only after the mission is approved and START is requested.", tone: "default", icon: <Play className="h-3.5 w-3.5" /> };
+}
+
+function plannerRuntimeStateId(missionId: string | undefined, state?: MissionState, plannerState?: PlannerUpdateEvent) {
+  const direct = numericEnumValue(state?.planner_state);
+  if (direct !== undefined) return direct;
+  if (!plannerState?.state || typeof plannerState.state !== "object") return undefined;
+  const planners = (plannerState.state as { planners?: unknown }).planners;
+  if (!Array.isArray(planners)) return undefined;
+  const planner = planners.find((item) => {
+    if (!item || typeof item !== "object") return false;
+    const candidateId = (item as { mission_id?: unknown }).mission_id;
+    return typeof candidateId === "string" && (!missionId || normalizeUuidish(candidateId) === normalizeUuidish(missionId));
+  });
+  return planner && typeof planner === "object" ? numericEnumValue((planner as { state?: unknown }).state) : undefined;
+}
+
+function missionPathSummary(missionId: string | undefined, state?: MissionState, plannerState?: PlannerUpdateEvent) {
+  const statePaths = state?.planned_paths;
+  const plannerMatches = !plannerState?.mission_id || !missionId || normalizeUuidish(plannerState.mission_id) === normalizeUuidish(missionId);
+  const paths = hasPlannedPaths(statePaths) ? statePaths : plannerMatches ? plannerState?.paths : undefined;
+  if (!paths) return undefined;
+  const usablePaths = Object.values(paths).filter((path) => Array.isArray(path) && path.length > 0);
+  if (!usablePaths.length) return undefined;
+  return { pathCount: usablePaths.length, waypointCount: usablePaths.reduce((sum, path) => sum + path.length, 0) };
+}
+
+function numericEnumValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+function taskStateId(value: unknown) {
+  const state = numericEnumValue(value);
+  return state !== undefined && state >= 0 && state <= 5 ? state : undefined;
+}
+
+function humanizeEnum(value: string) {
+  return value.toLowerCase().split("_").map((word) => word ? word[0].toUpperCase() + word.slice(1) : word).join(" ");
+}
+
+function missionRuntimeHeadline(status: string, routeStatus: string, busyCommand?: "init" | "approve" | "start") {
+  if (busyCommand === "init") return "Submitting the mission to the planning chain.";
+  if (busyCommand === "approve") return "Requesting approval of the planned mission.";
+  if (busyCommand === "start") return "Requesting task execution.";
+  if (["PLANNED_FAILED", "FAILED"].includes(status)) return "The mission requires attention. Open Diagnostics for raw ROS evidence.";
+  if (status === "COMPLETED") return "Mission and task execution completed.";
+  if (status === "STARTED") return "Mission execution is in progress.";
+  if (status === "ACCEPTED") return "The mission is approved and ready to start.";
+  if (["PLANNED", "PLANNED_ALTERNATIVE"].includes(status) && routeStatus === "Missing") return "Planning status and route evidence disagree.";
+  if (["PLANNED", "PLANNED_ALTERNATIVE"].includes(status)) return "A plan is available for review and approval.";
+  if (status === "NONE") return "Initialization was acknowledged; waiting for planning feedback.";
+  return "Draft mission has not entered the runtime lifecycle.";
+}
+
+const missionIssueDetails: Record<number, { label: string; detail: string }> = {
+  10: { label: "Mission ID reused", detail: "The existing mission configuration was overwritten." },
+  11: { label: "Vehicle unavailable", detail: "Planning continued with a reduced vehicle set." },
+  12: { label: "Unknown configuration data", detail: "Unknown mission keys were ignored." },
+  13: { label: "Status unchanged", detail: "The requested mission transition was invalid and ignored." },
+  14: { label: "Planner disconnected", detail: "The planner could not be reached; mission status did not change." },
+  15: { label: "Edge disconnected", detail: "At least one edge module could not be reached." },
+  16: { label: "Autonomy disconnected", detail: "At least one autonomy module could not be reached." },
+  20: { label: "Configuration parse failed", detail: "The mission configuration could not be parsed." },
+  21: { label: "Configuration incomplete", detail: "The mission lacks data required for planning." },
+  22: { label: "Mission compromised", detail: "The mission cannot continue." },
+  23: { label: "Planner connection failure", detail: "Planner disconnection caused mission failure." },
+  24: { label: "Edge connection failure", detail: "Edge disconnection caused mission failure." },
+  25: { label: "Autonomy connection failure", detail: "Autonomy disconnection caused mission failure." },
+  30: { label: "Vehicle mismatch", detail: "The requested vehicle set could not fully satisfy the mission." },
+  31: { label: "Coverage reduced", detail: "The plan could not provide the requested coverage." },
+  32: { label: "Schedule compromised", detail: "Requested mission dates could not be fully satisfied." },
+  40: { label: "No planning solution", detail: "No usable solution was found; adjust the mission and initialize again." },
+  41: { label: "Planning failed", detail: "The planner process failed." },
+};
+
+function missionIssueSnapshot(state?: MissionState) {
+  const issue = numericEnumValue(state?.issue ?? state?.feedback?.issue ?? state?.feedback?.Issue);
+  if (issue === undefined || issue === 0) return undefined;
+  const details = missionIssueDetails[issue] ?? { label: state?.issue_name ? humanizeEnum(state.issue_name) : `Mission issue ${issue}`, detail: "The runtime reported an unrecognized mission issue code." };
+  return { ...details, tone: issue >= 20 && issue < 30 || issue >= 40 ? "error" as const : "warn" as const };
 }
 
 function hasPlannedPaths(paths?: Record<string, [number, number][]>) {
@@ -1426,6 +1928,39 @@ function MissionEditor({
   onMissionTextChange: (value: string) => void;
   onClear: () => void;
 }) {
+  const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  const canFormatJson = useMemo(() => {
+    try {
+      JSON.parse(missionText);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [missionText]);
+
+  function formatJson() {
+    if (!canFormatJson) return;
+    onMissionTextChange(JSON.stringify(JSON.parse(missionText), null, 2));
+  }
+
+  function handleJsonKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const edit = editJsonForKey(missionText, event.currentTarget.selectionStart, event.currentTarget.selectionEnd, event.key, event.shiftKey);
+    if (!edit) return;
+    event.preventDefault();
+    const textarea = event.currentTarget;
+    onMissionTextChange(edit.value);
+    setCursor(jsonCursorPosition(edit.value, edit.selectionStart));
+    window.requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+    });
+  }
+
+  function updateCursor(textarea: HTMLTextAreaElement) {
+    setCursor(jsonCursorPosition(missionText, textarea.selectionStart));
+  }
+
   return (
     <div className="space-y-3">
       {mission && <MissionSummaryCard mission={mission} state={missionState} />}
@@ -1434,9 +1969,28 @@ function MissionEditor({
           <SectionTitle icon={<FileJson className="h-4 w-4" />} label="Full Mission JSON" />
           {jsonFocusLabel && <Badge tone="ok">updated {jsonFocusLabel}</Badge>}
         </div>
-        <Textarea ref={missionJsonRef} className="h-[360px] resize-none transition-shadow" value={missionText} onChange={(event) => onMissionTextChange(event.target.value)} spellCheck={false} />
+        <Textarea
+          ref={missionJsonRef}
+          className="h-[360px] resize-none rounded-b-none font-mono text-xs transition-shadow"
+          value={missionText}
+          onChange={(event) => onMissionTextChange(event.target.value)}
+          onKeyDown={handleJsonKeyDown}
+          onClick={(event) => updateCursor(event.currentTarget)}
+          onKeyUp={(event) => updateCursor(event.currentTarget)}
+          onSelect={(event) => updateCursor(event.currentTarget)}
+          aria-invalid={validation.length > 0}
+          wrap="off"
+          spellCheck={false}
+        />
+        <div className="flex items-center justify-between rounded-b-md border border-t-0 border-border bg-panel px-2 py-1 font-mono text-[10px] text-muted-foreground">
+          <span>JSON · Spaces: 2</span>
+          <span>Ln {cursor.line}, Col {cursor.column}</span>
+        </div>
       </div>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={formatJson} disabled={!canFormatJson}>
+          Format JSON
+        </Button>
         <Button size="sm" variant="ghost" onClick={onClear}>
           Clear Mission
         </Button>

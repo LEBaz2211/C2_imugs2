@@ -1,5 +1,7 @@
 # `/rosbridge_websocket`
 
+> **Documentation label: REFERENCE** — frozen comparison-runtime gateway evidence.
+
 ## Purpose
 
 `/rosbridge_websocket` exposes the ROS graph over WebSocket on `ws://localhost:9090`. In this project it is a diagnostics and live-read gateway. The browser UI should still send mission commands through the FastAPI adapter and old REST bridge, not construct ROS mission messages directly.

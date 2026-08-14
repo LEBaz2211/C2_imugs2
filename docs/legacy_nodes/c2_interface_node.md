@@ -1,5 +1,7 @@
 # `/c2_interface_node`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/c2_interface_node` is the old fog-side ingress node for C2 messages. It subscribes to mission init/status/vehicle/environment topics and turns them into orchestrator actions.
@@ -122,4 +124,3 @@ result_status: 0
 - Interface logs go to `/multi_robot/swarm_log`, while most other centralized nodes use `/multi_robot/log`.
 - `vehicule_id_list` is misspelled in the legacy message and should be preserved for compatibility.
 - The orchestrator only sees `flag_new_mission` and `flag_vehicle_changes` when it polls `getC2InterfaceStatus()`.
-

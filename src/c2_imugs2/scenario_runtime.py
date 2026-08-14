@@ -24,9 +24,9 @@ from .legacy_map import load_legacy_geojson_map
 from .scenario_launch import _docker_request, launch_scenario
 
 
-PLANNER_CONTAINER = "c2-imugs2-planner"
-COORDINATION_CONTAINER = "c2-imugs2-centralized-coordination"
-DEFAULT_EDGE_CONTAINER = "c2-imugs2-edge-agent-sim-1"
+PLANNER_CONTAINER = "c2-imugs2-backend-planner"
+COORDINATION_CONTAINER = "c2-imugs2-backend-centralized-coordination"
+DEFAULT_EDGE_CONTAINER = "c2-imugs2-backend-edge-agent-sim-1"
 ACTIVE_STATE_FILE = "active_scenario.json"
 PLANNER_CONFIG_FILE = "active_planner.yaml"
 MAP_METADATA_COLLECTION = "_scenario_versions"
@@ -160,7 +160,7 @@ class ScenarioRuntimeManager:
         return value if isinstance(value, dict) else None
 
     def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
-        state = self.active()
+        state = self.validated_active()
         if not state or state.get("status") != "ready":
             detail = (state or {}).get("error") or "activate a scenario in the Scenario tab first"
             raise ScenarioNotReadyError(f"scenario runtime is not ready: {detail}")
@@ -171,11 +171,59 @@ class ScenarioRuntimeManager:
             raise ScenarioNotReadyError(f"mission vehicles are not part of the active scenario: {', '.join(missing)}")
         return state
 
+    def validated_active(self) -> dict[str, Any] | None:
+        """Return active state after checking that its external reality still exists."""
+        state = self.active()
+        if not state or state.get("status") not in {"ready", "stale"}:
+            return state
+        issues = self._active_runtime_issues(state)
+        if not issues and state.get("status") == "stale":
+            planner_issue = self._planner_readiness_issue(state)
+            if planner_issue:
+                issues.append(planner_issue)
+        if not issues and state.get("status") == "ready":
+            return state
+        if not issues:
+            recovered = deepcopy(state)
+            recovered.update(
+                {
+                    "status": "ready",
+                    "ready": True,
+                    "recovered_at": _utc_now(),
+                }
+            )
+            recovered.pop("error", None)
+            recovered.pop("stale_at", None)
+            self._save_state(recovered)
+            try:
+                self._mark_active_in_mongo(recovered)
+            except RuntimeError:
+                pass
+            return recovered
+
+        if state.get("status") == "stale" and state.get("error") == "active scenario runtime is stale: " + "; ".join(issues):
+            return state
+        stale = deepcopy(state)
+        stale.update(
+            {
+                "status": "stale",
+                "ready": False,
+                "error": "active scenario runtime is stale: " + "; ".join(issues),
+                "stale_at": _utc_now(),
+            }
+        )
+        self._save_state(stale)
+        try:
+            self._mark_active_in_mongo(stale)
+        except RuntimeError:
+            pass
+        return stale
+
     def list_scenarios(self) -> list[dict[str, Any]]:
         """Return the latest immutable version of every activated scenario."""
         if MongoClient is None:
             raise RuntimeError("pymongo is required for the scenario catalog")
-        active = self.active() or {}
+        active = self.validated_active() or {}
         try:
             with MongoClient(self.mongodb_url, serverSelectionTimeoutMS=3000) as client:
                 client.admin.command("ping")
@@ -190,8 +238,7 @@ class ScenarioRuntimeManager:
                         continue
                     seen.add(scenario_id)
                     is_active = (
-                        active.get("status") == "ready"
-                        and active.get("scenario_id") == scenario_id
+                        active.get("scenario_id") == scenario_id
                         and active.get("map_collection") == collection_name
                     )
                     definition = {**version, **(active if is_active else {})}
@@ -234,7 +281,7 @@ class ScenarioRuntimeManager:
                             "feature_count": int(version.get("feature_count") or 0),
                             "road_count": int(version.get("road_count") or 0),
                             "runtime_active": is_active,
-                            "runtime_status": "ready" if is_active else "saved",
+                            "runtime_status": str(active.get("status") or "unknown") if is_active else "saved",
                             "created_at": str(version.get("created_at") or ""),
                             "updated_at": str((active if is_active else version).get("verified_at") or version.get("created_at") or ""),
                         }
@@ -369,7 +416,7 @@ class ScenarioRuntimeManager:
             raise RuntimeError(f"could not create immutable MapDB snapshot: {exc}") from exc
 
     def _write_planner_config(self, collection: str, activation_token: str) -> None:
-        source = self.repo_root / "legacy_ros" / "config" / "config_planner.yaml"
+        source = self.repo_root / "backend" / "config" / "config_planner.yaml"
         text = source.read_text(encoding="utf-8")
         text, replacements = re.subn(
             r'(?m)^(\s*map_feature_collection:\s*)[^#\n]+',
@@ -392,7 +439,7 @@ class ScenarioRuntimeManager:
     def _replace_previous_runtime(self, previous: dict[str, Any] | None) -> None:
         for container in previous.get("containers", []) if previous else []:
             name = str(container.get("container_name") or "")
-            if name.startswith("c2-imugs2-scenario-"):
+            if name.startswith(("c2-imugs2-backend-scenario-", "c2-imugs2-scenario-")):
                 _docker_request(self.docker_socket, "DELETE", f"/containers/{name}?force=true")
         _docker_request(self.docker_socket, "POST", f"/containers/{DEFAULT_EDGE_CONTAINER}/stop?t=10")
 
@@ -472,6 +519,93 @@ class ScenarioRuntimeManager:
             return False
         status, payload = _docker_request(self.docker_socket, "GET", f"/containers/{name}/json")
         return status == 200 and bool((payload.get("State") or {}).get("Running"))
+
+    def _active_runtime_issues(self, state: dict[str, Any]) -> list[str]:
+        issues: list[str] = []
+        collection_name = str(state.get("map_collection") or "")
+        expected_count = int(state.get("feature_count") or 0)
+        expected_agents = {
+            _normalize_agent_id(str(agent.get("agent_id") or ""))
+            for agent in state.get("agents") or []
+            if agent.get("agent_id")
+        }
+        registered_agents: set[str] = set()
+        if not collection_name:
+            issues.append("active MapDB collection is not recorded")
+        elif MongoClient is None:
+            issues.append("MongoDB validation is unavailable")
+        else:
+            try:
+                with MongoClient(self.mongodb_url, serverSelectionTimeoutMS=2000) as client:
+                    client.admin.command("ping")
+                    database = client["MapDB"]
+                    if collection_name not in database.list_collection_names():
+                        issues.append(f"MapDB.{collection_name} is missing")
+                    else:
+                        actual_count = database[collection_name].count_documents({})
+                        if actual_count == 0:
+                            issues.append(f"MapDB.{collection_name} is empty")
+                        elif expected_count and actual_count != expected_count:
+                            issues.append(
+                                f"MapDB.{collection_name} has {actual_count} features; expected {expected_count}"
+                            )
+                    registered_agents = {
+                        _normalize_agent_id(str(item.get("agent_id") or ""))
+                        for item in client["RuntimeDB"]["ConnectedVehicles"].find({}, {"agent_id": 1})
+                    }
+            except PyMongoError as exc:
+                issues.append(f"MongoDB readiness check failed: {exc}")
+
+        try:
+            if not self._container_running(COORDINATION_CONTAINER):
+                issues.append(f"container {COORDINATION_CONTAINER} is not running")
+            if not self._container_running(PLANNER_CONTAINER):
+                issues.append(f"container {PLANNER_CONTAINER} is not running")
+            robot_containers = state.get("containers") or []
+            if expected_agents and not robot_containers:
+                issues.append("no scenario robot containers are recorded")
+            for container in robot_containers:
+                name = str(container.get("container_name") or "")
+                if not self._container_running(name):
+                    issues.append(f"scenario robot container {name or '<unnamed>'} is not running")
+        except OSError as exc:
+            issues.append(f"Docker readiness check failed: {exc}")
+
+        missing_agents = sorted(expected_agents - registered_agents)
+        if missing_agents:
+            issues.append(f"robots are not registered: {', '.join(missing_agents)}")
+
+        planner_config = self.repo_root / "data" / "runtime" / PLANNER_CONFIG_FILE
+        try:
+            config_text = planner_config.read_text(encoding="utf-8")
+        except OSError:
+            issues.append("active planner configuration is missing")
+        else:
+            activation_token = str(state.get("activation_token") or "")
+            if collection_name and f'map_feature_collection: "{collection_name}"' not in config_text:
+                issues.append("active planner configuration targets a different MapDB collection")
+            if activation_token and f'scenario_activation_token: "{activation_token}"' not in config_text:
+                issues.append("active planner configuration has a different activation token")
+        return issues
+
+    def _planner_readiness_issue(self, state: dict[str, Any]) -> str | None:
+        """Require the original exact planner proof before recovering stale state."""
+        collection_name = str(state.get("map_collection") or "")
+        activation_token = str(state.get("activation_token") or "")
+        if not collection_name or not activation_token:
+            return "planner collection or activation token is not recorded"
+        marker = f"MAP IS LOADED collection=MapDB.{collection_name} activation={activation_token}"
+        try:
+            status, logs = _docker_request(
+                self.docker_socket,
+                "GET",
+                f"/containers/{PLANNER_CONTAINER}/logs?stdout=1&stderr=1&tail=1000",
+            )
+        except OSError as exc:
+            return f"planner readiness check failed: {exc}"
+        if status != 200 or marker not in str(logs):
+            return "planner has not reported the active MapDB collection and activation token"
+        return None
 
     def _mark_active_in_mongo(self, state: dict[str, Any]) -> None:
         if MongoClient is None:

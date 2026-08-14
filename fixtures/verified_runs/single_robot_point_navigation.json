@@ -1,0 +1,1228 @@
+{
+  "schema_version": 1,
+  "id": "single_robot_point_navigation",
+  "title": "One robot navigating to one Point",
+  "verification": {
+    "status": "runtime_verified",
+    "source_tree": "legacy_ros",
+    "stack": "docker-compose.legacy-ros.yml",
+    "summary": "The checked-in run reached planner state 2, mission PLANNED(1), and delivered a 10-waypoint route to Themis Fr.",
+    "evidence_refs": [
+      {
+        "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+        "line": 11
+      }
+    ]
+  },
+  "facts": {
+    "mission_id": "44444444-5555-4666-8777-888888888888",
+    "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+    "agent_name": "Themis Fr",
+    "topic_prefix": "Themis_Fr",
+    "start_lon_lat": [
+      4.392588,
+      50.844317
+    ],
+    "destination_lon_lat": [
+      4.39167,
+      50.84417
+    ],
+    "behavior": 0,
+    "requested_speed_mps": 1.3,
+    "observed_waypoint_count": 10,
+    "recorded_route_excerpt_lon_lat": [
+      [
+        4.3925979,
+        50.8443434
+      ],
+      [
+        4.3923021488298595,
+        50.8442681286928
+      ],
+      [
+        4.391670213379427,
+        50.84417059346137
+      ]
+    ]
+  },
+  "examples": [
+    {
+      "id": "canonical_agent",
+      "title": "Themis agent returned to the UI adapter",
+      "phase": "robot discovery",
+      "sample_kind": "runtime_observed",
+      "targets": [
+        "http:GET /api/agents"
+      ],
+      "payload": {
+        "agents": [
+          {
+            "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+            "name": "Themis Fr",
+            "vehicle_type": "UGV",
+            "current_location": [
+              4.392588,
+              50.844317
+            ],
+            "constraints": {
+              "max_speed": 4.5,
+              "max_acceleration": 8.0,
+              "max_weight": 16.0,
+              "max_tilt_angle": 1.8
+            },
+            "status": "1"
+          }
+        ]
+      },
+      "notes": [
+        "Coordinates are [longitude, latitude]."
+      ],
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/config/config_autonomy.yaml",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "id": "agent_profile",
+      "title": "Canonical profile for the participating robot",
+      "phase": "robot discovery",
+      "sample_kind": "runtime_observed",
+      "targets": [
+        "schema:agent_profile.schema.json"
+      ],
+      "payload": {
+        "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+        "name": "Themis Fr",
+        "vehicle_type": "UGV",
+        "status": "1",
+        "current_location": [
+          4.392588,
+          50.844317
+        ],
+        "constraints": {
+          "max_speed": 4.5,
+          "max_acceleration": 8.0,
+          "max_weight": 16.0,
+          "max_tilt_angle": 1.8
+        }
+      },
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/config/config_autonomy.yaml",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "id": "edge_agent_profile",
+      "title": "Edge publishes the participating robot profile",
+      "phase": "robot discovery",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros:topic:/multi_robot/edge/agent_profile"
+      ],
+      "payload": {
+        "data": "{\"agent_id\":\"f9992bb3-9871-451f-90a0-9207eb9fe6c5\",\"vehicle_constraints\":{\"max_speed\":{\"linear\":{\"x\":4.5}},\"max_acceleration\":{\"linear\":{\"x\":8.0}}},\"vehicle_info\":{\"fuel_status_pct\":85.0,\"battery_status_pct\":90.0}}"
+      },
+      "notes": [
+        "The JSON string is abridged; the runtime profile also contains angular constraints, dimensions, endurance, and sensors."
+      ],
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/edge/agent-tasks-supervisor/ros2ws/src/agent_tasks_supervisor/src/agent_tasks_supervisor_node.cpp",
+          "line": 250
+        },
+        {
+          "path": "legacy_ros/config/config_autonomy.yaml",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "id": "autonomy_vehicle_profile",
+      "title": "Autonomy publishes the Themis vehicle profile",
+      "phase": "robot discovery",
+      "sample_kind": "runtime_observed",
+      "targets": [
+        "ros_type:autonomy_msgs/msg/VehicleProfile",
+        "ros_type:autonomy_msgs/msg/VehicleConstraints",
+        "ros_type:autonomy_msgs/msg/VehicleInfo",
+        "ros_type:autonomy_msgs/msg/SensorProperties"
+      ],
+      "payload": {
+        "active_autonomy_mode": 1,
+        "vehicle_constraints": {
+          "max_speed": {
+            "linear": {
+              "x": 4.5,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "angular": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          },
+          "max_acceleration": {
+            "linear": {
+              "x": 8.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "angular": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          },
+          "max_weight": 16.0,
+          "max_tilt_angle": 1.8
+        },
+        "vehicle_info": {
+          "vehicle_type": "ugv",
+          "fuel_status_pct": 85,
+          "fuel_hours": 1.5,
+          "battery_status_pct": 90,
+          "battery_hours": 3.0,
+          "sensor_list": [
+            {
+              "type": 1,
+              "status": 1,
+              "field_of_view": [
+                360.0,
+                3.14
+              ]
+            },
+            {
+              "type": 2,
+              "status": 1,
+              "field_of_view": [
+                120.0,
+                2.0
+              ]
+            },
+            {
+              "type": 3,
+              "status": 1,
+              "field_of_view": [
+                180.0,
+                3.14
+              ]
+            }
+          ],
+          "vehicle_dimensions": [
+            0.9,
+            0.6,
+            0.55
+          ]
+        }
+      },
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/config/config_autonomy.yaml",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "id": "planner_agent",
+      "title": "Fleet forwards Themis and its live pose to Planner",
+      "phase": "robot discovery",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros:topic:/multi_robot/planner/agent",
+        "ros_type:centralized_msgs/msg/Agent"
+      ],
+      "payload": {
+        "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+        "agent_profile": "<JSON profile published by Edge>",
+        "odometry": {
+          "pose": {
+            "pose": {
+              "position": {
+                "x": 4.392588,
+                "y": 50.844317,
+                "z": 0.0
+              }
+            }
+          }
+        }
+      },
+      "notes": [
+        "In this global-coordinate simulation, odometry x is longitude and y is latitude."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 304
+        }
+      ]
+    },
+    {
+      "id": "get_agents",
+      "title": "Mission manager requests the configured Themis agent",
+      "phase": "planning",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:service:multi_robot/fleet_manager/get_agents",
+        "ros_type:centralized_msgs/srv/GetAgents"
+      ],
+      "payload": {
+        "request": {
+          "agent_id_list": [
+            {
+              "uuid": [
+                249,
+                153,
+                43,
+                179,
+                152,
+                113,
+                69,
+                31,
+                144,
+                160,
+                146,
+                7,
+                235,
+                159,
+                230,
+                197
+              ]
+            }
+          ]
+        },
+        "response": {
+          "agents": [
+            {
+              "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+              "agent_profile": "<JSON profile published by Edge>",
+              "odometry": {
+                "pose": {
+                  "pose": {
+                    "position": {
+                      "x": 4.392588,
+                      "y": 50.844317,
+                      "z": 0.0
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "error_message": "ok"
+        }
+      },
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 452
+        }
+      ]
+    },
+    {
+      "id": "canonical_mission_config",
+      "title": "Canonical mission submitted to the adapter",
+      "phase": "INIT",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "http:POST /api/missions/init",
+        "schema:mission_config.schema.json"
+      ],
+      "payload": {
+        "mission_id": "44444444-5555-4666-8777-888888888888",
+        "behavior": 0,
+        "vehicles": [
+          "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
+        ],
+        "objective": {
+          "geometries": [
+            {
+              "geometry": {
+                "geometry_type": "Point",
+                "coordinates": [
+                  4.39167,
+                  50.84417
+                ]
+              }
+            }
+          ]
+        },
+        "transit": {
+          "optimization": {
+            "road_usage": 1.0
+          },
+          "desired_vehicle_constraints": {
+            "max_speed": 1.3
+          }
+        }
+      },
+      "notes": [
+        "The adapter uses canonical optimization; the legacy REST payload below translates it to optimalization."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 108
+        },
+        {
+          "path": "src/c2_imugs2/legacy_rest.py",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "approve_http",
+      "title": "Approve the planned mission",
+      "phase": "APPROVE",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "http:POST /api/missions/{mission_id}/approve"
+      ],
+      "payload": {
+        "path": "/api/missions/44444444-5555-4666-8777-888888888888/approve",
+        "body": {}
+      },
+      "notes": [
+        "Send only after mission feedback contains a non-empty path and status PLANNED(1)."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 154
+        }
+      ]
+    },
+    {
+      "id": "start_http",
+      "title": "Start the accepted mission",
+      "phase": "START",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "http:POST /api/missions/{mission_id}/start"
+      ],
+      "payload": {
+        "path": "/api/missions/44444444-5555-4666-8777-888888888888/start",
+        "body": {}
+      },
+      "notes": [
+        "Send after status ACCEPTED(4) and Edge confirms that the stopped task is installed."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 164
+        }
+      ]
+    },
+    {
+      "id": "init_mission_ros",
+      "title": "Mission initialization on ROS",
+      "phase": "INIT",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/mission_init_request",
+        "ros_type:c2_msgs/msg/InitMissionRequest",
+        "ros_type:c2_msgs/srv/InitMission"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_config": "{\"mission_id\":\"44444444-5555-4666-8777-888888888888\",\"behavior\":0,\"vehicles\":[\"f9992bb3-9871-451f-90a0-9207eb9fe6c5\"],\"objective\":{\"geometries\":[{\"geometry\":{\"geometry_type\":\"Point\",\"coordinates\":[4.39167,50.84417]}}]},\"transit\":{\"optimalization\":{\"road_usage\":1.0},\"desired_vehicle_constraints\":{\"max_speed\":1.3}}}"
+      },
+      "notes": [
+        "mission_config is a JSON-encoded string and uses the legacy key optimalization.",
+        "The UUID byte array decodes to 44444444-5555-4666-8777-888888888888."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 108
+        }
+      ]
+    },
+    {
+      "id": "approve_status_ros",
+      "title": "APPROVE status request",
+      "phase": "APPROVE",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/change_mission_status_request",
+        "ros_type:c2_msgs/msg/ChangeMissionStatusRequest",
+        "ros_type:c2_msgs/srv/ChangeMissionStatus",
+        "ros:service:multi_robot/fleet_manager/change_mission_status"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_request_status": 1
+      },
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 718
+        }
+      ]
+    },
+    {
+      "id": "start_status_ros",
+      "title": "START status request",
+      "phase": "START",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/change_mission_status_request",
+        "ros_type:c2_msgs/msg/ChangeMissionStatusRequest",
+        "ros_type:c2_msgs/srv/ChangeMissionStatus",
+        "ros:service:multi_robot/fleet_manager/change_mission_status"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_request_status": 2
+      },
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 796
+        }
+      ]
+    },
+    {
+      "id": "approve_status_response_ros",
+      "title": "Mission manager accepts the APPROVE transition",
+      "phase": "APPROVE",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/change_mission_status_response",
+        "ros_type:c2_msgs/msg/ChangeMissionStatusResponse",
+        "ros_type:c2_msgs/srv/ChangeMissionStatus"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_status": 4,
+        "error_message": ""
+      },
+      "notes": [
+        "Mission status 4 is ACCEPTED."
+      ],
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp",
+          "line": 876
+        }
+      ]
+    },
+    {
+      "id": "start_status_response_ros",
+      "title": "Mission manager accepts the START transition",
+      "phase": "START",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/change_mission_status_response",
+        "ros_type:c2_msgs/msg/ChangeMissionStatusResponse",
+        "ros_type:c2_msgs/srv/ChangeMissionStatus"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_status": 5,
+        "error_message": ""
+      },
+      "notes": [
+        "Mission status 5 is STARTED."
+      ],
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp",
+          "line": 876
+        }
+      ]
+    },
+    {
+      "id": "planner_create",
+      "title": "Create the planner for the mission",
+      "phase": "planning",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:service:/multi_robot/planner/create",
+        "ros_type:centralized_msgs/srv/CreatePlanner"
+      ],
+      "payload": {
+        "request": {
+          "id": "44444444-5555-4666-8777-888888888888",
+          "priority": 0,
+          "agents": [
+            {
+              "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+              "agent_profile": "<JSON vehicle profile>",
+              "odometry": {
+                "pose": {
+                  "pose": {
+                    "position": {
+                      "x": 4.392588,
+                      "y": 50.844317,
+                      "z": 0.0
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "config": "<legacy mission_config JSON string>"
+        },
+        "response": {
+          "id": "44444444-5555-4666-8777-888888888888",
+          "state": 0
+        }
+      },
+      "notes": [
+        "The verified run then published planner states 0, 1, and 2 asynchronously."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 475
+        }
+      ]
+    },
+    {
+      "id": "planner_state_ready",
+      "title": "Planner reports that the plan cache is ready",
+      "phase": "planning",
+      "sample_kind": "runtime_observed",
+      "targets": [
+        "ros:topic:/multi_robot/planner/state"
+      ],
+      "payload": {
+        "data": "{\"planners\":[{\"mission_id\":\"44444444-5555-4666-8777-888888888888\",\"state\":2}]}"
+      },
+      "notes": [
+        "State 2 was observed, but usable route evidence still comes from non-empty mission feedback waypoints."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "id": "task_plan_excerpt",
+      "title": "Observed 10-waypoint plan (recorded coordinate excerpt)",
+      "phase": "plan retrieval",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "schema:task_plan.schema.json"
+      ],
+      "payload": {
+        "mission_id": "44444444-5555-4666-8777-888888888888",
+        "tasks": {
+          "f9992bb3-9871-451f-90a0-9207eb9fe6c5": {
+            "task_id": "<generated-task-uuid>",
+            "primitives": [
+              {
+                "primitive_id": "<generated-primitive-uuid>",
+                "primitive_type": "waypoint",
+                "completion": {
+                  "ends_objective": true,
+                  "ends_task": false
+                }
+              }
+            ],
+            "objectives": [
+              {
+                "objective_id": "<first-generated-objective-uuid>",
+                "parallel_execution": true,
+                "primitives": [
+                  {
+                    "primitive_id": "<generated-primitive-uuid>",
+                    "parameters": {
+                      "coordinates": [
+                        4.3925979,
+                        50.8443434
+                      ],
+                      "speed": 1.3,
+                      "max_speed": 1.3
+                    }
+                  }
+                ]
+              },
+              {
+                "objective_id": "<second-generated-objective-uuid>",
+                "parallel_execution": true,
+                "primitives": [
+                  {
+                    "primitive_id": "<generated-primitive-uuid>",
+                    "parameters": {
+                      "coordinates": [
+                        4.3923021488298595,
+                        50.8442681286928
+                      ],
+                      "speed": 1.3,
+                      "max_speed": 1.3
+                    }
+                  }
+                ]
+              },
+              {
+                "objective_id": "<final-generated-objective-uuid>",
+                "parallel_execution": true,
+                "primitives": [
+                  {
+                    "primitive_id": "<generated-primitive-uuid>",
+                    "parameters": {
+                      "coordinates": [
+                        4.391670213379427,
+                        50.84417059346137
+                      ],
+                      "speed": 1.3,
+                      "max_speed": 1.3
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "notes": [
+        "This is deliberately an excerpt: the verified route contained 10 objectives, while the runtime record preserved in the walkthrough names the first two and final coordinates.",
+        "Generated task, primitive, and objective UUIDs change on every GetPlan serialization."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 599
+        }
+      ]
+    },
+    {
+      "id": "get_plan",
+      "title": "Retrieve the generated robot task",
+      "phase": "plan retrieval",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros:service:/multi_robot/planner/get_plan",
+        "ros_type:centralized_msgs/srv/GetPlan"
+      ],
+      "payload": {
+        "request": {
+          "id": "44444444-5555-4666-8777-888888888888"
+        },
+        "response": {
+          "id": "44444444-5555-4666-8777-888888888888",
+          "plan": "<JSON-encoded TaskPlan containing one Themis task and 10 waypoint objectives>"
+        }
+      },
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 641
+        }
+      ]
+    },
+    {
+      "id": "mission_feedback_planned",
+      "title": "Mission feedback proving that a route was received",
+      "phase": "PLANNED",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros:topic:/multi_robot/mission_feedback",
+        "ros_type:c2_msgs/msg/MissionFeedback"
+      ],
+      "payload": {
+        "mission_id": {
+          "uuid": [
+            68,
+            68,
+            68,
+            68,
+            85,
+            85,
+            70,
+            102,
+            135,
+            119,
+            136,
+            136,
+            136,
+            136,
+            136,
+            136
+          ]
+        },
+        "mission_feedback": "{\"mission_id\":\"44444444-5555-4666-8777-888888888888\",\"behavior\":0,\"status\":1,\"requested_status\":0,\"tasks\":[{\"vehicle_id\":\"f9992bb3-9871-451f-90a0-9207eb9fe6c5\",\"task_id\":\"<generated-task-uuid>\",\"waypoints\":[{\"coordinates\":[50.8443434,4.3925979]},{\"coordinates\":[50.84417059346137,4.391670213379427]}]}]}"
+      },
+      "notes": [
+        "The JSON string is abridged from 10 waypoints.",
+        "Legacy MissionFeedback serializes waypoint coordinates as [latitude, longitude]; the adapter swaps them back to [longitude, latitude]."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 678
+        }
+      ]
+    },
+    {
+      "id": "add_task",
+      "title": "Fleet installs the stopped waypoint task on Themis",
+      "phase": "APPROVE",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros:service:multi_robot/edge/agent_{agent_id}/add_task",
+        "ros_type:task_msgs/srv/AddTask"
+      ],
+      "payload": {
+        "request": {
+          "task_id": "<generated-task-uuid>",
+          "task_type": 0,
+          "override": true,
+          "task_config": "{\"primitives\":[{\"primitive_id\":\"<generated-primitive-uuid>\",\"primitive_type\":\"waypoint\"}],\"objectives\":[{\"objective_id\":\"<first-generated-objective-uuid>\",\"primitives\":[{\"primitive_id\":\"<generated-primitive-uuid>\",\"parameters\":{\"coordinates\":[4.3925979,50.8443434],\"speed\":1.3,\"max_speed\":1.3}}]}]}",
+          "std": ""
+        },
+        "response": {
+          "task_id": "<generated-task-uuid>",
+          "task_state": 0
+        }
+      },
+      "notes": [
+        "task_config is an abridged JSON string; the real task contained 10 waypoint objectives.",
+        "Task state 0 is STOPPED: APPROVE installs the task but does not move the robot."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 750
+        }
+      ]
+    },
+    {
+      "id": "send_tasks",
+      "title": "Mission manager asks Fleet to dispatch the stored plan",
+      "phase": "APPROVE",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:service:multi_robot/fleet_manager/send_tasks",
+        "ros_type:c2_msgs/srv/InitMission"
+      ],
+      "payload": {
+        "request": {
+          "mission_id": {
+            "uuid": [
+              68,
+              68,
+              68,
+              68,
+              85,
+              85,
+              70,
+              102,
+              135,
+              119,
+              136,
+              136,
+              136,
+              136,
+              136,
+              136
+            ]
+          },
+          "mission_config": ""
+        },
+        "response": {
+          "mission_id": {
+            "uuid": [
+              68,
+              68,
+              68,
+              68,
+              85,
+              85,
+              70,
+              102,
+              135,
+              119,
+              136,
+              136,
+              136,
+              136,
+              136,
+              136
+            ]
+          },
+          "mission_feedback": ""
+        }
+      },
+      "notes": [
+        "This service reuses InitMission.srv, but both string fields are intentionally empty; Fleet reloads the plan from RuntimeDB.Planning by mission ID."
+      ],
+      "evidence_refs": [
+        {
+          "path": "legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp",
+          "line": 1056
+        },
+        {
+          "path": "legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/fleet_manager_node.cpp",
+          "line": 469
+        }
+      ]
+    },
+    {
+      "id": "change_task_state",
+      "title": "Fleet starts the installed Themis task",
+      "phase": "START",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros_type:task_msgs/srv/ChangeTaskState"
+      ],
+      "payload": {
+        "request": {
+          "task_id": "<generated-task-uuid>",
+          "task_requested_state": 1
+        },
+        "response": {
+          "task_id": "<generated-task-uuid>",
+          "task_state": 1,
+          "feedback": ""
+        }
+      },
+      "notes": [
+        "task_requested_state 1 is EXECUTE; task_state 1 is STARTED."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 818
+        }
+      ]
+    },
+    {
+      "id": "autonomy_objective",
+      "title": "Edge sends the current waypoint to autonomy",
+      "phase": "execution",
+      "sample_kind": "observed_excerpt",
+      "targets": [
+        "ros_type:autonomy_msgs/msg/AutonomySetObjective",
+        "ros_type:autonomy_msgs/msg/AutonomyObjective"
+      ],
+      "payload": {
+        "null_objective": false,
+        "objective": {
+          "id": "<first-generated-objective-uuid>",
+          "objective_type": "combined_primitives",
+          "parallel_execution": true,
+          "primitives": [
+            "{\"id\":\"<generated-primitive-uuid>\",\"type\":\"waypoint\",\"parameters\":{\"coordinates\":[4.3925979,50.8443434],\"speed\":1.3,\"max_speed\":1.3,\"mobility_profile\":0,\"wait_time\":0}}"
+          ],
+          "max_speed": 1.3,
+          "mobility_profile": 0
+        }
+      },
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 850
+        }
+      ]
+    },
+    {
+      "id": "edge_feedback_completed",
+      "title": "Themis reports completion after the final waypoint",
+      "phase": "COMPLETED",
+      "sample_kind": "verified_flow",
+      "targets": [
+        "ros:topic:/multi_robot/edge/feedback",
+        "ros_type:task_msgs/msg/Feedback",
+        "ros_type:task_msgs/msg/TaskFeedback"
+      ],
+      "payload": {
+        "agent_id": "f9992bb3-9871-451f-90a0-9207eb9fe6c5",
+        "state": 1,
+        "tasks": [
+          {
+            "task_id": "<generated-task-uuid>",
+            "task_state": 3,
+            "current_objective_id": "<final-generated-objective-uuid>"
+          }
+        ],
+        "odometry": {
+          "pose": {
+            "pose": {
+              "position": {
+                "x": 4.391670213379427,
+                "y": 50.84417059346137,
+                "z": 0.0
+              }
+            }
+          }
+        }
+      },
+      "notes": [
+        "Task state 3 is COMPLETED. The mission manager then transitions the one-robot mission to COMPLETED(10)."
+      ],
+      "evidence_refs": [
+        {
+          "path": "docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md",
+          "line": 918
+        }
+      ]
+    }
+  ],
+  "enum_usage": {
+    "Behavior": {
+      "values": [
+        {
+          "value": 0,
+          "member": "NAVIGATE",
+          "when": "mission configuration"
+        }
+      ]
+    },
+    "MissionRequest": {
+      "values": [
+        {
+          "value": 0,
+          "member": "INIT",
+          "when": "initialize"
+        },
+        {
+          "value": 1,
+          "member": "APPROVE",
+          "when": "install stopped task"
+        },
+        {
+          "value": 2,
+          "member": "START",
+          "when": "execute task"
+        }
+      ]
+    },
+    "MissionStatusRequest": {
+      "values": [
+        {
+          "value": 0,
+          "member": "INIT",
+          "when": "initialize"
+        },
+        {
+          "value": 1,
+          "member": "APPROVE",
+          "when": "install stopped task"
+        },
+        {
+          "value": 2,
+          "member": "START",
+          "when": "execute task"
+        }
+      ]
+    },
+    "MissionStatus": {
+      "values": [
+        {
+          "value": 0,
+          "member": "NONE",
+          "when": "planning begins"
+        },
+        {
+          "value": 1,
+          "member": "PLANNED",
+          "when": "10-waypoint plan received"
+        },
+        {
+          "value": 4,
+          "member": "ACCEPTED",
+          "when": "task dispatched stopped"
+        },
+        {
+          "value": 5,
+          "member": "STARTED",
+          "when": "task execution requested"
+        },
+        {
+          "value": 10,
+          "member": "COMPLETED",
+          "when": "Themis finished its task"
+        }
+      ]
+    },
+    "TaskRequestState": {
+      "values": [
+        {
+          "value": 1,
+          "member": "EXECUTE",
+          "when": "START fan-out"
+        }
+      ]
+    },
+    "TaskState": {
+      "definition": "task_msgs.TaskState used by Fleet and Edge; not c2_imugs2.domain.TaskState",
+      "values": [
+        {
+          "value": 0,
+          "member": "STOPPED",
+          "when": "after APPROVE"
+        },
+        {
+          "value": 1,
+          "member": "STARTED",
+          "when": "after START"
+        },
+        {
+          "value": 3,
+          "member": "COMPLETED",
+          "when": "final waypoint reached"
+        }
+      ]
+    },
+    "TaskType": {
+      "values": [
+        {
+          "value": 0,
+          "member": "DRIVE",
+          "when": "Fleet AddTask request"
+        }
+      ]
+    }
+  },
+  "state_paths": {
+    "mission_lifecycle": [
+      {
+        "state": "NONE",
+        "value": 0,
+        "event": "INIT accepted"
+      },
+      {
+        "state": "PLANNED",
+        "value": 1,
+        "event": "10-waypoint plan received"
+      },
+      {
+        "state": "ACCEPTED",
+        "value": 4,
+        "event": "APPROVE"
+      },
+      {
+        "state": "STARTED",
+        "value": 5,
+        "event": "START"
+      },
+      {
+        "state": "COMPLETED",
+        "value": 10,
+        "event": "Themis completed the task"
+      }
+    ],
+    "edge_task_lifecycle": [
+      {
+        "state": "STOPPED",
+        "value": 0,
+        "event": "AddTask during APPROVE"
+      },
+      {
+        "state": "STARTED",
+        "value": 1,
+        "event": "EXECUTE during START"
+      },
+      {
+        "state": "COMPLETED",
+        "value": 3,
+        "event": "final waypoint reached"
+      }
+    ]
+  }
+}

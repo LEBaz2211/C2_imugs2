@@ -1,11 +1,16 @@
 # C2 iMUGS2
 
+> **Documentation label: PRIMARY**
+> Repository entry point. Continue with the [documentation index](docs/README.md)
+> and then [Architecture](docs/ARCHITECTURE.md).
+
 This repository contains a web UI and FastAPI adapter for a ROS 2 multi-robot
 system. It also contains two copies of the ROS backend: one for development and
 one retained as a legacy reference.
 
-This README is only the repository entry point. The ROS backends and their
-components have separate README files with more specific information.
+This README is only the repository entry point. Use the
+[documentation index](docs/README.md) to distinguish current, contract,
+reference, generated, and historical material.
 
 ## Where to start
 
@@ -27,6 +32,10 @@ More specific backend package notes are available for:
 Some package-level README files came from the original source repositories and
 may describe their old standalone build process. For this repository, use the
 top-level Compose files and the [backend README](backend/README.md).
+
+Frontend contributions should use the shared shadcn-style primitives and the
+compact operator-UI conventions documented in
+[Architecture](docs/ARCHITECTURE.md#frontend-ui-conventions).
 
 ## Runtime layout
 
@@ -82,7 +91,10 @@ frontend API calls, Compose configuration, and JSON Schemas.
 ```
 
 Open `http://127.0.0.1:8001`. Source changes are watched while MkDocs is
-running. CI also checks that the committed generated files are current.
+running. The single-page reference includes a source-extracted module data-flow
+diagram and real verified payload examples. Its interface inventory is also
+available as `docs/generated/interface-inventory.csv`. CI checks that the
+committed generated files are current.
 
 ## Tests
 
@@ -107,13 +119,17 @@ Backend ROS changes should also be checked with:
 
 ## Project guidance
 
-Read [PROJECT_PLANNING.md](PROJECT_PLANNING.md) before changing architecture,
-ROS contracts, or compatibility behavior. Do not edit `legacy_ros/` unless a
-change specifically targets the legacy reference.
+Read [Architecture](docs/ARCHITECTURE.md) first, then
+[PROJECT_PLANNING.md](PROJECT_PLANNING.md) before changing architecture, ROS
+contracts, or compatibility behavior. Prefer the smallest targeted change that
+solves the stated problem. `legacy_ros/` is permanently frozen and read-only;
+make every ROS backend implementation change in `backend/`.
+Compatibility tests may run or inspect the legacy stack, but must not modify it
+or synchronize backend changes into it.
 
 Additional technical documents:
 
 - [ROS compatibility ICD](docs/ROS_COMPATIBILITY_ICD.md)
 - [Editable backend mission walkthrough](docs/SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
-- [Legacy backend mission walkthrough](docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
+- [Frozen-reference mission walkthrough](docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
 - [Backend/legacy comparison](docs/LEGACY_ROS_UPSTREAM_COMPARISON.md)

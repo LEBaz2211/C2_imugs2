@@ -1,5 +1,7 @@
 # `/orchestrator_node`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/orchestrator_node` owns mission lifecycle at the fog level. It registers mission configs in MongoDB, creates one dynamic mission manager node per mission, routes status/environment/vehicle changes, and records swarm logs.
@@ -110,4 +112,3 @@ Actions:
 - The orchestrator has a delete-planner client for `multi_robot/planner/delete`, but the active planner node exposes `/multi_robot/planner/delete_planner`.
 - Mission deletion removes the mission config from MongoDB, but the dynamic mission manager node is not fully torn down.
 - `getMissionStatus()` reads a `"status"` object from the mission DB; depending on stored JSON shape, status responses can lag or be incomplete.
-

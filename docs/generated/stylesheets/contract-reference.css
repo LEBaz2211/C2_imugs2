@@ -15,3 +15,24 @@
   overflow-x: auto;
   text-align: center;
 }
+
+.tabbed-set > .tabbed-labels {
+  position: sticky;
+  top: 2.4rem;
+  z-index: 3;
+  background: var(--md-default-bg-color);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.tabbed-set > .tabbed-labels > label {
+  font-weight: 700;
+}
+
+.md-typeset details.abstract {
+  margin: 0.45rem 0;
+}
+
+.md-typeset details.abstract > summary {
+  cursor: pointer;
+  font-family: var(--md-code-font-family);
+}

@@ -1,8 +1,21 @@
 # Architecture
 
-C2 iMUGS2 uses a stable adapter boundary around the actual legacy ROS runtime. The long-term replacement code remains modular, but compatibility work must not require the browser to understand ROS or the core domain to depend on legacy infrastructure.
+> **Documentation label: PRIMARY**
+> This is the most important technical document for coding agents and human
+> maintainers. It describes the current system boundaries; implementation
+> details still need confirmation against source, Compose, and tests.
+
+C2 iMUGS2 uses a stable adapter boundary around the editable ROS runtime in `backend/`. That runtime preserves the required legacy contracts while evolving independently. The long-term replacement code remains modular, but compatibility work must not require the browser to understand ROS or the core domain to depend on legacy infrastructure. `legacy_ros/` is a frozen, read-only comparison reference.
 
 Read [PROJECT_PLANNING.md](../PROJECT_PLANNING.md) before changing these boundaries.
+
+## Change Discipline
+
+Prefer the smallest change that satisfies the requirement. Modify only the
+owning layer, preserve stable contracts by default, and avoid adjacent
+refactors, broad renames, or legacy-tree synchronization unless they are
+explicitly requested. Because the editable backend is a work in progress,
+record current behavior without presenting it as permanent architecture.
 
 ## Runtime Layers
 
@@ -12,12 +25,27 @@ React/Vite/Leaflet UI
      -> legacy REST client for mission commands
      -> rosbridge client for ROS diagnostics and live reads
      -> scenario activation + immutable MapDB snapshots
-  -> Dockerized legacy ROS stack
+  -> Dockerized editable ROS backend (`docker-compose.backend.yml`)
      -> C2 -> interface -> orchestrator -> mission manager
      -> planner -> fleet manager -> edge supervisor -> autonomy sim
 ```
 
 The UI never constructs ROS messages or connects directly to rosbridge. The backend owns partial structural validation, legacy alias translation, coordinate conversion, feature inlining, and feedback normalization. The canonical JSON Schemas are currently design contracts rather than validators executed by the mission endpoint.
+
+## Frontend UI Conventions
+
+The frontend uses Tailwind with shadcn-style shared primitives from
+`frontend/src/components/ui/`. New UI work should compose those primitives
+before introducing local visual variants. Buttons, badges, tabs, inputs,
+alerts, and cards should share the existing neutral surfaces, border radii,
+focus behavior, spacing scale, and semantic tones.
+
+Operator controls should favor compact, glanceable state over permanently
+expanded explanation. Dense runtime information belongs in small status chips
+or summaries with accessible hover/focus text; longer raw or diagnostic detail
+belongs in the Diagnostics view or an explicit disclosure. Responsive panels
+must preserve access to every action without forcing the map below its useful
+minimum size.
 
 ## Replacement Core
 
@@ -30,7 +58,7 @@ The independent core is organized around ports in `src/c2_imugs2/ports.py`:
 - `PlanRepositoryPort`
 - `EdgeDispatcherPort`
 
-`MissionService` orchestrates these ports. `SimplePlanner` and the file-backed repositories are development implementations, not substitutes for the real legacy runtime during compatibility testing.
+`MissionService` orchestrates these ports. `SimplePlanner` and the file-backed repositories are development implementations, not substitutes for the real editable ROS backend during integration testing.
 
 Any future planner adapter should preserve the logical boundary:
 
@@ -50,7 +78,8 @@ mission_config + selected agents -> validated task_plan
 | Scenario runtime | `scenario_runtime.py`, `scenario_launch.py` | Freeze a scenario version, switch the planner, replace and verify robot containers |
 | Domain contracts | `domain.py`, `mission_config.py`, `task_plan.py`, `schemas/` | Enums, normalization, and validation |
 | Modular core | `mission_service.py`, `ports.py`, `repositories.py`, `planner.py` | Replaceable non-ROS orchestration |
-| Legacy runtime | `legacy_ros/` | Actual old nodes and embedded ROS interfaces |
+| Editable ROS runtime | `backend/` | Writable ROS nodes, planner, edge runtime, configuration, and embedded interfaces |
+| Frozen legacy reference | `legacy_ros/` | Read-only historical runtime used only for inspection and compatibility comparison |
 
 ## Compatibility Boundary
 
@@ -120,7 +149,7 @@ Replace one boundary at a time:
 
 1. Define and test the stable input/output contract.
 2. Add the new implementation behind the existing port or adapter.
-3. Compare it with the legacy runtime.
+3. Compare it with the frozen legacy runtime without changing the legacy tree.
 4. Switch callers only after compatibility is verified.
 
 This lets the planner, ROS transport, storage, UI, and later LLM tooling evolve independently without a broad legacy rewrite.

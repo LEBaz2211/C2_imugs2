@@ -1,5 +1,10 @@
 # Source-parsed state machines
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 Only transitions parsed from explicit source patterns are included.
 
 | State machine | States | Parsed transitions |

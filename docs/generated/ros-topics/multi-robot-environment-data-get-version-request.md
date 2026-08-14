@@ -1,5 +1,10 @@
 # /multi_robot/environment_data_get_version_request
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 ROS topic `/multi_robot/environment_data_get_version_request`
 
 | Property | Extracted value |

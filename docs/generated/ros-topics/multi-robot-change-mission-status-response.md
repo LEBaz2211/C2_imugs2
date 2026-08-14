@@ -1,5 +1,10 @@
 # /multi_robot/change_mission_status_response
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 ROS topic `/multi_robot/change_mission_status_response`
 
 | Property | Extracted value |
@@ -23,6 +28,82 @@ ROS topic `/multi_robot/change_mission_status_response`
 | publishes | `c2_msgs/msg/ChangeMissionStatusResponse` | [`backend/fog/centralized-coordination/src/centralized_coordination/src/c2_interface_node.cpp:58`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/centralized_coordination/src/c2_interface_node.cpp#L58) |
 | publishes | `c2_msgs/msg/ChangeMissionStatusResponse` | [`backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:137`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L137) |
 | subscribes | `c2_msgs/msg/ChangeMissionStatusResponse` | [`backend/fog/command-control/src/backend/ros2-rest-api/ros2_ws/src/c2_ros2_rest_api/src/c2_rest.cpp:57`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/command-control/src/backend/ros2-rest-api/ros2_ws/src/c2_ros2_rest_api/src/c2_rest.cpp#L57) |
+
+## Verified one-robot navigation data
+
+These payloads come from the [runtime-verified one-robot Point-navigation example](../examples/single-robot-point-navigation.md) using mission `44444444-5555-4666-8777-888888888888` and `Themis Fr`.
+
+### Mission manager accepts the APPROVE transition
+
+!!! success "Verified Flow"
+    Phase: APPROVE.
+
+```json
+{
+  "mission_id": {
+    "uuid": [
+      68,
+      68,
+      68,
+      68,
+      85,
+      85,
+      70,
+      102,
+      135,
+      119,
+      136,
+      136,
+      136,
+      136,
+      136,
+      136
+    ]
+  },
+  "mission_status": 4,
+  "error_message": ""
+}
+```
+
+- Mission status 4 is ACCEPTED.
+
+Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:876`](https://github.com/LEBaz2211/C2_imugs2/blob/main/legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L876)
+
+### Mission manager accepts the START transition
+
+!!! success "Verified Flow"
+    Phase: START.
+
+```json
+{
+  "mission_id": {
+    "uuid": [
+      68,
+      68,
+      68,
+      68,
+      85,
+      85,
+      70,
+      102,
+      135,
+      119,
+      136,
+      136,
+      136,
+      136,
+      136,
+      136
+    ]
+  },
+  "mission_status": 5,
+  "error_message": ""
+}
+```
+
+- Mission status 5 is STARTED.
+
+Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:876`](https://github.com/LEBaz2211/C2_imugs2/blob/main/legacy_ros/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L876)
 
 ## Definition evidence
 

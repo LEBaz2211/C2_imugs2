@@ -1,5 +1,10 @@
 # Mission lifecycle
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 Allowed mission status transitions enforced by MissionManager.
 
 ```mermaid
@@ -148,3 +153,30 @@ stateDiagram-v2
 | `PAUSE` | `PAUSED` | [`backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:939`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L939) |
 | `STOP` | `STOPPED` | [`backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:942`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L942) |
 | `DELETE` | `DELETED` | [`backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp:945`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/centralized_coordination/src/mission_manager.cpp#L945) |
+
+## State path in the verified navigation run
+
+The [one-robot Point-navigation run](../examples/single-robot-point-navigation.md) followed this concrete path:
+
+```mermaid
+flowchart LR
+  S0["NONE (0)"]
+  S1["PLANNED (1)"]
+  S0 -->|10-waypoint plan received| S1
+  S2["ACCEPTED (4)"]
+  S1 -->|APPROVE| S2
+  S3["STARTED (5)"]
+  S2 -->|START| S3
+  S4["COMPLETED (10)"]
+  S3 -->|Themis completed the task| S4
+```
+
+| Order | State | Value | Runtime event |
+|---:|---|---:|---|
+| 1 | `NONE` | `0` | INIT accepted |
+| 2 | `PLANNED` | `1` | 10-waypoint plan received |
+| 3 | `ACCEPTED` | `4` | APPROVE |
+| 4 | `STARTED` | `5` | START |
+| 5 | `COMPLETED` | `10` | Themis completed the task |
+
+Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md:11`](https://github.com/LEBaz2211/C2_imugs2/blob/main/docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md#L11)

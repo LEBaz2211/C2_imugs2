@@ -25,9 +25,11 @@ ALLOWED_USER_FEATURE_GEOMETRIES = {
 
 
 def load_legacy_geojson_map(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
-    map_dir = repo_root / "legacy_ros" / "config" / "data" / "map" / map_name
+    backend_map_dir = repo_root / "backend" / "config" / "data" / "map" / map_name
+    legacy_map_dir = repo_root / "legacy_ros" / "config" / "data" / "map" / map_name
+    map_dir = backend_map_dir if backend_map_dir.is_dir() else legacy_map_dir
     if not map_dir.is_dir():
-        raise FileNotFoundError(f"Unknown legacy map '{map_name}' at {map_dir}")
+        raise FileNotFoundError(f"Unknown backend map '{map_name}' at {backend_map_dir}")
 
     features: list[dict[str, Any]] = []
     for path in sorted(map_dir.rglob("*.geojson")):

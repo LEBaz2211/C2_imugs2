@@ -35,7 +35,12 @@
         "line_of_sight": {"$ref": "#/$defs/geometryRef"},
         "line_of_sight_propagation": {"type": "boolean"},
         "maximize_coverage": {"type": "boolean"},
-        "maximum_coverage_distances": {"type": "array", "items": {"type": "number"}},
+        "maximum_coverage_distances": {
+          "type": "array",
+          "description": "Coverage swath widths in metres: one shared value or one value per mission vehicle.",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "minItems": 1
+        },
         "arrival_time": {"$ref": "#/$defs/timeWindow"}
       }
     },
@@ -71,4 +76,3 @@
     }
   }
 }
-

@@ -267,6 +267,12 @@ class PlannerNode(Node):
                 self.paths_mission_id = mission_id
 
             self.planner_states.update({mission_id: 2})  # Planned state
+            # Planning is request-driven. Keep the successful path and state
+            # stable until another CreatePlanner request explicitly asks for a
+            # new plan; recomputing every second from a moving robot can fail
+            # after its task has already been dispatched and falsely report a
+            # running mission as planner-failed.
+            self.mission_defined = False
             print("PATHS")
             print(new_paths)
 
@@ -551,12 +557,10 @@ class PlannerNode(Node):
             self.G = populate_graph(self.G,self.populate_min_distance)
             
         #connect graphs
-        for line_graph in self.line_graphs:
-            self.G = connect_graphs(self.G,line_graph,self.line_G_max_distance)
+        self.G = connect_graph_collection(self.G, self.line_graphs, self.line_G_max_distance)
 
 
-        for poly_graph in self.poly_graphs:
-            self.G = connect_graphs(self.G,poly_graph,self.poly_G_max_distance)
+        self.G = connect_graph_collection(self.G, self.poly_graphs, self.poly_G_max_distance)
         
         # for risk_poly_graph in self.risk_poly_graphs:
         #     self.G = connect_graphs(self.G,risk_poly_graph,self.poly_G_max_distance)
@@ -578,6 +582,10 @@ class PlannerNode(Node):
         
         # Rename nodes for consistent naming (1, 2, 3, ... N)
         self.G=recalculate_node_ids(self.G)
+        # Frozen scenarios may intentionally retain only downloaded road
+        # LineStrings after their temporary selection polygon is deleted.
+        # OSMnx projection still requires explicit CRS metadata in that case.
+        self.G.graph['crs'] = self.epsg
 
 
 
@@ -598,7 +606,18 @@ class PlannerNode(Node):
         # Initialize the mission planner before publishing the readiness marker.
         # Scenario activation treats this exact marker as the point at which
         # CreatePlanner can safely be accepted.
-        self.mr_path_planner = MultiRobotPathPlanning(self.mapf , self.mongodb_url, "MapDB")
+        risk_polygons = [
+            geometry
+            for risk_gdf in self.risk_poly_gdfs
+            for geometry in risk_gdf.geometry
+            if geometry is not None and not geometry.is_empty
+        ]
+        self.mr_path_planner = MultiRobotPathPlanning(
+            self.mapf,
+            self.mongodb_url,
+            "MapDB",
+            risk_polygons=risk_polygons,
+        )
         self.mr_path_planner.graph = self.G
         self.init = True
         self.get_logger().info(
@@ -738,7 +757,7 @@ class PlannerNode(Node):
         if feature_count == 0:
             raise RuntimeError(
                 f"MapDB.{self.map_feature_collection.name} is empty; "
-                "the baseline map seed must complete before CreatePlanner"
+                "the active scenario snapshot is missing or empty; reactivate the scenario before CreatePlanner"
             )
 
         self.get_logger().info(

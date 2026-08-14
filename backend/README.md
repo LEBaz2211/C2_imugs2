@@ -1,16 +1,21 @@
 # Editable ROS Backend Fork
 
+> **Documentation label: CURRENT**
+> Operational entry point for the evolving editable ROS runtime. Architecture
+> and ownership rules are defined in [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md).
+
 This directory is the editable backend fork of `legacy_ros/`. It keeps the
 real ROS nodes and compatibility contracts while giving the project a place to
 make future backend changes without turning `legacy_ros/` into the development
 target.
 
-The fork is currently synchronized with the tracked runtime source in
-`legacy_ros/`, including its MapDB startup seed, planner readiness/error
-handling, route-failure safeguards, bidirectional local roads, scenario
-activation parameters, and graph-connection settings. See
-[FORK_PROVENANCE.md](FORK_PROVENANCE.md) for the baseline and synchronization
-history.
+The fork started from the tracked runtime source in `legacy_ros/`, including
+its MapDB startup seed, planner readiness/error handling, route-failure
+safeguards, bidirectional local roads, scenario activation parameters, and
+graph-connection settings. That relationship is historical provenance, not an
+ongoing synchronization contract. `backend/` is now the only writable ROS
+backend source; `legacy_ros/` must remain unchanged. See
+[FORK_PROVENANCE.md](FORK_PROVENANCE.md) for the baseline history.
 
 The source was copied from `../multi-agent-framework` and trimmed to keep:
 

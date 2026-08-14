@@ -1,5 +1,9 @@
 # Editable ROS Backend Fork
 
+> **Documentation label: REFERENCE**
+> Provenance record for the editable runtime fork; not a description of all
+> current runtime behavior.
+
 This directory is the working copy of the legacy ROS backend. It exists so the
 backend can evolve separately from the runnable compatibility runtime in
 `legacy_ros/`.
@@ -35,7 +39,7 @@ This is intentionally a placeholder fork, not a redesigned architecture. Its
 ROS message/service definitions, topic/service names, numeric enums, and JSON
 contracts were unchanged at the copy point.
 
-## Current Synchronization Point
+## Last Historical Synchronization Point
 
 The fork was resynchronized on 2026-08-10 with the tracked runtime files in
 `legacy_ros/` at repository commit `1fb453f`. This brought across the later
@@ -46,8 +50,9 @@ graph-connection thresholds, and scenario-specific planner activation.
 
 The directory-specific README/provenance files intentionally differ, and
 `docker-compose.backend.yml` keeps backend-specific container names and data
-directories. The ROS runtime sources, planner config, build files, and MapDB
-seed are otherwise at parity. See
+directories. This records the last baseline comparison only. Backend sources
+are expected to diverge from this point forward and must never be copied back
+into `legacy_ros/`. See
 [`docs/LEGACY_ROS_UPSTREAM_COMPARISON.md`](../docs/LEGACY_ROS_UPSTREAM_COMPARISON.md).
 
 ## Run The Fork
@@ -82,24 +87,10 @@ paths and an edge image named for `legacy_ros/`. Those dependencies must
 become configurable before later backend changes to maps, launch scripts, or
 the edge image are selected as the default UI runtime.
 
-## Verify Current Runtime Parity
+## Divergence Policy
 
-The following checks every current tracked runtime file while excluding the
-two directory-specific documentation files. No output from `cmp` and a final
-count of `627` means the fork is synchronized:
-
-```bash
-count=0
-while IFS= read -r source; do
-  relative="${source#legacy_ros/}"
-  case "$relative" in
-    README.md|SOURCE_PROVENANCE.md) continue ;;
-  esac
-  cmp --silent "$source" "backend/$relative"
-  count=$((count + 1))
-done < <(git ls-files legacy_ros)
-printf 'verified files: %s\n' "$count"
-```
-
-Once intentional refactoring starts, differences are expected and should be
-covered by contract tests and recorded in the relevant design document.
+Intentional differences are expected. Implement and test all ROS fixes and
+features in `backend/`, record significant compatibility decisions in the
+relevant design document, and run the frozen legacy stack only as a comparison
+reference. Do not add parity tests that require backend files to equal legacy
+files, and do not resynchronize either tree in either direction.

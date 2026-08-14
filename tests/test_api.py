@@ -72,6 +72,9 @@ class ReadyScenarioManager:
     def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
         return self.active()
 
+    def validated_active(self) -> dict[str, Any] | None:
+        return self.active()
+
     def activate(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {**self.active(), "agents": payload.get("agents") or [], "containers": [], "message": "ready"}
 
@@ -232,6 +235,96 @@ def test_invalid_scenario_draft_does_not_replace_ready_active_runtime(tmp_path: 
     assert manager.active() == previous
 
 
+def test_stale_external_runtime_invalidates_ready_scenario(tmp_path: Path) -> None:
+    runtime = tmp_path / "data" / "runtime"
+    runtime.mkdir(parents=True)
+    ready = {
+        "scenario_id": "stale-scenario",
+        "status": "ready",
+        "ready": True,
+        "version": "v1",
+        "map_collection": "scenario_stale_v1",
+    }
+    (runtime / "active_scenario.json").write_text(json.dumps(ready), encoding="utf-8")
+    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://unused", docker_socket="/missing")
+    manager._active_runtime_issues = lambda state: ["MapDB.scenario_stale_v1 is missing"]  # type: ignore[method-assign]
+    manager._mark_active_in_mongo = lambda state: None  # type: ignore[method-assign]
+
+    stale = manager.validated_active()
+
+    assert stale is not None
+    assert stale["status"] == "stale"
+    assert stale["ready"] is False
+    assert "is missing" in stale["error"]
+    try:
+        manager.require_ready()
+    except ScenarioNotReadyError as exc:
+        assert "runtime is not ready" in str(exc)
+    else:
+        raise AssertionError("a stale runtime must reject mission commands")
+
+
+def test_stale_runtime_recovers_after_all_readiness_proofs_return(tmp_path: Path) -> None:
+    runtime = tmp_path / "data" / "runtime"
+    runtime.mkdir(parents=True)
+    ready = {
+        "scenario_id": "recovering-scenario",
+        "status": "ready",
+        "ready": True,
+        "version": "v1",
+        "map_collection": "scenario_recovering_v1",
+        "activation_token": "activation-1",
+    }
+    (runtime / "active_scenario.json").write_text(json.dumps(ready), encoding="utf-8")
+    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://unused", docker_socket="/missing")
+    issues = ["robots are not registered: robot-a"]
+    published: list[dict[str, Any]] = []
+    manager._active_runtime_issues = lambda state: list(issues)  # type: ignore[method-assign]
+    manager._planner_readiness_issue = lambda state: None  # type: ignore[method-assign]
+    manager._mark_active_in_mongo = lambda state: published.append(state)  # type: ignore[method-assign]
+
+    stale = manager.validated_active()
+    issues.clear()
+    recovered = manager.validated_active()
+
+    assert stale is not None
+    assert stale["status"] == "stale"
+    assert recovered is not None
+    assert recovered["status"] == "ready"
+    assert recovered["ready"] is True
+    assert "recovered_at" in recovered
+    assert "error" not in recovered
+    assert "stale_at" not in recovered
+    assert manager.active() == recovered
+    assert published[-1]["status"] == "ready"
+
+
+def test_stale_runtime_does_not_recover_without_exact_planner_proof(tmp_path: Path) -> None:
+    runtime = tmp_path / "data" / "runtime"
+    runtime.mkdir(parents=True)
+    stale = {
+        "scenario_id": "still-stale",
+        "status": "stale",
+        "ready": False,
+        "version": "v1",
+        "map_collection": "scenario_still_stale_v1",
+        "activation_token": "activation-1",
+        "error": "active scenario runtime is stale: robots are not registered: robot-a",
+    }
+    (runtime / "active_scenario.json").write_text(json.dumps(stale), encoding="utf-8")
+    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://unused", docker_socket="/missing")
+    manager._active_runtime_issues = lambda state: []  # type: ignore[method-assign]
+    manager._planner_readiness_issue = lambda state: "planner proof is missing"  # type: ignore[method-assign]
+    manager._mark_active_in_mongo = lambda state: None  # type: ignore[method-assign]
+
+    result = manager.validated_active()
+
+    assert result is not None
+    assert result["status"] == "stale"
+    assert result["ready"] is False
+    assert "planner proof is missing" in result["error"]
+
+
 def test_forget_mission_removes_adapter_runtime_record() -> None:
     client = TestClient(create_app(ROOT, rest_client=FakeRestClient(), rosbridge_client=FakeRosbridgeClient()))
     mission = (ROOT / "fixtures" / "mission_examples" / "simple_navigation_themis.json").read_text(encoding="utf-8")
@@ -367,7 +460,7 @@ def test_query_osm_roads_for_polygon_clips_to_geofence(tmp_path: Path, monkeypat
     assert not (tmp_path / "data" / "runtime" / "user_features_rma.geojson").exists()
 
 
-def test_launch_scenario_generates_legacy_edge_configs_without_docker(tmp_path: Path) -> None:
+def test_launch_scenario_generates_backend_edge_configs_without_docker(tmp_path: Path) -> None:
     payload = {
         "scenario_id": "Scenario One",
         "name": "Scenario One",
@@ -394,7 +487,8 @@ def test_launch_scenario_generates_legacy_edge_configs_without_docker(tmp_path: 
     assert "start_location: [4.1234560, 50.6543210]" in autonomy_config
     assert "max_speed: 3.2" in autonomy_config
     assert "sensors" not in autonomy_config
-    assert "c2-imugs2/edge-agent-sim:local" in compose
+    assert "c2-imugs2/backend-edge-agent-sim:local" in compose
+    assert "/backend/config/config_agent-tasks-supervisor.yaml:/app/config.yaml:ro" in compose
     assert "AUTONOMY_TOPIC_PREFIX: Scout_1" in compose
 
 
@@ -505,7 +599,7 @@ def test_contract_graph_exposes_system_contracts() -> None:
     assert "mission_lifecycle" in scenario_ids
     assert "unsupported_no_planning" in scenario_ids
     scenarios = {scenario["id"]: scenario for scenario in graph["scenarios"]}
-    assert "undefined coverage_algorithm" in scenarios["coverage_zone"]["summary"]
+    assert "lawnmower sweep" in scenarios["coverage_zone"]["summary"]
     assert "does not add mission geometry" in scenarios["mission_roads"]["summary"]
     assert graph["source_digest"]
 
@@ -651,12 +745,120 @@ def test_init_inlines_user_created_feature_ids_before_legacy_rest(tmp_path: Path
         {"geometry": {"geometry_type": "LineString", "coordinates": [[4.3922, 50.8442], [4.3928, 50.8450]]}},
     ]
     assert rest.initialized[0]["transit"]["geofence"] == {
-        "geometry_type": "Polygon",
-        "coordinates": [[[4.39, 50.84], [4.40, 50.84], [4.40, 50.85], [4.39, 50.84]]],
+        "geometry": {
+            "geometry_type": "Polygon",
+            "coordinates": [[4.39, 50.84], [4.40, 50.84], [4.40, 50.85], [4.39, 50.84]],
+        }
     }
     assert rest.initialized[0]["transit"]["roads"] == [
-        {"geometry_type": "LineString", "coordinates": [[4.3922, 50.8442], [4.3928, 50.8450]]}
+        {
+            "geometry": {
+                "geometry_type": "LineString",
+                "coordinates": [[4.3922, 50.8442], [4.3928, 50.8450]],
+            }
+        }
     ]
+    assert response.json()["config"]["transit"]["geofence"] == {"feature_id": "runtime-geofence"}
+    assert response.json()["config"]["objective"]["geometries"] == [
+        {"feature_id": "runtime-objective"},
+        {"feature_id": "runtime-road"},
+    ]
+    assert response.json()["adapter_adjustments"] == ["inlined runtime feature references for legacy ROS compatibility"]
+
+
+def test_init_inlines_coverage_polygon_for_legacy_ros_without_losing_feature_id(tmp_path: Path) -> None:
+    feature_path = tmp_path / "data" / "runtime" / "user_features_rma.geojson"
+    feature_path.parent.mkdir(parents=True)
+    feature_path.write_text(
+        """{
+          "type": "FeatureCollection",
+          "features": [{
+            "type": "Feature",
+            "id": "runtime-parade",
+            "properties": {"feature_id": "runtime-parade", "feature_type": "geofence", "source": "user"},
+            "geometry": {
+              "type": "Polygon",
+              "coordinates": [[[4.391,50.845],[4.394,50.845],[4.394,50.846],[4.391,50.845]]]
+            }
+          }]
+        }""",
+        encoding="utf-8",
+    )
+    rest = FakeRestClient()
+    client = TestClient(create_app(tmp_path, rest_client=rest, rosbridge_client=FakeRosbridgeClient()))
+
+    response = client.post(
+        "/api/missions/init",
+        json={
+            "mission_id": "e742fc22-48c6-499d-96aa-cf054d650506",
+            "behavior": 1,
+            "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+            "transit": {"geofence": {"feature_id": "runtime-parade"}},
+            "objective": {
+                "geometries": [{"feature_id": "runtime-parade"}],
+                "maximize_coverage": True,
+                "maximum_coverage_distances": [6],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    legacy_polygon = {
+        "geometry_type": "Polygon",
+        "coordinates": [[4.391, 50.845], [4.394, 50.845], [4.394, 50.846], [4.391, 50.845]],
+    }
+    assert rest.initialized[0]["transit"]["geofence"] == {"geometry": legacy_polygon}
+    assert rest.initialized[0]["objective"]["geometries"] == [{"geometry": legacy_polygon}]
+    assert response.json()["config"]["transit"]["geofence"] == {"feature_id": "runtime-parade"}
+    assert response.json()["config"]["objective"]["geometries"] == [{"feature_id": "runtime-parade"}]
+
+
+def test_init_rejects_runtime_polygon_holes_the_legacy_contract_cannot_represent(tmp_path: Path) -> None:
+    feature_path = tmp_path / "data" / "runtime" / "user_features_rma.geojson"
+    feature_path.parent.mkdir(parents=True)
+    feature_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "id": "polygon-with-hole",
+                        "properties": {"feature_id": "polygon-with-hole", "feature_type": "geofence", "source": "user"},
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [[4.39, 50.84], [4.40, 50.84], [4.40, 50.85], [4.39, 50.84]],
+                                [[4.395, 50.845], [4.396, 50.845], [4.395, 50.845]],
+                            ],
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rest = FakeRestClient()
+    client = TestClient(create_app(tmp_path, rest_client=rest, rosbridge_client=FakeRosbridgeClient()))
+
+    response = client.post(
+        "/api/missions/init",
+        json={
+            "mission_id": "e742fc22-48c6-499d-96aa-cf054d650506",
+            "behavior": 1,
+            "vehicles": ["f9992bb3-9871-451f-90a0-9207eb9fe6c5"],
+            "transit": {"geofence": {"feature_id": "polygon-with-hole"}},
+            "objective": {
+                "geometries": [{"feature_id": "polygon-with-hole"}],
+                "maximize_coverage": True,
+                "maximum_coverage_distances": [6],
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "interior rings" in response.json()["detail"]
+    assert rest.initialized == []
 
 
 def test_init_preserves_full_road_usage_point_objective_coordinates(tmp_path: Path) -> None:
@@ -763,21 +965,44 @@ def test_real_legacy_rest_payload_uses_old_optimization_spelling() -> None:
     assert mission["transit"]["optimization"] == {"road_usage": 1, "energy": 0.8}
 
 
+def test_real_legacy_rest_payload_uses_old_coverage_width_spelling() -> None:
+    mission = {
+        "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
+        "objective": {"maximum_coverage_distances": [6.0]},
+    }
+
+    legacy = to_legacy_mission_config(mission)
+
+    assert legacy["objective"]["maximize_coverage_distances"] == [6.0]
+    assert "maximum_coverage_distances" not in legacy["objective"]
+    assert mission["objective"]["maximum_coverage_distances"] == [6.0]
+
+
 def test_ros_feedback_normalizes_legacy_agent_ids_and_planned_paths() -> None:
     feedback = _normalize_mission_feedback(
         {
             "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
             "mission_feedback": (
-                '{"mission_id":"77734909-0b4b-4ee4-b0d2-e5bb5893dd14","status":1,'
+                '{"mission_id":"77734909-0b4b-4ee4-b0d2-e5bb5893dd14","status":1,"issue":0,'
                 '"tasks":[{"vehicle_id":"f9992bb3_9871_451f_90a0_9207eb9fe6c5",'
                 '"waypoints":[{"coordinates":[50.844317,4.392588]},{"coordinates":[50.844171,4.39167]}]}]}'
             ),
         }
     )
-    edge = _normalize_edge_feedback({"agent_id": "f9992bb3_9871_451f_90a0_9207eb9fe6c5"})
+    edge = _normalize_edge_feedback(
+        {
+            "agent_id": "f9992bb3_9871_451f_90a0_9207eb9fe6c5",
+            "state": 1,
+            "tasks": [{"task_id": "task-1", "task_state": 3}],
+        }
+    )
 
     assert edge["agent_id"] == "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
+    assert edge["status_name"] == "ACTIVE"
+    assert edge["tasks"][0]["task_state_name"] == "COMPLETED"
     assert feedback["status_name"] == "PLANNED"
+    assert feedback["status_source"] == "mission_feedback"
+    assert feedback["issue_name"] == "NONE"
     assert feedback["path_status"] == "received"
     assert feedback["planned_paths"]["f9992bb3-9871-451f-90a0-9207eb9fe6c5"] == [
         [4.392588, 50.844317],
@@ -801,6 +1026,7 @@ def test_legacy_mongo_feedback_normalizes_planned_paths() -> None:
             "_id": "feedback-doc",
             "mission_id": "77734909-0b4b-4ee4-b0d2-e5bb5893dd14",
             "status": 1,
+            "issue": 40,
             "tasks": [
                 {
                     "vehicle_id": "f9992bb3_9871_451f_90a0_9207eb9fe6c5",
@@ -814,6 +1040,7 @@ def test_legacy_mongo_feedback_normalizes_planned_paths() -> None:
     )
 
     assert state["status_name"] == "PLANNED"
+    assert state["issue_name"] == "PLANNING_FAILED_NO_SOLUTION_FOUND"
     assert state["path_status"] == "received"
     assert state["planned_paths"]["f9992bb3-9871-451f-90a0-9207eb9fe6c5"] == [
         [4.392588, 50.844317],

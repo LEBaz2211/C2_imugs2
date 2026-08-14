@@ -1,5 +1,9 @@
 # True Legacy ROS Single-Robot Mission: Complete Code Walkthrough
 
+> **Documentation label: REFERENCE**
+> Frozen compatibility-run evidence. It does not describe the current editable
+> backend or authorize changes in `legacy_ros/`.
+
 This is the legacy-specific copy of the editable-backend walkthrough. It follows
 one request to send **Themis Fr** to one GPS point, starting at the old REST
 boundary and staying inside `legacy_ros/`; the UI and the new FastAPI adapter are

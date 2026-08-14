@@ -1,5 +1,10 @@
 # MissionIssue
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 ## c2_msgs.MissionIssue
 
 Language: **C++** · Evidence: [`backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp:5`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp#L5)
@@ -77,4 +82,30 @@ Language: **C++** · Evidence: [`backend/fog/planner/ros2ws/src/message_packages
 | `32` | `PLANNING_WARN_DATE_COMPROMISED` | Requested start or end date is compromised in planning solution. Mission state will be set to PLANNED anyway |
 | `40` | `PLANNING_FAILED_NO_SOLUTION_FOUND` | No planning solution found. New init_mission needed with adjusted configuration. Mission state will be set to PLANNED_FAILED |
 | `41` | `PLANNING_FAILED` | Swarm planner process fail,  Mission state will be set to PLANNED_FAILED. |
+
+## c2_imugs2.domain.MissionIssue
+
+Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:47`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L47)
+
+| Value | Member | Source comment |
+|---:|---|---|
+| `0` | `NONE` |  |
+| `10` | `MISSION_WARN_ID_ALREADY_USED` |  |
+| `11` | `MISSION_WARN_UGV_UNAVAILABLE` |  |
+| `12` | `MISSION_WARN_CONFIG_UNKNOWN_DATA` |  |
+| `13` | `MISSION_WARN_STATUS_NOT_CHANGED` |  |
+| `14` | `MISSION_WARN_DISCONNECTED_SWARM_PLANNER` |  |
+| `15` | `MISSION_WARN_DISCONNECTED_SWARMING_EDGE` |  |
+| `16` | `MISSION_WARN_DISCONNECTED_AUTONOMY` |  |
+| `20` | `MISSION_FAILED_CONFIG_PARSING_UNSUCCESSFUL` |  |
+| `21` | `MISSION_FAILED_CONFIG_MISSING_DATA` |  |
+| `22` | `MISSION_FAILED_MISSION_COMPROMISED` |  |
+| `23` | `MISSION_FAILED_DISCONNECTED_SWARM_PLANNER` |  |
+| `24` | `MISSION_FAILED_DISCONNECTED_EDGE` |  |
+| `25` | `MISSION_FAILED_DISCONNECTED_AUTONOMY` |  |
+| `30` | `PLANNING_WARN_VEHICLES_MISMATCH` |  |
+| `31` | `PLANNING_WARN_NOT_ENOUGH_COVERAGE` |  |
+| `32` | `PLANNING_WARN_DATE_COMPROMISED` |  |
+| `40` | `PLANNING_FAILED_NO_SOLUTION_FOUND` |  |
+| `41` | `PLANNING_FAILED` |  |
 

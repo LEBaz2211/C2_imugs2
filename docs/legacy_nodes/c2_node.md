@@ -1,5 +1,7 @@
 # `/c2_node`
 
+> **Documentation label: REFERENCE** — frozen `legacy_ros/` node evidence.
+
 ## Purpose
 
 `/c2_node` is the old REST-to-ROS bridge. It listens on `http://localhost:5001/mission_control`, accepts mission commands as HTTP JSON, and republishes them as old C2 ROS messages.
@@ -106,4 +108,3 @@ The status code `2` means `START`. Downstream, the mission manager asks the flee
 - The REST `mission_id` field is read, but `C2::setMissionConfig()` stores the mission id from inside `mission_config`.
 - `change_status` uses the one mission id currently stored in the node. It is not a multi-mission REST session manager.
 - The HTTP response only confirms that the request was published to ROS; it does not mean the mission was planned or started.
-

@@ -1,10 +1,12 @@
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from c2_imugs2.cli import build_service
 from c2_imugs2.domain import AgentProfile
 from c2_imugs2.domain import MissionRequest, MissionStatus
-from c2_imugs2.mission_config import load_and_validate_mission
+from c2_imugs2.mission_config import MissionValidationError, load_and_validate_mission
 from c2_imugs2.mission_service import MissionService
 from c2_imugs2.repositories import read_json
 from c2_imugs2.repositories import AgentRepository, EdgeDispatchRepository, MissionRepository, PlanRepository
@@ -26,6 +28,21 @@ class FakePlanner:
                 }
             },
         }
+
+
+def test_ui_geofence_action_creates_a_complete_coverage_objective() -> None:
+    source = (ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    geofence_branch = source.split(
+        '} else if ((feature.feature_type === "geofence" || feature.feature_type === "workspace")',
+        1,
+    )[1].split('} else if (feature.feature_type === "road"', 1)[0]
+
+    assert "geofence: { feature_id: feature.feature_id }" in geofence_branch
+    assert "geofence: directGeometryRefFromFeature(feature)" not in geofence_branch
+    assert "behavior: 1" in geofence_branch
+    assert "geometries: [{ feature_id: feature.feature_id }]" in geofence_branch
+    assert "maximize_coverage: true" in geofence_branch
+    assert ": [6]" in geofence_branch
 
 
 def test_normalizes_legacy_objective_geometry():
@@ -70,6 +87,50 @@ def test_normalizes_old_icd_aliases():
     assert normalized["objective"]["geometries"] == [{"feature_id": "delivery-point-east"}]
     assert normalized["objective"]["maximize_coverage"] is True
     assert normalized["objective"]["vehicle_orientation"] == [90]
+
+
+def test_coverage_requires_a_positive_swath_width():
+    mission = {
+        "mission_id": "coverage",
+        "behavior": 1,
+        "vehicles": ["ugv-alpha"],
+        "objective": {
+            "geometries": [
+                {
+                    "geometry": {
+                        "geometry_type": "Polygon",
+                        "coordinates": [[[4.0, 50.0], [4.1, 50.0], [4.1, 50.1], [4.0, 50.0]]],
+                    }
+                }
+            ],
+            "maximize_coverage": True,
+        },
+    }
+
+    with pytest.raises(MissionValidationError, match="swath_width_m"):
+        load_and_validate_mission(mission)
+
+    mission["objective"]["maximum_coverage_distances"] = [6.0]
+    normalized = load_and_validate_mission(mission)
+
+    assert normalized["objective"]["maximum_coverage_distances"] == [6.0]
+
+
+def test_coverage_width_accepts_legacy_alias():
+    mission = {
+        "mission_id": "coverage-alias",
+        "behavior": 1,
+        "vehicles": ["ugv-alpha"],
+        "objective": {
+            "geometries": [{"feature_id": "field"}],
+            "maximize_coverage": True,
+            "maximize_coverage_distances": [4.5],
+        },
+    }
+
+    normalized = load_and_validate_mission(mission)
+
+    assert normalized["objective"]["maximum_coverage_distances"] == [4.5]
 
 
 def test_service_init_approve_start(tmp_path):

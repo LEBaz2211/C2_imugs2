@@ -17,7 +17,7 @@ export function normalizeMission(input: unknown): MissionConfig {
   if (Array.isArray(objective.geometries)) {
     objective.geometries = objective.geometries.map((geometryRef) => (isObject(geometryRef) ? normalizeGeometryRef(geometryRef) : geometryRef));
   }
-  if (objective.maximize_area_coverage && !objective.maximize_coverage) {
+  if (hasOwn(objective, "maximize_area_coverage") && !hasOwn(objective, "maximize_coverage")) {
     objective.maximize_coverage = objective.maximize_area_coverage;
     delete objective.maximize_area_coverage;
   }
@@ -26,11 +26,11 @@ export function normalizeMission(input: unknown): MissionConfig {
   }
 
   const transit = isObject(data.transit) ? data.transit : undefined;
-  if (transit?.optimalization && !transit.optimization) {
+  if (transit && hasOwn(transit, "optimalization") && !hasOwn(transit, "optimization")) {
     transit.optimization = transit.optimalization;
     delete transit.optimalization;
   }
-  if (transit?.vehicle_constraints && !transit.desired_vehicle_constraints) {
+  if (transit && hasOwn(transit, "vehicle_constraints") && !hasOwn(transit, "desired_vehicle_constraints")) {
     transit.desired_vehicle_constraints = transit.vehicle_constraints;
     delete transit.vehicle_constraints;
   }
@@ -43,12 +43,22 @@ export function normalizeMission(input: unknown): MissionConfig {
 
   for (const section of [data.start, data.transit, data.objective]) {
     if (!isObject(section)) continue;
-    if (section.vehicle_formation_distances && !section.vehicle_formation_distance) {
+    if (hasOwn(section, "vehicle_formation_distances") && !hasOwn(section, "vehicle_formation_distance")) {
       section.vehicle_formation_distance = section.vehicle_formation_distances;
       delete section.vehicle_formation_distances;
     }
+    if (hasOwn(section, "maximize_coverage_distances") && !hasOwn(section, "maximum_coverage_distances")) {
+      section.maximum_coverage_distances = section.maximize_coverage_distances;
+      delete section.maximize_coverage_distances;
+    }
   }
 
+  if (transit && hasOwn(transit, "geofence_maximum_coverage") && !hasOwn(transit, "geofence_maximize_coverage")) {
+    transit.geofence_maximize_coverage = transit.geofence_maximum_coverage;
+    delete transit.geofence_maximum_coverage;
+  }
+
+  if (!hasOwn(data, "schema_version")) data.schema_version = "1.0";
   return data as MissionConfig;
 }
 
@@ -62,36 +72,59 @@ export function validateMission(mission: MissionConfig, agents: Agent[], feature
   if (mission.phase !== undefined && (!Number.isInteger(mission.phase) || mission.phase < 0)) errors.push("phase must be an integer greater than or equal to 0.");
   if (!Array.isArray(mission.vehicles) || mission.vehicles.length === 0) errors.push("vehicles must be a non-empty array.");
 
-  for (const vehicle of mission.vehicles ?? []) {
-    if (!agentIds.has(vehicle)) errors.push(`vehicle '${vehicle}' is not in the agent registry.`);
-  }
-
-  if (!mission.objective || !Array.isArray(mission.objective.geometries) || mission.objective.geometries.length === 0) {
-    errors.push("objective.geometries must be a non-empty array.");
-  }
-
-  for (const [index, geometry] of mission.objective?.geometries?.entries() ?? []) {
-    const hasFeature = typeof geometry.feature_id === "string";
-    const hasGeometry = isObject(geometry.geometry);
-    if (hasFeature === hasGeometry) errors.push(`objective.geometries[${index}] must contain exactly one of feature_id or geometry.`);
-    if (hasFeature && !featureIds.has(geometry.feature_id!)) errors.push(`feature '${geometry.feature_id}' was not found.`);
-    if (hasGeometry) {
-      if (typeof geometry.geometry?.geometry_type !== "string") errors.push(`objective.geometries[${index}].geometry.geometry_type must be a string.`);
-      if (geometry.geometry?.coordinates === undefined) errors.push(`objective.geometries[${index}].geometry.coordinates is required.`);
+  if (Array.isArray(mission.vehicles)) {
+    for (const vehicle of mission.vehicles) {
+      if (typeof vehicle !== "string" || !vehicle) errors.push("vehicles must contain non-empty string ids.");
+      else if (!agentIds.has(vehicle)) errors.push(`vehicle '${vehicle}' is not in the agent registry.`);
     }
   }
 
-  const formation = mission.objective?.vehicle_formation;
+  const objective = isObject(mission.objective) ? mission.objective : undefined;
+  const geometries = Array.isArray(objective?.geometries) ? objective.geometries : [];
+  if (!objective) errors.push("objective must be a JSON object.");
+  if (geometries.length === 0) {
+    errors.push("objective.geometries must be a non-empty array.");
+  }
+
+  for (const [index, geometry] of geometries.entries()) {
+    if (!isObject(geometry)) {
+      errors.push(`objective.geometries[${index}] must be a JSON object.`);
+      continue;
+    }
+    const hasFeature = typeof geometry.feature_id === "string";
+    const hasGeometry = isObject(geometry.geometry);
+    if (hasFeature === hasGeometry) errors.push(`objective.geometries[${index}] must contain exactly one of feature_id or geometry.`);
+    if (hasFeature && !featureIds.has(geometry.feature_id as string)) errors.push(`feature '${geometry.feature_id}' was not found.`);
+    if (hasGeometry) {
+      const literal = geometry.geometry as Record<string, unknown>;
+      if (typeof literal.geometry_type !== "string") errors.push(`objective.geometries[${index}].geometry.geometry_type must be a string.`);
+      if (literal.coordinates === undefined) errors.push(`objective.geometries[${index}].geometry.coordinates is required.`);
+    }
+  }
+
+  const formation = objective?.vehicle_formation;
   if (formation !== undefined && ![0, 1, 2, 3, 4, 5, 6].includes(Number(formation))) errors.push("objective.vehicle_formation must be one of 0, 1, 2, 3, 4, 5, or 6.");
-  if (mission.objective?.vehicle_formation_distance !== undefined && typeof mission.objective.vehicle_formation_distance !== "number") errors.push("objective.vehicle_formation_distance must be a number.");
-  if (mission.objective?.vehicle_orientation !== undefined && (!Array.isArray(mission.objective.vehicle_orientation) || !mission.objective.vehicle_orientation.every((value) => typeof value === "number"))) {
+  if (objective?.vehicle_formation_distance !== undefined && typeof objective.vehicle_formation_distance !== "number") errors.push("objective.vehicle_formation_distance must be a number.");
+  if (objective?.vehicle_orientation !== undefined && (!Array.isArray(objective.vehicle_orientation) || !objective.vehicle_orientation.every((value) => typeof value === "number"))) {
     errors.push("objective.vehicle_orientation must be an array of numbers.");
   }
   if (
-    mission.objective?.maximum_coverage_distances !== undefined &&
-    (!Array.isArray(mission.objective.maximum_coverage_distances) || !mission.objective.maximum_coverage_distances.every((value) => typeof value === "number"))
+    objective?.maximum_coverage_distances !== undefined &&
+    (!Array.isArray(objective.maximum_coverage_distances) ||
+      objective.maximum_coverage_distances.length === 0 ||
+      !objective.maximum_coverage_distances.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0))
   ) {
-    errors.push("objective.maximum_coverage_distances must be an array of numbers.");
+    errors.push("objective.maximum_coverage_distances must be a non-empty array of positive swath widths in metres.");
+  }
+  if (Number(mission.behavior) === 1 && !objective?.maximum_coverage_distances?.length) {
+    errors.push("coverage behavior requires objective.maximum_coverage_distances (for example [6.0] metres).");
+  }
+  if (
+    objective?.maximum_coverage_distances?.length &&
+    Array.isArray(mission.vehicles) &&
+    ![1, mission.vehicles.length].includes(objective.maximum_coverage_distances.length)
+  ) {
+    errors.push("maximum_coverage_distances must contain one shared width or one width per mission vehicle.");
   }
 
   return errors;
@@ -220,6 +253,10 @@ function geometryType(geometry: GeometryLiteral) {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function normalizeGeometryRef(value: Record<string, unknown>): GeometryRef {

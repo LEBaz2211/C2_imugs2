@@ -1,5 +1,10 @@
 # ROS types · centralized_msgs · MSG
 
+> **Documentation label: GENERATED**
+> Static discovery from the editable `backend/`, adapter, frontend, and schemas;
+> declarations are not proof of runtime availability. Linked runtime examples are
+> separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
+
 IDL definitions in this extracted package/type group.
 
 | Contract | Type/details | Evidence |

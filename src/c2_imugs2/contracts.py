@@ -266,13 +266,18 @@ def _frontend_api_calls(path: Path, repo_root: Path) -> list[dict[str, Any]]:
 def _match_http_endpoint_node(nodes: dict[str, dict[str, Any]], method: str, call_path: str) -> str | None:
     call_base = call_path.split("?", 1)[0]
     call_pattern = re.sub(r"\$\{[^}]+\}", "{param}", call_base)
+    literal_prefix = call_base.split("${", 1)[0]
     for node_id, node in nodes.items():
         details = node.get("details") or {}
         if details.get("method") != method:
             continue
         route = str(details.get("path") or "")
         route_pattern = re.sub(r"\{[^}]+\}", "{param}", route)
-        if call_pattern == route_pattern or call_base == route:
+        if (
+            call_pattern == route_pattern
+            or call_base == route
+            or (literal_prefix == route and call_base.startswith(f"{route}${{"))
+        ):
             return node_id
     return None
 
@@ -456,19 +461,50 @@ def _cpp_ros_usages(path: Path, repo_root: Path) -> list[dict[str, Any]]:
     scan_text = re.sub(r"/\*.*?\*/", lambda value: "\n" * value.group(0).count("\n"), text, flags=re.S)
     scan_text = re.sub(r"(?m)^\s*//.*$", "", scan_text)
     usages: list[dict[str, Any]] = []
-    pattern = re.compile(r"create_(publisher|subscription|service|client)<([^>]+)>\s*\(\s*\"([^\"]+)\"", re.S)
+    pattern = re.compile(
+        r"create_(publisher|subscription|service|client)<([^>]+)>\s*\(\s*(?P<expression>[^,\n]+)"
+    )
     for match in pattern.finditer(scan_text):
+        interface_name = _cpp_interface_expression(match.group("expression"))
+        if not interface_name:
+            continue
         usages.append(
             {
                 "kind": match.group(1),
                 "type": match.group(2).strip(),
-                "name": match.group(3),
+                "name": interface_name,
                 "path": _relative(path, repo_root),
                 "line": scan_text[: match.start()].count("\n") + 1,
                 "source_ref": _source_ref(path, repo_root, scan_text[: match.start()].count("\n") + 1),
             }
         )
     return usages
+
+
+def _cpp_interface_expression(expression: str) -> str | None:
+    """Normalize a simple concatenated ROS name without inventing runtime ids."""
+
+    parts = [part.strip() for part in expression.strip().split("+")]
+    rendered: list[str] = []
+    for part in parts:
+        literal = re.fullmatch(r'"([^\"]*)"', part)
+        if literal:
+            rendered.append(literal.group(1))
+            continue
+        identifier = part.removeprefix("this->").strip()
+        current = "".join(rendered)
+        if "AUTONOMY_TOPIC_PREFIX" in identifier:
+            rendered.append("{autonomy_prefix}")
+        elif "agent_id" in identifier:
+            rendered.append("{agent_id}" if current.endswith("agent_") else "agent_{agent_id}")
+        elif "mission_id" in identifier:
+            rendered.append("{mission_id}")
+        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", identifier):
+            rendered.append("{dynamic}")
+        else:
+            return None
+    name = "".join(rendered)
+    return name if name and not name.startswith("{dynamic}") else None
 
 
 def _resolve_ros_type(raw_type: str, idl_catalog: dict[str, dict[str, Any]]) -> str | None:
@@ -650,6 +686,7 @@ def _add_system_edges(edges: dict[str, dict[str, Any]]) -> None:
 
 def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
     planner = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "multi_robot_path_planning.py"
+    coverage = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "max_coverage.py"
     mapf = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py"
     planner_node = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "planner" / "planner" / "planner_node.py"
     mission_manager = repo_root / "backend" / "fog" / "centralized-coordination" / "src" / "centralized_coordination" / "src" / "mission_manager.cpp"
@@ -693,13 +730,14 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
         },
         {
             "id": "coverage_zone",
-            "label": "Coverage / Sweep Zone Gap",
-            "summary": "Behavior 1 calls an undefined coverage_algorithm and currently raises before producing a path.",
+            "label": "Polygon Lawnmower Coverage",
+            "summary": "Behavior 1 produces an in-polygon perimeter plus lawnmower sweep using the configured swath width.",
             "stages": [
-                _stage("config", "MissionConfig behavior=1, Polygon or LineString objective", "schema:mission_config.schema.json", inputs=["objective.geometries[].Polygon", "maximize_coverage"]),
-                _stage("undefined_helper", "Planner calls undefined coverage_algorithm", "component:planner", source_refs=[_source_ref(planner, repo_root, 102)], outputs=["NameError; no plan"]),
+                _stage("config", "MissionConfig selects one Polygon and a positive swath width", "schema:mission_config.schema.json", inputs=["behavior=1", "objective.geometries[0].Polygon", "maximize_coverage=true", "maximum_coverage_distances[] metres"]),
+                _stage("sweep", "Planner projects to local UTM and builds perimeter plus boustrophedon passes", "component:planner", source_refs=[_source_ref(coverage, repo_root, 13)], outputs=["continuous exact-coordinate coverage path"], notes=["Pass spacing never exceeds the configured swath width; concave boundaries and holes use in-polygon visibility connectors."]),
+                _stage("entry", "Each agent routes over the scenario graph to an assigned sweep endpoint", "component:planner", source_refs=[_source_ref(planner, repo_root, 182)], outputs=["graph entry path plus exact sweep waypoints"]),
             ],
-            "risks": ["Behavior 0 has a separate polygon/line candidate branch, but behavior 1 is not executable as written."],
+            "risks": ["Only one Polygon objective is accepted per coverage mission; multi-agent coverage partitions one shared pattern using the narrowest selected swath."],
         },
         {
             "id": "mission_roads",

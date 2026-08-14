@@ -32,6 +32,12 @@ def to_legacy_mission_config(mission_config: dict[str, Any]) -> dict[str, Any]:
     if isinstance(transit, dict) and "optimization" in transit:
         transit["optimalization"] = deepcopy(transit["optimization"])
         transit.pop("optimization", None)
+    objective = legacy.get("objective")
+    if isinstance(objective, dict) and "maximum_coverage_distances" in objective:
+        objective["maximize_coverage_distances"] = deepcopy(
+            objective["maximum_coverage_distances"]
+        )
+        objective.pop("maximum_coverage_distances", None)
     return legacy
 
 
