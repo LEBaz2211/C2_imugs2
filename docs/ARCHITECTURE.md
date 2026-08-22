@@ -119,6 +119,8 @@ Only one scenario may be active. Each activation creates or reuses a content-add
 
 OSM has one operational path: the operator explicitly downloads roads inside a Scenario Lab polygon, the browser keeps those GeoJSON LineStrings in the scenario draft, and activation freezes them as `road` features in the versioned MapDB collection. The deployed planner has `load_osm_from_network: false`; it does not make a second live OSMnx download.
 
+Mission endpoints may fall between graph junctions. The planner projects those endpoints onto risk-safe edges and splits the selected edges only in a request-local graph copy. These virtual endpoint nodes must never be written to, or reused to mutate, the active scenario's immutable MapDB snapshot or its base routing graph.
+
 Activation stays non-ready unless both checks pass:
 
 - the planner logs that it loaded the exact versioned MapDB collection and produced a non-empty graph;

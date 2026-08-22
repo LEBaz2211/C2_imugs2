@@ -5,6 +5,7 @@ import geopandas as gpd
 
 from .models import *
 from .mapf import *
+from .graph import EdgeSnapIndex, add_virtual_endpoint_nodes
 from .task_allocation import *
 from .max_coverage import *
 
@@ -21,6 +22,12 @@ class MultiRobotPathPlanning:
         self.mongodb_url = mongodb_url
         self.db = db
         self.risk_polygons = list(risk_polygons or [])
+        self.edge_snap_index = None
+
+    def set_graph(self, graph, projected_graph=None):
+        """Install one immutable scenario graph and its read-only snap index."""
+        self.graph = graph
+        self.edge_snap_index = EdgeSnapIndex(graph, projected_graph=projected_graph)
 
     def update_mission(self, mission_id, mission_str, map_feature_collection):
         """
@@ -138,10 +145,11 @@ class MultiRobotPathPlanning:
 
             
             # Perform A* pathfinding from the agent's current position to the destination
-            route = self._search_route(agent, destination)
+            route, route_graph = self._search_route(agent, destination)
             
             path = self._navigation_path_from_route(
                 route,
+                route_graph,
                 agent.localization,
                 destination,
             )
@@ -160,10 +168,11 @@ class MultiRobotPathPlanning:
 
 
                 # Create an A* pathfinder for this agent, considering its assigned destination
-                route = self._search_route(agent, destination)
+                route, route_graph = self._search_route(agent, destination)
 
                 path = self._navigation_path_from_route(
                     route,
+                    route_graph,
                     agent.localization,
                     destination,
                 )
@@ -180,13 +189,14 @@ class MultiRobotPathPlanning:
                 agent = next(agent for agent in agents_to_plan if agent.agent_id == agent_id)
                 path = self._navigation_path_from_route(
                     route,
+                    self.graph,
                     agent.localization,
                     allocations[agent_id],
                 )
                 new_paths[agent_id] = path
         return new_paths
 
-    def _navigation_path_from_route(self, route, start, destination):
+    def _navigation_path_from_route(self, route, route_graph, start, destination):
         """Attach a graph route to its exact endpoints and remove graph noise."""
         # Task allocation stores each robot's ordered goals as a list. Point
         # navigation currently plans the first goal in that list, matching
@@ -196,8 +206,8 @@ class MultiRobotPathPlanning:
         path = [[float(start[0]), float(start[1])]]
         path.extend(
             [
-                float(self.graph.nodes[state.get_node()]["x"]),
-                float(self.graph.nodes[state.get_node()]["y"]),
+                float(route_graph.nodes[state.get_node()]["x"]),
+                float(route_graph.nodes[state.get_node()]["y"]),
             ]
             for state in route
         )
@@ -360,39 +370,30 @@ class MultiRobotPathPlanning:
             )
         )
         failures = []
+        candidates = []
         for coverage_points in orientations:
             entry = coverage_points[0]
-            candidate_nodes = sorted(
-                self.graph.nodes,
-                key=lambda node: (
-                    (self.graph.nodes[node]["x"] - entry[0]) ** 2
-                    + (self.graph.nodes[node]["y"] - entry[1]) ** 2
-                ),
-            )
-            for candidate_node in candidate_nodes:
-                candidate = [
-                    self.graph.nodes[candidate_node]["x"],
-                    self.graph.nodes[candidate_node]["y"],
-                ]
-                if not self._connector_is_risk_free(candidate, entry):
-                    continue
-                try:
-                    route = self._search_route(agent, [candidate])
-                except RuntimeError as exc:
-                    failures.append(str(exc))
-                    continue
+            try:
+                route, route_graph = self._search_route(agent, entry)
+            except RuntimeError as exc:
+                failures.append(str(exc))
+                continue
 
-                path = [
-                    [self.graph.nodes[state.get_node()]["x"], self.graph.nodes[state.get_node()]["y"]]
-                    for state in route
-                ]
-                if not path or path[-1] != candidate:
-                    continue
-                for point in coverage_points:
-                    point = [float(point[0]), float(point[1])]
-                    if not path or point != path[-1]:
-                        path.append(point)
-                return path
+            path = self._navigation_path_from_route(
+                route,
+                route_graph,
+                agent.localization,
+                entry,
+            )
+            transit_length = self._path_length_m(path)
+            for point in coverage_points[1:]:
+                point = [float(point[0]), float(point[1])]
+                if not path or point != path[-1]:
+                    path.append(point)
+            candidates.append((transit_length, path))
+
+        if candidates:
+            return min(candidates, key=lambda candidate: candidate[0])[1]
 
         raise RuntimeError(
             f"No route from agent {agent.agent_id} to either end of its coverage sweep: "
@@ -403,13 +404,35 @@ class MultiRobotPathPlanning:
         connector = LineString([start, destination])
         return not any(risk_polygon.intersects(connector) for risk_polygon in self.risk_polygons)
 
+    @staticmethod
+    def _path_length_m(path):
+        total = 0.0
+        for start, end in zip(path, path[1:]):
+            mean_latitude = math.radians((start[1] + end[1]) / 2.0)
+            dx = (end[0] - start[0]) * 111320.0 * math.cos(mean_latitude)
+            dy = (end[1] - start[1]) * 110540.0
+            total += math.hypot(dx, dy)
+        return total
+
     def _search_route(self, agent, destination):
-        """Run A* and turn an unreachable destination into a clear failure."""
-        result = AStar(
+        """Run A* between query-local virtual nodes on the scenario graph."""
+        if destination and isinstance(destination[0], (list, tuple)):
+            destination = destination[0]
+        if self.edge_snap_index is None:
+            self.edge_snap_index = EdgeSnapIndex(self.graph)
+        start_snap = self.edge_snap_index.snap(agent.localization, self.risk_polygons)
+        destination_snap = self.edge_snap_index.snap(destination, self.risk_polygons)
+        route_graph, resolved = add_virtual_endpoint_nodes(
             self.graph,
+            [start_snap, destination_snap],
+        )
+        result = AStar(
+            route_graph,
             agent,
-            destination,
+            [destination],
             risk_polygons=self.risk_polygons,
+            start_node=resolved[0]["node"],
+            destination_node=resolved[1]["node"],
         ).search()
         if not result:
             raise RuntimeError(
@@ -423,7 +446,7 @@ class MultiRobotPathPlanning:
                 f"No route found for agent {agent.agent_id} "
                 f"from {agent.localization} to {destination}"
             )
-        return route
+        return route, route_graph
 
 
 

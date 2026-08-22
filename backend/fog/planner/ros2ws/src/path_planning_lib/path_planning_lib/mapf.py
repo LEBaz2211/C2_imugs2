@@ -17,12 +17,22 @@ from .models import *
 
     
 class AStar():
-    def __init__(self, graph, agent, ordered_destinations, risk_polygons=None):
+    def __init__(
+        self,
+        graph,
+        agent,
+        ordered_destinations,
+        risk_polygons=None,
+        start_node=None,
+        destination_node=None,
+    ):
         # Associated with a specific graph and a specific agent
         self.graph = graph
         self.agent = agent 
         self.destination = ordered_destinations[0]
         self.risk_polygons = list(risk_polygons or [])
+        self.start_node = start_node
+        self.destination_node = destination_node
 
     # def set_preferred_start_direction(self,initial_state,preferred_start_direction):
     #     if preferred_start_direction:
@@ -35,10 +45,18 @@ class AStar():
         # Set the cost of a step to a neighbor to its value in the cost graph:
         # step_cost = self.cost_graph[neighbor.location.y,neighbor.location.x]
 
-        edge = self.graph.edges[current_node, neighbor_node, 0]
-        if edge.get('risk', False):
+        edge = self.best_routable_edge(current_node, neighbor_node)
+        if edge is None:
             return float("inf")
         return edge['length']
+
+    def best_routable_edge(self, current_node, neighbor_node):
+        """Select the shortest non-risk parallel edge between two nodes."""
+        edge_data = self.graph.get_edge_data(current_node, neighbor_node) or {}
+        candidates = [data for data in edge_data.values() if not data.get('risk', False)]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda data: float(data.get('length', float('inf'))))
 
     def heuristic_cost(self, current_node, destination_node):
         current_x = self.graph.nodes[current_node]['x']
@@ -63,7 +81,12 @@ class AStar():
                 t=0
             else:
                 previous_state = route[i-1]
-                t = previous_state.get_time() + self.graph.edges[total_path[i-1], node, 0]['length'] / self.agent.nominal_speed
+                edge = self.best_routable_edge(total_path[i-1], node)
+                if edge is None:
+                    raise RuntimeError(
+                        f"Route reconstruction encountered a blocked edge {total_path[i-1]} -> {node}"
+                    )
+                t = previous_state.get_time() + edge['length'] / self.agent.nominal_speed
             state = State(t,node)
             route.append(state)
         return route
@@ -75,9 +98,13 @@ class AStar():
         low level A* search 
         """
         # start_state= State(0, ox.nearest_nodes(self.graph,self.agent.localization[0],self.agent.localization[1]))
-        start_node = self.nearest_routable_node(self.agent.localization, for_start=True)
+        start_node = self.start_node
+        if start_node is None:
+            start_node = self.nearest_routable_node(self.agent.localization, for_start=True)
 
-        destination_node = self.nearest_routable_node(self.destination, for_start=False)
+        destination_node = self.destination_node
+        if destination_node is None:
+            destination_node = self.nearest_routable_node(self.destination, for_start=False)
         
         closed_set = set()
         open_set = {start_node}
@@ -115,7 +142,7 @@ class AStar():
                 # can still select a risk edge when every alternative is long;
                 # skipping it guarantees that the emitted transit path never
                 # commands the robot through a marked risk area.
-                if self.graph.edges[current_node, neighbor_node, 0].get('risk', False):
+                if self.best_routable_edge(current_node, neighbor_node) is None:
                     continue
 
                 tentative_g_score = g_score.setdefault(current_node, float("inf")) + self.step_cost(current_node, neighbor_node)

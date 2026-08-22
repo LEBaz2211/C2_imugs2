@@ -66,7 +66,7 @@ do not describe where new backend work belongs.
 
 | Document | Label | Purpose |
 | --- | --- | --- |
-| [LLM Assistant Context Architecture](LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md) | `FUTURE` | Later natural-language mission and retrieval design |
+| [LLM Assistant Context Architecture](LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md) | `FUTURE` | Backend-scoped natural-language mission, operational context, persistence, and retrieval design |
 
 ## Change Discipline
 

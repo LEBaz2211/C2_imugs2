@@ -618,7 +618,7 @@ class PlannerNode(Node):
             "MapDB",
             risk_polygons=risk_polygons,
         )
-        self.mr_path_planner.graph = self.G
+        self.mr_path_planner.set_graph(self.G, projected_graph=G_proj)
         self.init = True
         self.get_logger().info(
             f"MAP IS LOADED collection=MapDB.{self.map_feature_collection.name} "

@@ -114,10 +114,11 @@ def test_coverage_transit_and_sweep_treat_risks_as_hard_obstacles() -> None:
     astar_methods = _class_methods(MAPF_SOURCE, "AStar")
     search_source = ast.unparse(astar_methods["search"])
     step_cost_source = ast.unparse(astar_methods["step_cost"])
+    edge_source = ast.unparse(astar_methods["best_routable_edge"])
 
     assert "risk_polygons=self.risk_polygons" in solve_source
     assert "risk_polygon.intersects(connector)" in connector_source
-    assert "get('risk', False)" in search_source
+    assert "get('risk', False)" in edge_source
     assert "continue" in search_source
     assert "float('inf')" in step_cost_source
     assert "self.nearest_routable_node(self.agent.localization, for_start=True)" in search_source
@@ -143,6 +144,27 @@ def test_navigation_attaches_exact_endpoints_and_collapses_lattice_noise() -> No
     assert "self._connector_is_risk_free(start, end)" in simplify_source
     assert "risk_polygons=self.risk_polygons" in search_source
     assert "self.connector_is_risk_free(location, node_location)" in snap_source
+
+
+def test_navigation_and_coverage_use_query_local_virtual_edge_endpoints() -> None:
+    methods = _class_methods(
+        PATH_LIBRARY / "multi_robot_path_planning.py",
+        "MultiRobotPathPlanning",
+    )
+    search_source = ast.unparse(methods["_search_route"])
+    coverage_source = ast.unparse(methods["_route_agent_to_coverage_chunk"])
+    navigation_source = ast.unparse(methods["_navigation_path_from_route"])
+    planner_methods = _class_methods(PLANNER_SOURCE, "PlannerNode")
+    initialize_source = ast.unparse(planner_methods["initialize_map"])
+
+    assert "EdgeSnapIndex" in search_source
+    assert "add_virtual_endpoint_nodes" in search_source
+    assert "start_node=resolved[0]['node']" in search_source
+    assert "destination_node=resolved[1]['node']" in search_source
+    assert "self._navigation_path_from_route" in coverage_source
+    assert "agent.localization" in coverage_source
+    assert "route_graph.nodes" in navigation_source
+    assert "set_graph(self.G, projected_graph=G_proj)" in initialize_source
 
 
 def test_successful_plan_is_cached_until_an_explicit_new_request() -> None:

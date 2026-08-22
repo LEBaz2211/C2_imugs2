@@ -6,6 +6,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 from libpysal import weights
+from pyproj import Transformer
 # from shapely.prepared import prep
 from shapely.geometry import Point, Polygon,LineString
 from scipy.spatial import Delaunay, cKDTree
@@ -36,6 +37,186 @@ class State(object):
 
 #GLOBAL VARIABLE TO ADD UNIQUE IDs in the nodes
 NODE_IDs=-1
+
+
+class EdgeSnapIndex:
+    """Metric lookup from mission endpoints to active-scenario graph edges.
+
+    The projected graph is a read-only derivative of the exact active scenario
+    graph.  It retains the base graph's ``(u, v, key)`` identifiers so a snap
+    can be applied to a temporary query graph without changing the scenario.
+    """
+
+    def __init__(self, graph, projected_graph=None):
+        if graph.number_of_edges() == 0:
+            raise ValueError("Cannot build an endpoint index for an empty routing graph")
+        if not graph.graph.get("crs"):
+            raise ValueError("Routing graph is missing CRS metadata")
+
+        self.graph = graph
+        self.projected_graph = projected_graph or ox.project_graph(graph)
+        self.to_projected = Transformer.from_crs(
+            graph.graph["crs"],
+            self.projected_graph.graph["crs"],
+            always_xy=True,
+        )
+        self.to_graph = Transformer.from_crs(
+            self.projected_graph.graph["crs"],
+            graph.graph["crs"],
+            always_xy=True,
+        )
+        self.edge_ids = []
+        projected_lines = []
+        for u, v, key, data in graph.edges(keys=True, data=True):
+            if u == v or data.get("risk", False):
+                continue
+            projected_data = self.projected_graph.get_edge_data(u, v, key)
+            if projected_data is None:
+                continue
+            line = projected_data.get("geometry")
+            if not isinstance(line, LineString):
+                line = LineString(
+                    [
+                        (
+                            float(self.projected_graph.nodes[u]["x"]),
+                            float(self.projected_graph.nodes[u]["y"]),
+                        ),
+                        (
+                            float(self.projected_graph.nodes[v]["x"]),
+                            float(self.projected_graph.nodes[v]["y"]),
+                        ),
+                    ]
+                )
+            if line.is_empty or line.length <= 0:
+                continue
+
+            # OSMnx edge geometry normally follows u -> v, but imported graph
+            # attributes are not required to do so. Normalize it before using
+            # the interpolation fraction to split a directed edge.
+            u_point = Point(
+                float(self.projected_graph.nodes[u]["x"]),
+                float(self.projected_graph.nodes[u]["y"]),
+            )
+            if Point(line.coords[-1]).distance(u_point) < Point(line.coords[0]).distance(u_point):
+                line = LineString(list(line.coords)[::-1])
+            self.edge_ids.append((u, v, key))
+            projected_lines.append(line)
+
+        if not projected_lines:
+            raise ValueError("Routing graph contains no non-risk edges for endpoint snapping")
+        self.projected_lines = gpd.GeoSeries(
+            projected_lines,
+            crs=self.projected_graph.graph["crs"],
+        )
+
+    def snap(self, location, risk_polygons=None, endpoint_tolerance_m=0.25):
+        """Return the nearest risk-safe point along a routable directed edge."""
+        lon, lat = float(location[0]), float(location[1])
+        x_coord, y_coord = self.to_projected.transform(lon, lat)
+        point = Point(x_coord, y_coord)
+        distances = self.projected_lines.distance(point).to_numpy()
+        for index in np.argsort(distances):
+            line = self.projected_lines.iloc[int(index)]
+            distance_along = float(line.project(point))
+            projected_snap = line.interpolate(distance_along)
+            snap_lon, snap_lat = self.to_graph.transform(projected_snap.x, projected_snap.y)
+            coordinate = [float(snap_lon), float(snap_lat)]
+            if not _endpoint_connector_is_risk_free(location, coordinate, risk_polygons or []):
+                continue
+
+            u, v, key = self.edge_ids[int(index)]
+            if distance_along <= endpoint_tolerance_m:
+                node = u
+                coordinate = [float(self.graph.nodes[u]["x"]), float(self.graph.nodes[u]["y"])]
+                fraction = 0.0
+            elif line.length - distance_along <= endpoint_tolerance_m:
+                node = v
+                coordinate = [float(self.graph.nodes[v]["x"]), float(self.graph.nodes[v]["y"])]
+                fraction = 1.0
+            else:
+                node = None
+                fraction = distance_along / line.length
+            return {
+                "edge": (u, v, key),
+                "fraction": float(fraction),
+                "coordinate": coordinate,
+                "node": node,
+                "snap_distance_m": float(distances[int(index)]),
+            }
+        raise RuntimeError(f"No risk-safe routing edge is available near endpoint {location}")
+
+
+def add_virtual_endpoint_nodes(graph, snaps):
+    """Split snapped edges on a query-local graph and resolve endpoint nodes.
+
+    All mutations apply to the returned graph copy. Parallel and reverse edges
+    between the selected endpoints are split together so directionality and
+    edge attributes remain valid, including when both query points lie on the
+    same base edge.
+    """
+    query_graph = graph.copy()
+    resolved = [dict(snap) for snap in snaps]
+    grouped = {}
+    for index, snap in enumerate(resolved):
+        if snap.get("node") is not None:
+            continue
+        u, v, _key = snap["edge"]
+        grouped.setdefault(frozenset((u, v)), []).append((index, snap))
+
+    for group_number, items in enumerate(grouped.values()):
+        canonical_u, canonical_v, _key = items[0][1]["edge"]
+        positions = []
+        for index, snap in items:
+            edge_u, edge_v, _edge_key = snap["edge"]
+            fraction = snap["fraction"] if (edge_u, edge_v) == (canonical_u, canonical_v) else 1.0 - snap["fraction"]
+            positions.append((float(fraction), index, snap["coordinate"]))
+        positions.sort(key=lambda item: item[0])
+
+        virtuals = []
+        for position, index, coordinate in positions:
+            if virtuals and abs(position - virtuals[-1][0]) <= 1e-12:
+                node = virtuals[-1][1]
+            else:
+                node = ("query_endpoint", group_number, len(virtuals))
+                query_graph.add_node(node, x=float(coordinate[0]), y=float(coordinate[1]), virtual=True)
+                virtuals.append((position, node))
+            resolved[index]["node"] = node
+
+        directed_edges = []
+        for edge_u, edge_v in ((canonical_u, canonical_v), (canonical_v, canonical_u)):
+            for edge_key, data in list((query_graph.get_edge_data(edge_u, edge_v) or {}).items()):
+                directed_edges.append((edge_u, edge_v, edge_key, dict(data)))
+                query_graph.remove_edge(edge_u, edge_v, edge_key)
+
+        if not directed_edges:
+            raise RuntimeError(f"Cannot split missing routing edge {canonical_u!r} <-> {canonical_v!r}")
+
+        for edge_u, edge_v, edge_key, data in directed_edges:
+            if (edge_u, edge_v) == (canonical_u, canonical_v):
+                ordered_virtuals = virtuals
+            else:
+                ordered_virtuals = [(1.0 - position, node) for position, node in reversed(virtuals)]
+            chain = [(0.0, edge_u), *ordered_virtuals, (1.0, edge_v)]
+            original_length = float(data.get("length", 0.0))
+            for (start_fraction, start_node), (end_fraction, end_node) in zip(chain, chain[1:]):
+                segment_data = dict(data)
+                segment_data["length"] = original_length * max(0.0, end_fraction - start_fraction)
+                segment_data["geometry"] = LineString(
+                    [
+                        (float(query_graph.nodes[start_node]["x"]), float(query_graph.nodes[start_node]["y"])),
+                        (float(query_graph.nodes[end_node]["x"]), float(query_graph.nodes[end_node]["y"])),
+                    ]
+                )
+                query_graph.add_edge(start_node, end_node, key=edge_key, **segment_data)
+    return query_graph, resolved
+
+
+def _endpoint_connector_is_risk_free(start, destination, risk_polygons):
+    connector = LineString([start, destination])
+    return not any(
+        risk_polygon.intersection(connector).length > 1e-12
+        for risk_polygon in risk_polygons
+    )
 
 
 
