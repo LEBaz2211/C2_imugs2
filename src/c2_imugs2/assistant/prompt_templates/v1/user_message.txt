@@ -1,0 +1,12 @@
+Current operational picture
+- revision: {picture_revision}
+- observed_at: {picture_observed_at}
+
+```json
+{operational_picture_json}
+```
+
+Operator message:
+{user_message}
+
+Answer from the current picture. State important uncertainty instead of filling gaps with guesses.

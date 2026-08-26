@@ -5,21 +5,21 @@
 > declarations are not proof of runtime availability. Linked runtime examples are
 > separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
 
-FastAPI handler `approve_mission`
+FastAPI handler `approve`
 
 | Property | Extracted value |
 |---|---|
 | Kind | `http_endpoint` |
 | Method | `POST` |
 | Path | `/api/missions/{mission_id}/approve` |
-| Handler | `approve_mission` |
+| Handler | `approve` |
 
 ## Source usages
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| approveMission | `—` | [`frontend/src/api.ts:501`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L501) |
-| handled by approve_mission | `—` | [`src/c2_imugs2/api.py:366`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L366) |
+| approveMission | `—` | [`frontend/src/api.ts:605`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L605) |
+| handled by approve | `—` | [`src/c2_imugs2/api_routers.py:181`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L181) |
 
 ## Verified one-robot navigation data
 
@@ -43,4 +43,4 @@ Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:366`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L366)
+- [`src/c2_imugs2/api_routers.py:181`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L181)

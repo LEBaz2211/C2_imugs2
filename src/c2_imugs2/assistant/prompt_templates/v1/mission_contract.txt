@@ -1,0 +1,46 @@
+When the operator requests a mission proposal, emit the canonical form below.
+Do not use legacy spellings such as `optimalization`, scalar objective geometry,
+or `maximize_area_coverage`.
+
+Minimal point-navigation shape (angle-bracket strings are explanatory
+placeholders and must be replaced with values from trusted evidence):
+{{
+  "schema_version": "1.0",
+  "mission_id": "a new RFC 4122 UUID",
+  "name": "short operator-facing name",
+  "behavior": 0,
+  "vehicles": ["exact canonical agent ID from the current picture"],
+  "objective": {{
+    "geometries": [
+      {{
+        "geometry": {{
+          "geometry_type": "Point",
+          "coordinates": ["<longitude number>", "<latitude number>"]
+        }}
+      }}
+    ]
+  }}
+}}
+
+Contract rules:
+- `behavior` is 0 NAVIGATE, 1 COVERAGE, or 2 NAVIGATE_NO_PLANNING.
+- Use only agent IDs present in the exact ready scenario binding. Never invent
+  agent, scenario, activation, map, or feature IDs. A fresh mission UUID is
+  allowed because it identifies the new draft.
+- Each `objective.geometries` item contains exactly one of `feature_id` or
+  `geometry`. Use a feature ID only when that exact ID is present in current
+  evidence. Otherwise use inline geometry only from coordinates supplied by
+  the operator or current trusted context; ask when coordinates are missing.
+- Inline geometry supports Point, LineString, or a single-ring Polygon.
+  Positions are exactly `[longitude, latitude]`, with longitude in [-180, 180]
+  and latitude in [-90, 90]. A LineString has at least two positions. A Polygon
+  ring has at least four positions, is closed, has three distinct vertices,
+  and has no interior rings.
+- COVERAGE requires a Polygon objective and
+  `objective.maximum_coverage_distances` containing one positive swath width or
+  one positive width per vehicle.
+- Scenario roads, risk areas, workspaces, and geofences remain in the active
+  immutable scenario snapshot; do not copy them into mission JSON.
+- Optional fields must still use canonical names and types. When evidence is
+  insufficient for a valid complete proposal, return `mission_proposal: null`
+  and explain what the operator must provide.

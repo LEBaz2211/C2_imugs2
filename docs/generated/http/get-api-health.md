@@ -18,8 +18,8 @@ FastAPI handler `health`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by health | `—` | [`src/c2_imugs2/api.py:64`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L64) |
+| handled by health | `—` | [`src/c2_imugs2/api.py:167`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L167) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:64`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L64)
+- [`src/c2_imugs2/api.py:167`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L167)

@@ -68,7 +68,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             responsibilities=["UI API", "Canonical-to-legacy translation", "ROS-to-SSE normalization"],
             tags=["fastapi", "compatibility-boundary"],
             source_refs=[
-                ref("src/c2_imugs2/api.py", '@app.post("/api/missions/init")', "Mission Init endpoint"),
+                ref("src/c2_imugs2/api_routers.py", '@router.post("/init")', "Mission Init endpoint"),
                 ref("src/c2_imugs2/api.py", '@app.get("/api/events")', "SSE endpoint"),
                 ref("src/c2_imugs2/legacy_rest.py", "def to_legacy_mission_config", "Legacy spelling adapter"),
             ],
@@ -262,7 +262,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             contract="Canonical MissionConfig",
             source_refs=[
                 ref("frontend/src/api.ts", "export async function initMission", "HTTP caller"),
-                ref("src/c2_imugs2/api.py", '@app.post("/api/missions/init")', "HTTP handler"),
+                ref("src/c2_imugs2/api_routers.py", '@router.post("/init")', "HTTP handler"),
             ],
         ),
         _interaction(
@@ -276,7 +276,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             ["approve"],
             interface="POST /api/missions/{mission_id}/approve",
             contract="MissionRequest.APPROVE = 1",
-            source_refs=[ref("src/c2_imugs2/api.py", '@app.post("/api/missions/{mission_id}/approve")', "Approve handler")],
+            source_refs=[ref("src/c2_imugs2/api_routers.py", '@router.post("/{mission_id}/approve")', "Approve handler")],
             notes=["Adapter response ACCEPTED=4 is optimistic until ROS feedback confirms it."],
         ),
         _interaction(
@@ -290,7 +290,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             ["start"],
             interface="POST /api/missions/{mission_id}/start",
             contract="MissionRequest.START = 2",
-            source_refs=[ref("src/c2_imugs2/api.py", '@app.post("/api/missions/{mission_id}/start")', "Start handler")],
+            source_refs=[ref("src/c2_imugs2/api_routers.py", '@router.post("/{mission_id}/start")', "Start handler")],
             notes=["UI may enable Start from the adapter's optimistic ACCEPTED state."],
         ),
         _interaction(
@@ -885,7 +885,7 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             "HTTP success is presented as mission-state confirmation",
             "The adapter sets ACCEPTED/STARTED immediately after old REST returns HTTP 200, before ROS confirms the transition.",
             [
-                ref("src/c2_imugs2/api.py", 'mission["status"] = status', "Adapter optimistic state"),
+                ref("src/c2_imugs2/application_services.py", '"status": optimistic_status', "Adapter optimistic state"),
                 ref(f"{REST}/MissionHandler.cpp", "sendChangeStatus(requested_state)", "HTTP handler only publishes"),
             ],
         ),
@@ -907,16 +907,6 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
             [
                 ref(PLANNER, 'mission = {"mission_id": mission_id, "tasks": tasks}', "Empty dict is serializable"),
                 ref(f"{CENTRAL}/mission_manager.cpp", 'result->plan.find("\\"tasks\\":[]")', "Wrong empty check"),
-            ],
-        ),
-        _gap(
-            "partial_schema_validation",
-            "high",
-            "JSON Schemas are documentation, not the enforced API contract",
-            "FastAPI accepts dict[str, Any] and a handwritten subset validator. Several schema constraints and execution invariants are not checked.",
-            [
-                ref("src/c2_imugs2/api.py", "async def init_mission(mission_config: dict[str, Any])", "Generic request type"),
-                ref("src/c2_imugs2/mission_config.py", "def validate_mission_config", "Partial validator"),
             ],
         ),
         _gap(
@@ -1094,10 +1084,13 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
             ["ui_init_http", "api_rest_initialize"],
             input=canonical_config,
             output={"canonical_validated": True, "runtime_feature_refs": "inline geometry", "mission_id": MISSION_ID},
-            transformations=["Partial handwritten validation—not full JSON Schema validation.", "Runtime feature lookup currently defaults to map rma."],
+            transformations=[
+                "Canonical draft-2020-12 JSON Schema validation followed by semantic checks.",
+                "Runtime feature lookup currently defaults to map rma.",
+            ],
             source_refs=[
-                ref("src/c2_imugs2/api.py", "legacy_config = _inline_user_feature_refs", "Runtime geometry inlining"),
-                ref("src/c2_imugs2/api.py", 'canonical["mission_id"] = _legacy_uuid', "UUID repair"),
+                ref("src/c2_imugs2/application_services.py", "compatibility_config = self.inline_feature_refs", "Runtime geometry inlining"),
+                ref("src/c2_imugs2/application_services.py", 'canonical["mission_id"] = self.normalize_mission_id', "UUID repair"),
             ],
         ),
         _step(

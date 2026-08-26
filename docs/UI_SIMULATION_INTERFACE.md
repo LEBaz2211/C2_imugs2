@@ -20,7 +20,7 @@ The UI renders state and sends operator commands. It does not construct ROS mess
 
 The backend:
 
-- performs partial structural validation and normalizes mission JSON,
+- executes the canonical mission schema and semantic checks after normalizing legacy aliases,
 - translates canonical fields and enums to legacy forms,
 - serves maps, agents, examples, and runtime state,
 - sends mission commands through the old REST bridge,
@@ -36,10 +36,18 @@ The backend:
 | Bootstrap | `GET /api/runtime/bootstrap`, `/api/agents`, `/api/mission-examples` |
 | Missions | `POST /api/missions/init`, `GET /api/missions/{id}`, `POST /approve`, `POST /start`, `DELETE /api/missions/{id}` |
 | Scenario | `GET /api/scenarios`, `GET /api/scenarios/active`, `POST /api/scenarios/activate` |
+| Assistant | `GET /api/assistant/status`, `GET /api/assistant/operational-picture`, `POST /api/assistant/messages`, `DELETE /api/assistant/conversations/{id}` |
 | Map | `GET/POST /api/map/features`, `PUT/DELETE /api/map/features/{id}`, `POST /api/map/osm-roads/query` |
 | Live state | `GET /api/events` |
 
 The API implementation may include experimental map/scenario helpers. They are not compatibility contracts until documented as stable.
+
+The assistant endpoint completes one non-streaming model request. The optional
+request field `debug=true` adds a bounded, redacted trace of the exact model
+messages, final provider event, and any actual tool calls to the response. The
+UI exposes that option only when opened with `?assistantDebug=1`; this is a
+diagnostic discoverability gate, not access control. No tools are currently
+bound to the LLM.
 
 `GET /api/contracts` contains a curated `atlas` for the verified active mission path and a broader source-discovery catalog. The atlas is authoritative for the visualization; raw scanner discoveries are evidence candidates, not proof of an active runtime contract.
 
@@ -55,7 +63,12 @@ The API implementation may include experimental map/scenario helpers. They are n
 
 Deleting through the UI does not remove ROS or MongoDB mission records. Test database cleanup is a separate, destructive action.
 
-Important legacy limitation: approve/start are mission-specific only at the FastAPI route. The old REST status body contains no mission id and targets `/c2_node`'s last initialized mission. The adapter's immediate `ACCEPTED`/`STARTED` response is optimistic until ROS feedback confirms the state.
+Important legacy limitation: the old REST status body contains no mission id
+and targets `/c2_node`'s last initialized mission. The adapter rejects unknown,
+forgotten, or non-current route IDs before calling that bridge. It also rejects
+Approve before PLANNED/PLANNED_ALTERNATIVE and Start before ACCEPTED. Its
+immediate accepted response remains an adapter acknowledgement until ROS
+feedback confirms the state.
 
 Init additionally requires a ready active scenario and verifies that every mission vehicle belongs to it. Roads are never appended to `objective.geometries`; the planner reads them from the active scenario's immutable MapDB collection.
 
@@ -63,7 +76,10 @@ Init additionally requires a ready active scenario and verifies that every missi
 
 The scenario selector exists only in Scenario Lab. Selecting a draft does not change C2 reality; pressing **Activate** freezes the map, restarts the planner on that version, replaces the robot simulation containers, and waits for matching ROS registrations. The C2 tab displays the active readiness state but cannot switch it.
 
-The Roads panel downloads OSM highways only through an explicit polygon action. Those roads remain draft data until activation. Once active, that frozen GeoJSON is the map source used by both the C2 display and legacy planner.
+The Roads panel downloads OSM highways only through an explicit polygon action.
+Those roads remain draft data until activation. Once active, that frozen
+GeoJSON is the map source used by both the C2 display and the editable backend
+planner.
 
 ## Live Events
 
@@ -89,7 +105,10 @@ schemas/agent_profile.schema.json
 schemas/map_feature.schema.json
 ```
 
-These schemas describe the intended contract. The current mission endpoint does not execute full JSON Schema validation; its handwritten checks cover only a subset, and legacy planner/edge code has additional runtime invariants.
+The mission endpoint executes `mission_config.schema.json` after alias
+normalization and then applies semantic and active-scenario checks. Legacy
+planner/edge code still has additional runtime invariants, so schema validity
+alone is not a feasibility guarantee.
 
 Important conventions:
 
@@ -132,6 +151,9 @@ The UI should:
 - replace local mission JSON with the actual config returned by the backend after Init,
 - keep mission status separate from path availability,
 - expose diagnostics without making raw logs the primary interface.
+- show the operational-picture revision used for every assistant answer;
+- enable **Inspect in manual UI** only after schema, semantic, ready-scenario and vehicle-membership validation, and
+  never initialize an assistant proposal automatically.
 
 When a path is visible but the agent does not move, inspect edge feedback and the autonomy simulation. When a mission is planned but no path is visible, inspect mission feedback for empty tasks or waypoints.
 
@@ -141,3 +163,4 @@ When a path is visible but the agent does not move, inspect edge feedback and th
 - No mock replacement for real legacy nodes during compatibility tests.
 - No breaking changes to message, service, topic, enum, mission, or task-plan contracts.
 - No LLM benchmarking until the verified mission-generation path is ready.
+- No model access to ROS, MongoDB, Docker, runtime files, or mission commands.

@@ -1,4 +1,7 @@
 fastapi>=0.111
+jsonschema>=4.22
+langchain-core<2,>=1.0
+langchain-openai<2,>=1.0
 pymongo>=4.8
 uvicorn[standard]>=0.30
 websockets>=12

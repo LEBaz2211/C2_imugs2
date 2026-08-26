@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from copy import deepcopy
 import heapq
 import json
 import math
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,14 +18,20 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from .application_services import BackendMissionApplicationService, ScenarioApplicationService
+from .api_routers import assistant_router, mission_router, scenario_router
+from .assistant import AssistantOrchestrator, AssistantSettings, build_assistant
 from .contracts import build_contract_graph
 from .domain import MissionIssue, MissionRequest, MissionStatus
 from .legacy_map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
 from .legacy_rest import LegacyRestClient
+from .live_operational import LiveOperationalReadModelProvider
 from .mission_config import MissionValidationError, load_and_validate_mission
+from .mongo_maintenance import bootstrap_mongo_indexes
+from .operational_context import OperationalContextService
 from .repositories import read_json
 from .rosbridge import RosbridgeClient
-from .scenario_runtime import ScenarioNotReadyError, ScenarioRuntimeManager
+from .scenario_runtime import ScenarioRuntimeManager
 
 
 LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
@@ -35,8 +43,29 @@ def create_app(
     rest_client: LegacyRestClient | None = None,
     rosbridge_client: RosbridgeClient | None = None,
     scenario_manager: ScenarioRuntimeManager | None = None,
+    assistant: AssistantOrchestrator | None = None,
+    operational_context: OperationalContextService | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="C2 iMUGS2 UI Adapter API")
+    @asynccontextmanager
+    async def lifespan(current_app: FastAPI):
+        if os.environ.get("C2_IMUGS2_MONGO_BOOTSTRAP", "").strip().lower() in {"1", "true", "yes", "on"}:
+            current_app.state.storage_bootstrap = {"enabled": True, "status": "running"}
+            try:
+                report = await asyncio.to_thread(bootstrap_mongo_indexes, current_app.state.mongodb_url)
+                current_app.state.storage_bootstrap = {
+                    "enabled": True,
+                    "status": "ok" if report.ok else "degraded",
+                    **report.as_dict(),
+                }
+            except Exception as exc:
+                current_app.state.storage_bootstrap = {
+                    "enabled": True,
+                    "status": "error",
+                    "error": f"MongoDB index bootstrap failed ({type(exc).__name__})",
+                }
+        yield
+
+    app = FastAPI(title="C2 iMUGS2 UI Adapter API", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -58,7 +87,81 @@ def create_app(
     app.state.missions = {}
     app.state.agent_updates = {}
     app.state.planner_state = {}
+    app.state.command_target_mission_id = None
     app.state.forgotten_missions = _load_forgotten_missions(repo_root)
+    app.state.storage_bootstrap = {"enabled": False, "status": "not_run"}
+    app.state.mission_application = BackendMissionApplicationService(
+        repo_root=repo_root,
+        runtime=app.state,
+        rest_client=app.state.rest_client,
+        scenario_runtime=app.state.scenario_manager,
+        inline_feature_refs=_inline_user_feature_refs,
+        normalize_mission_id=_legacy_uuid,
+        status_name=_mission_status_name,
+        now=_utc_now_iso,
+        save_forgotten_missions=_save_forgotten_missions,
+    )
+    app.state.scenario_application = ScenarioApplicationService(app.state, app.state.scenario_manager)
+    app.state.assistant_settings = AssistantSettings.from_env()
+    app.state.operational_context = operational_context or OperationalContextService(
+        LiveOperationalReadModelProvider(
+            app.state,
+            app.state.scenario_manager,
+            app.state.mongodb_url,
+        ),
+        runtime_id=f"api-{uuid.uuid4().hex}",
+    )
+    app.state.assistant = assistant
+    assistant_lock = threading.Lock()
+
+    def get_assistant() -> AssistantOrchestrator:
+        if app.state.assistant is None:
+            with assistant_lock:
+                if app.state.assistant is None:
+                    app.state.assistant = build_assistant(
+                        app.state.operational_context,
+                        settings=app.state.assistant_settings,
+                    )
+        return app.state.assistant
+
+    def assistant_status() -> dict[str, Any]:
+        settings = app.state.assistant_settings
+        configured = app.state.assistant is not None or bool(
+            os.environ.get(settings.api_key_env_var, "").strip()
+        )
+        return {
+            "configured": configured,
+            "provider": "langchain_openai",
+            "base_url": settings.base_url,
+            "model": settings.model,
+            "prompt_version": settings.prompt_version,
+            "one_request_per_message": True,
+            "native_structured_output": settings.native_structured_output,
+            "streaming": False,
+            "reasoning_effort": settings.reasoning_effort,
+            "thinking_enabled": settings.enable_thinking,
+            "preserve_thinking": settings.preserve_thinking,
+            "max_output_tokens": settings.max_output_tokens,
+            "debug_trace_supported": True,
+            "model_tools_enabled": False,
+        }
+
+    app.include_router(
+        mission_router(
+            app.state.mission_application,
+            lambda mission_id: _backfill_mission_from_legacy_mongo(app, mission_id),
+        )
+    )
+    app.include_router(scenario_router(app.state.scenario_application))
+    app.include_router(
+        assistant_router(
+            context=app.state.operational_context,
+            get_assistant=get_assistant,
+            status=assistant_status,
+            repo_root=repo_root,
+            validate_proposal=app.state.mission_application.validate_draft,
+        )
+    )
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -73,6 +176,7 @@ def create_app(
             "legacy_rest": {"ok": legacy.ok, "status_code": legacy.status_code, "body": legacy.body},
             "rosbridge_url": app.state.rosbridge_client.url,
             "checks": checks,
+            "storage_bootstrap": app.state.storage_bootstrap,
         }
 
     @app.get("/api/diagnostics")
@@ -91,6 +195,7 @@ def create_app(
             "checks": checks,
             "missions": _visible_missions(app.state.missions, app.state.forgotten_missions),
             "planner_state": app.state.planner_state,
+            "storage_bootstrap": app.state.storage_bootstrap,
         }
 
     @app.get("/api/planning/diagnostics")
@@ -150,6 +255,7 @@ def create_app(
         app.state.missions.clear()
         app.state.agent_updates.clear()
         app.state.planner_state = {}
+        app.state.command_target_mission_id = None
         app.state.forgotten_missions.clear()
         _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
         return result
@@ -233,36 +339,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.get("/api/scenarios")
-    async def scenario_catalog() -> dict[str, Any]:
-        try:
-            return {"scenarios": await asyncio.to_thread(app.state.scenario_manager.list_scenarios)}
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    @app.get("/api/scenarios/active")
-    async def active_scenario_runtime() -> dict[str, Any]:
-        active = app.state.scenario_manager.validated_active()
-        return active or {
-            "status": "inactive",
-            "ready": False,
-            "message": "No scenario is active. Activate one from the Scenario tab before initializing a mission.",
-        }
-
-    @app.post("/api/scenarios/activate")
-    @app.post("/api/scenarios/launch")
-    async def activate_scenario_runtime(payload: dict[str, Any]) -> dict[str, Any]:
-        try:
-            result = await asyncio.to_thread(app.state.scenario_manager.activate, payload)
-            app.state.missions.clear()
-            app.state.agent_updates.clear()
-            app.state.planner_state = {}
-            return result
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except ScenarioNotReadyError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
     @app.get("/api/agents")
     async def agents() -> dict[str, Any]:
         active = app.state.scenario_manager.validated_active()
@@ -315,74 +391,6 @@ def create_app(
                 }
             )
         return {"examples": examples}
-
-    @app.post("/api/missions/init")
-    async def init_mission(mission_config: dict[str, Any]) -> dict[str, Any]:
-        try:
-            canonical = load_and_validate_mission(mission_config)
-            canonical["mission_id"] = _legacy_uuid(canonical.get("mission_id"))
-            legacy_config = _inline_user_feature_refs(canonical, app.state.repo_root)
-        except MissionValidationError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        try:
-            active_scenario = app.state.scenario_manager.require_ready(canonical.get("vehicles") or [])
-        except ScenarioNotReadyError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        app.state.forgotten_missions.discard(canonical["mission_id"])
-        _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
-        response = app.state.rest_client.initialize_mission(legacy_config)
-        adapter_adjustments = []
-        if legacy_config != canonical:
-            adapter_adjustments.append("inlined runtime feature references for legacy ROS compatibility")
-        app.state.missions[canonical["mission_id"]] = {
-            "mission_id": canonical["mission_id"],
-            "status": 0,
-            "status_name": _mission_status_name(0),
-            "status_source": "adapter_acknowledgement",
-            "command_phase": "init_acknowledged",
-            "planner_status": "waiting_for_feedback",
-            "initialized_at": _utc_now_iso(),
-            "updated_at": _utc_now_iso(),
-            "config": canonical,
-            "scenario_id": active_scenario["scenario_id"],
-            "scenario_version": active_scenario["version"],
-            "map_collection": active_scenario["map_collection"],
-            "adapter_adjustments": adapter_adjustments,
-            "legacy_rest": response.__dict__,
-        }
-        if not response.ok:
-            raise HTTPException(status_code=502, detail={"message": "legacy REST mission init failed", "legacy_rest": response.__dict__})
-        return app.state.missions[canonical["mission_id"]]
-
-    @app.get("/api/missions/{mission_id}")
-    async def mission_runtime_state(mission_id: str) -> dict[str, Any]:
-        _backfill_mission_from_legacy_mongo(app, mission_id)
-        mission = app.state.missions.get(mission_id)
-        if not mission or mission_id in app.state.forgotten_missions:
-            raise HTTPException(status_code=404, detail="mission is not in adapter runtime")
-        return mission
-
-    @app.post("/api/missions/{mission_id}/approve")
-    async def approve_mission(mission_id: str) -> dict[str, Any]:
-        return _change_mission_status(app, mission_id, MissionRequest.APPROVE, 4)
-
-    @app.post("/api/missions/{mission_id}/start")
-    async def start_mission(mission_id: str) -> dict[str, Any]:
-        return _change_mission_status(app, mission_id, MissionRequest.START, 5)
-
-    @app.delete("/api/missions/{mission_id}")
-    async def forget_mission(mission_id: str) -> dict[str, Any]:
-        app.state.forgotten_missions.add(mission_id)
-        _save_forgotten_missions(app.state.repo_root, app.state.forgotten_missions)
-        removed = app.state.missions.pop(mission_id, None)
-        planner_state = app.state.planner_state
-        if isinstance(planner_state, dict) and planner_state.get("mission_id") == mission_id:
-            app.state.planner_state = {}
-        return {
-            "mission_id": mission_id,
-            "removed": bool(removed),
-            "message": "Removed mission from adapter runtime only. Legacy ROS and MongoDB are unchanged.",
-        }
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
@@ -461,26 +469,6 @@ def create_app(
         }
 
     return app
-
-def _change_mission_status(app: FastAPI, mission_id: str, request: MissionRequest, status: int) -> dict[str, Any]:
-    try:
-        app.state.scenario_manager.require_ready()
-    except ScenarioNotReadyError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    response = app.state.rest_client.change_status(request)
-    mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}, "feedback": {}})
-    mission["status"] = status
-    mission["status_name"] = _mission_status_name(status)
-    mission["status_source"] = "adapter_acknowledgement"
-    mission["requested_status"] = int(request)
-    mission["requested_status_name"] = request.name
-    mission["command_phase"] = request.name.lower()
-    mission["updated_at"] = _utc_now_iso()
-    mission["legacy_rest"] = response.__dict__
-    if not response.ok:
-        raise HTTPException(status_code=502, detail={"message": "legacy REST status change failed", "legacy_rest": response.__dict__})
-    return mission
-
 
 def _latest_adapter_mission_id(missions: dict[str, dict[str, Any]]) -> str | None:
     if not missions:
@@ -1363,8 +1351,6 @@ def _inline_user_feature_refs(mission_config: dict[str, Any], repo_root: Path, m
     """
     normalized = deepcopy(mission_config)
     user_geometries = _user_feature_geometry_index(repo_root, map_name)
-    if not user_geometries:
-        return normalized
 
     objective = normalized.get("objective")
     if isinstance(objective, dict):
@@ -1449,6 +1435,13 @@ def _inline_objective_geometry_ref(value: Any, user_geometries: dict[str, dict[s
     feature_id = str(value.get("feature_id") or "")
     if feature_id in user_geometries:
         return {"geometry": _legacy_inline_geometry_literal(user_geometries[feature_id], feature_id)}
+    geometry = value.get("geometry")
+    if isinstance(geometry, dict):
+        translated = deepcopy(value)
+        translated["geometry"] = _legacy_inline_geometry_literal(
+            geometry, "inline objective geometry"
+        )
+        return translated
     return value
 
 
@@ -1463,6 +1456,11 @@ def _inline_direct_geometry_ref(value: dict[str, Any], user_geometries: dict[str
             return {
                 "geometry": _legacy_inline_geometry_literal(user_geometries[nested_feature_id], nested_feature_id)
             }
+        translated = deepcopy(value)
+        translated["geometry"] = _legacy_inline_geometry_literal(
+            geometry, "inline mission geometry"
+        )
+        return translated
     return value
 
 

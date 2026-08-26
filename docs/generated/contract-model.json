@@ -8,6 +8,29 @@
       ],
       "data_type": "",
       "fields": [],
+      "interface_id": "http:DELETE /api/assistant/conversations/{conversation_id}",
+      "kind": "http_endpoint",
+      "label": "DELETE /api/assistant/conversations/{conversation_id}",
+      "producers": [
+        "component:ui"
+      ],
+      "source_refs": [
+        {
+          "line": 299,
+          "path": "src/c2_imugs2/api_routers.py"
+        },
+        {
+          "line": 625,
+          "path": "frontend/src/api.ts"
+        }
+      ]
+    },
+    {
+      "consumers": [
+        "component:api"
+      ],
+      "data_type": "",
+      "fields": [],
       "interface_id": "http:DELETE /api/map/features/{feature_id}",
       "kind": "http_endpoint",
       "label": "DELETE /api/map/features/{feature_id}",
@@ -16,11 +39,11 @@
       ],
       "source_refs": [
         {
-          "line": 179,
+          "line": 285,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 460,
+          "line": 564,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -39,11 +62,11 @@
       ],
       "source_refs": [
         {
-          "line": 374,
-          "path": "src/c2_imugs2/api.py"
+          "line": 195,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 509,
+          "line": 613,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -60,8 +83,48 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 267,
+          "line": 343,
           "path": "src/c2_imugs2/api.py"
+        }
+      ]
+    },
+    {
+      "consumers": [
+        "component:api"
+      ],
+      "data_type": "",
+      "fields": [],
+      "interface_id": "http:GET /api/assistant/operational-picture",
+      "kind": "http_endpoint",
+      "label": "GET /api/assistant/operational-picture",
+      "producers": [],
+      "source_refs": [
+        {
+          "line": 246,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ]
+    },
+    {
+      "consumers": [
+        "component:api"
+      ],
+      "data_type": "",
+      "fields": [],
+      "interface_id": "http:GET /api/assistant/status",
+      "kind": "http_endpoint",
+      "label": "GET /api/assistant/status",
+      "producers": [
+        "component:ui"
+      ],
+      "source_refs": [
+        {
+          "line": 242,
+          "path": "src/c2_imugs2/api_routers.py"
+        },
+        {
+          "line": 617,
+          "path": "frontend/src/api.ts"
         }
       ]
     },
@@ -79,11 +142,11 @@
       ],
       "source_refs": [
         {
-          "line": 104,
+          "line": 209,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 477,
+          "line": 581,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -102,11 +165,11 @@
       ],
       "source_refs": [
         {
-          "line": 79,
+          "line": 183,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 468,
+          "line": 572,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -123,7 +186,7 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 388,
+          "line": 396,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -140,7 +203,7 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 64,
+          "line": 167,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -159,11 +222,11 @@
       ],
       "source_refs": [
         {
-          "line": 117,
+          "line": 222,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 485,
+          "line": 589,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -180,7 +243,7 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 158,
+          "line": 264,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -199,11 +262,11 @@
       ],
       "source_refs": [
         {
-          "line": 207,
+          "line": 313,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 436,
+          "line": 540,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -222,11 +285,11 @@
       ],
       "source_refs": [
         {
-          "line": 303,
+          "line": 379,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 481,
+          "line": 585,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -245,11 +308,11 @@
       ],
       "source_refs": [
         {
-          "line": 358,
-          "path": "src/c2_imugs2/api.py"
+          "line": 173,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 497,
+          "line": 601,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -268,11 +331,11 @@
       ],
       "source_refs": [
         {
-          "line": 97,
+          "line": 202,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 472,
+          "line": 576,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -291,11 +354,11 @@
       ],
       "source_refs": [
         {
-          "line": 455,
+          "line": 463,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 432,
+          "line": 536,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -314,11 +377,11 @@
       ],
       "source_refs": [
         {
-          "line": 237,
-          "path": "src/c2_imugs2/api.py"
+          "line": 205,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 452,
+          "line": 556,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -337,11 +400,34 @@
       ],
       "source_refs": [
         {
-          "line": 244,
-          "path": "src/c2_imugs2/api.py"
+          "line": 212,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 448,
+          "line": 552,
+          "path": "frontend/src/api.ts"
+        }
+      ]
+    },
+    {
+      "consumers": [
+        "component:api"
+      ],
+      "data_type": "",
+      "fields": [],
+      "interface_id": "http:POST /api/assistant/messages",
+      "kind": "http_endpoint",
+      "label": "POST /api/assistant/messages",
+      "producers": [
+        "component:ui"
+      ],
+      "source_refs": [
+        {
+          "line": 264,
+          "path": "src/c2_imugs2/api_routers.py"
+        },
+        {
+          "line": 621,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -360,11 +446,11 @@
       ],
       "source_refs": [
         {
-          "line": 165,
+          "line": 271,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 456,
+          "line": 560,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -383,11 +469,11 @@
       ],
       "source_refs": [
         {
-          "line": 211,
+          "line": 317,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 440,
+          "line": 544,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -406,11 +492,11 @@
       ],
       "source_refs": [
         {
-          "line": 320,
-          "path": "src/c2_imugs2/api.py"
+          "line": 166,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 493,
+          "line": 597,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -429,11 +515,11 @@
       ],
       "source_refs": [
         {
-          "line": 366,
-          "path": "src/c2_imugs2/api.py"
+          "line": 181,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 501,
+          "line": 605,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -452,11 +538,11 @@
       ],
       "source_refs": [
         {
-          "line": 370,
-          "path": "src/c2_imugs2/api.py"
+          "line": 188,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 505,
+          "line": 609,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -475,11 +561,11 @@
       ],
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         },
         {
-          "line": 444,
+          "line": 548,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -496,8 +582,8 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -515,11 +601,11 @@
       ],
       "source_refs": [
         {
-          "line": 148,
+          "line": 253,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 489,
+          "line": 593,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -538,11 +624,11 @@
       ],
       "source_refs": [
         {
-          "line": 191,
+          "line": 297,
           "path": "src/c2_imugs2/api.py"
         },
         {
-          "line": 464,
+          "line": 568,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -2442,6 +2528,80 @@
       }
     },
     {
+      "id": "python:Freshness:src/c2_imugs2/operational_picture.py:30",
+      "language": "Python",
+      "members": [
+        {
+          "description": "",
+          "name": "FRESH",
+          "value": "fresh"
+        },
+        {
+          "description": "",
+          "name": "STALE",
+          "value": "stale"
+        },
+        {
+          "description": "",
+          "name": "MISSING",
+          "value": "missing"
+        },
+        {
+          "description": "",
+          "name": "INFERRED",
+          "value": "inferred"
+        },
+        {
+          "description": "",
+          "name": "UNKNOWN",
+          "value": "unknown"
+        }
+      ],
+      "name": "Freshness",
+      "qualified_name": "c2_imugs2.operational_picture.Freshness",
+      "source_ref": {
+        "line": 30,
+        "path": "src/c2_imugs2/operational_picture.py"
+      }
+    },
+    {
+      "id": "python:FullSnapshotReason:src/c2_imugs2/operational_context.py:41",
+      "language": "Python",
+      "members": [
+        {
+          "description": "",
+          "name": "INITIAL",
+          "value": "initial"
+        },
+        {
+          "description": "",
+          "name": "BASE_REVISION_UNAVAILABLE",
+          "value": "base_revision_unavailable"
+        },
+        {
+          "description": "",
+          "name": "RUNTIME_MISMATCH",
+          "value": "runtime_mismatch"
+        },
+        {
+          "description": "",
+          "name": "CHECKSUM_MISMATCH",
+          "value": "checksum_mismatch"
+        },
+        {
+          "description": "",
+          "name": "SCHEMA_VERSION_MISMATCH",
+          "value": "schema_version_mismatch"
+        }
+      ],
+      "name": "FullSnapshotReason",
+      "qualified_name": "c2_imugs2.operational_context.FullSnapshotReason",
+      "source_ref": {
+        "line": 41,
+        "path": "src/c2_imugs2/operational_context.py"
+      }
+    },
+    {
       "id": "cpp:c2_msgs.LogType:backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp:77",
       "language": "C++",
       "members": [
@@ -4124,6 +4284,28 @@
       }
     },
     {
+      "id": "python:UpdateMode:src/c2_imugs2/operational_context.py:36",
+      "language": "Python",
+      "members": [
+        {
+          "description": "",
+          "name": "FULL",
+          "value": "full"
+        },
+        {
+          "description": "",
+          "name": "DELTA",
+          "value": "delta"
+        }
+      ],
+      "name": "UpdateMode",
+      "qualified_name": "c2_imugs2.operational_context.UpdateMode",
+      "source_ref": {
+        "line": 36,
+        "path": "src/c2_imugs2/operational_context.py"
+      }
+    },
+    {
       "id": "cpp:c2_msgs.VehicleChanges:backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp:71",
       "language": "C++",
       "members": [
@@ -4414,6 +4596,24 @@
       "variant_count": 1
     },
     {
+      "definition_count": 1,
+      "definitions": [
+        "python:Freshness:src/c2_imugs2/operational_picture.py:30"
+      ],
+      "name": "Freshness",
+      "status": "consistent",
+      "variant_count": 1
+    },
+    {
+      "definition_count": 1,
+      "definitions": [
+        "python:FullSnapshotReason:src/c2_imugs2/operational_context.py:41"
+      ],
+      "name": "FullSnapshotReason",
+      "status": "consistent",
+      "variant_count": 1
+    },
+    {
       "definition_count": 3,
       "definitions": [
         "cpp:c2_msgs.LogType:backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp:77",
@@ -4551,6 +4751,15 @@
       "variant_count": 1
     },
     {
+      "definition_count": 1,
+      "definitions": [
+        "python:UpdateMode:src/c2_imugs2/operational_context.py:36"
+      ],
+      "name": "UpdateMode",
+      "status": "consistent",
+      "variant_count": 1
+    },
+    {
       "definition_count": 3,
       "definitions": [
         "cpp:c2_msgs.VehicleChanges:backend/fog/centralized-coordination/src/message_packages/c2_msgs/json/Enums.hpp:71",
@@ -4576,6 +4785,24 @@
   ],
   "interfaces": [
     {
+      "description": "FastAPI handler `reset_conversation`",
+      "details": {
+        "handler": "reset_conversation",
+        "method": "DELETE",
+        "path": "/api/assistant/conversations/{conversation_id}"
+      },
+      "id": "http:DELETE /api/assistant/conversations/{conversation_id}",
+      "kind": "http_endpoint",
+      "label": "DELETE /api/assistant/conversations/{conversation_id}",
+      "layer": "http",
+      "source_refs": [
+        {
+          "line": 299,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ]
+    },
+    {
       "description": "FastAPI handler `delete_map_feature`",
       "details": {
         "handler": "delete_map_feature",
@@ -4588,15 +4815,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 179,
+          "line": 285,
           "path": "src/c2_imugs2/api.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `forget_mission`",
+      "description": "FastAPI handler `forget`",
       "details": {
-        "handler": "forget_mission",
+        "handler": "forget",
         "method": "DELETE",
         "path": "/api/missions/{mission_id}"
       },
@@ -4606,8 +4833,8 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 374,
-          "path": "src/c2_imugs2/api.py"
+          "line": 195,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -4624,8 +4851,44 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 267,
+          "line": 343,
           "path": "src/c2_imugs2/api.py"
+        }
+      ]
+    },
+    {
+      "description": "FastAPI handler `operational_picture`",
+      "details": {
+        "handler": "operational_picture",
+        "method": "GET",
+        "path": "/api/assistant/operational-picture"
+      },
+      "id": "http:GET /api/assistant/operational-picture",
+      "kind": "http_endpoint",
+      "label": "GET /api/assistant/operational-picture",
+      "layer": "http",
+      "source_refs": [
+        {
+          "line": 246,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ]
+    },
+    {
+      "description": "FastAPI handler `assistant_status`",
+      "details": {
+        "handler": "assistant_status",
+        "method": "GET",
+        "path": "/api/assistant/status"
+      },
+      "id": "http:GET /api/assistant/status",
+      "kind": "http_endpoint",
+      "label": "GET /api/assistant/status",
+      "layer": "http",
+      "source_refs": [
+        {
+          "line": 242,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -4642,7 +4905,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 104,
+          "line": 209,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4660,7 +4923,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 79,
+          "line": 183,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4678,7 +4941,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 388,
+          "line": 396,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4696,7 +4959,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 64,
+          "line": 167,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4714,7 +4977,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 117,
+          "line": 222,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4732,7 +4995,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 158,
+          "line": 264,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4750,7 +5013,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 207,
+          "line": 313,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4768,15 +5031,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 303,
+          "line": 379,
           "path": "src/c2_imugs2/api.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `mission_runtime_state`",
+      "description": "FastAPI handler `get_mission`",
       "details": {
-        "handler": "mission_runtime_state",
+        "handler": "get_mission",
         "method": "GET",
         "path": "/api/missions/{mission_id}"
       },
@@ -4786,8 +5049,8 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 358,
-          "path": "src/c2_imugs2/api.py"
+          "line": 173,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -4804,7 +5067,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 97,
+          "line": 202,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4822,15 +5085,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 455,
+          "line": 463,
           "path": "src/c2_imugs2/api.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `scenario_catalog`",
+      "description": "FastAPI handler `catalog`",
       "details": {
-        "handler": "scenario_catalog",
+        "handler": "catalog",
         "method": "GET",
         "path": "/api/scenarios"
       },
@@ -4840,15 +5103,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 237,
-          "path": "src/c2_imugs2/api.py"
+          "line": 205,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `active_scenario_runtime`",
+      "description": "FastAPI handler `active`",
       "details": {
-        "handler": "active_scenario_runtime",
+        "handler": "active",
         "method": "GET",
         "path": "/api/scenarios/active"
       },
@@ -4858,8 +5121,26 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 244,
-          "path": "src/c2_imugs2/api.py"
+          "line": 212,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ]
+    },
+    {
+      "description": "FastAPI handler `send_message`",
+      "details": {
+        "handler": "send_message",
+        "method": "POST",
+        "path": "/api/assistant/messages"
+      },
+      "id": "http:POST /api/assistant/messages",
+      "kind": "http_endpoint",
+      "label": "POST /api/assistant/messages",
+      "layer": "http",
+      "source_refs": [
+        {
+          "line": 264,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -4876,7 +5157,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 165,
+          "line": 271,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4894,7 +5175,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 211,
+          "line": 317,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -4912,15 +5193,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 320,
-          "path": "src/c2_imugs2/api.py"
+          "line": 166,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `approve_mission`",
+      "description": "FastAPI handler `approve`",
       "details": {
-        "handler": "approve_mission",
+        "handler": "approve",
         "method": "POST",
         "path": "/api/missions/{mission_id}/approve"
       },
@@ -4930,15 +5211,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 366,
-          "path": "src/c2_imugs2/api.py"
+          "line": 181,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `start_mission`",
+      "description": "FastAPI handler `start`",
       "details": {
-        "handler": "start_mission",
+        "handler": "start",
         "method": "POST",
         "path": "/api/missions/{mission_id}/start"
       },
@@ -4948,15 +5229,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 370,
-          "path": "src/c2_imugs2/api.py"
+          "line": 188,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `activate_scenario_runtime`",
+      "description": "FastAPI handler `activate`",
       "details": {
-        "handler": "activate_scenario_runtime",
+        "handler": "activate",
         "method": "POST",
         "path": "/api/scenarios/activate"
       },
@@ -4966,15 +5247,15 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
     {
-      "description": "FastAPI handler `activate_scenario_runtime`",
+      "description": "FastAPI handler `activate`",
       "details": {
-        "handler": "activate_scenario_runtime",
+        "handler": "activate",
         "method": "POST",
         "path": "/api/scenarios/launch"
       },
@@ -4984,8 +5265,8 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ]
     },
@@ -5002,7 +5283,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 148,
+          "line": 253,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -5020,7 +5301,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 191,
+          "line": 297,
           "path": "src/c2_imugs2/api.py"
         }
       ]
@@ -8802,7 +9083,7 @@
     }
   ],
   "schema_version": 2,
-  "source_digest": "2afaea6d286daf36",
+  "source_digest": "da47b4ad0142eec5",
   "state_machines": [
     {
       "description": "Allowed mission status transitions enforced by MissionManager.",
@@ -9509,13 +9790,43 @@
     {
       "contract": "",
       "direction": "",
+      "id": "http-server:http:DELETE /api/assistant/conversations/{conversation_id}",
+      "interface_id": "http:DELETE /api/assistant/conversations/{conversation_id}",
+      "module_id": "component:api",
+      "relationship": "handled by reset_conversation",
+      "source_refs": [
+        {
+          "line": 299,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ],
+      "usage_kind": "http_handler"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-client:resetAssistantConversation:http:DELETE /api/assistant/conversations/{conversation_id}",
+      "interface_id": "http:DELETE /api/assistant/conversations/{conversation_id}",
+      "module_id": "component:ui",
+      "relationship": "resetAssistantConversation",
+      "source_refs": [
+        {
+          "line": 625,
+          "path": "frontend/src/api.ts"
+        }
+      ],
+      "usage_kind": "http_call"
+    },
+    {
+      "contract": "",
+      "direction": "",
       "id": "http-client:deleteMapFeature:http:DELETE /api/map/features/{feature_id}",
       "interface_id": "http:DELETE /api/map/features/{feature_id}",
       "module_id": "component:ui",
       "relationship": "deleteMapFeature",
       "source_refs": [
         {
-          "line": 460,
+          "line": 564,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9530,7 +9841,7 @@
       "relationship": "handled by delete_map_feature",
       "source_refs": [
         {
-          "line": 179,
+          "line": 285,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9545,7 +9856,7 @@
       "relationship": "forgetMission",
       "source_refs": [
         {
-          "line": 509,
+          "line": 613,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9557,11 +9868,11 @@
       "id": "http-server:http:DELETE /api/missions/{mission_id}",
       "interface_id": "http:DELETE /api/missions/{mission_id}",
       "module_id": "component:api",
-      "relationship": "handled by forget_mission",
+      "relationship": "handled by forget",
       "source_refs": [
         {
-          "line": 374,
-          "path": "src/c2_imugs2/api.py"
+          "line": 195,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -9575,8 +9886,53 @@
       "relationship": "handled by agents",
       "source_refs": [
         {
-          "line": 267,
+          "line": 343,
           "path": "src/c2_imugs2/api.py"
+        }
+      ],
+      "usage_kind": "http_handler"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-server:http:GET /api/assistant/operational-picture",
+      "interface_id": "http:GET /api/assistant/operational-picture",
+      "module_id": "component:api",
+      "relationship": "handled by operational_picture",
+      "source_refs": [
+        {
+          "line": 246,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ],
+      "usage_kind": "http_handler"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-client:getAssistantStatus:http:GET /api/assistant/status",
+      "interface_id": "http:GET /api/assistant/status",
+      "module_id": "component:ui",
+      "relationship": "getAssistantStatus",
+      "source_refs": [
+        {
+          "line": 617,
+          "path": "frontend/src/api.ts"
+        }
+      ],
+      "usage_kind": "http_call"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-server:http:GET /api/assistant/status",
+      "interface_id": "http:GET /api/assistant/status",
+      "module_id": "component:api",
+      "relationship": "handled by assistant_status",
+      "source_refs": [
+        {
+          "line": 242,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -9590,7 +9946,7 @@
       "relationship": "getContracts",
       "source_refs": [
         {
-          "line": 477,
+          "line": 581,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9605,7 +9961,7 @@
       "relationship": "handled by contracts",
       "source_refs": [
         {
-          "line": 104,
+          "line": 209,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9620,7 +9976,7 @@
       "relationship": "getDiagnostics",
       "source_refs": [
         {
-          "line": 468,
+          "line": 572,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9635,7 +9991,7 @@
       "relationship": "handled by diagnostics",
       "source_refs": [
         {
-          "line": 79,
+          "line": 183,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9650,7 +10006,7 @@
       "relationship": "handled by events",
       "source_refs": [
         {
-          "line": 388,
+          "line": 396,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9665,7 +10021,7 @@
       "relationship": "handled by health",
       "source_refs": [
         {
-          "line": 64,
+          "line": 167,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9680,7 +10036,7 @@
       "relationship": "getLegacyTrace",
       "source_refs": [
         {
-          "line": 485,
+          "line": 589,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9695,7 +10051,7 @@
       "relationship": "handled by legacy_trace",
       "source_refs": [
         {
-          "line": 117,
+          "line": 222,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9710,7 +10066,7 @@
       "relationship": "handled by map_features",
       "source_refs": [
         {
-          "line": 158,
+          "line": 264,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9725,7 +10081,7 @@
       "relationship": "getOsmRoads",
       "source_refs": [
         {
-          "line": 436,
+          "line": 540,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9740,7 +10096,7 @@
       "relationship": "handled by osm_roads",
       "source_refs": [
         {
-          "line": 207,
+          "line": 313,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9755,7 +10111,7 @@
       "relationship": "getMissionExamples",
       "source_refs": [
         {
-          "line": 481,
+          "line": 585,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9770,7 +10126,7 @@
       "relationship": "handled by mission_examples",
       "source_refs": [
         {
-          "line": 303,
+          "line": 379,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9785,7 +10141,7 @@
       "relationship": "getMissionState",
       "source_refs": [
         {
-          "line": 497,
+          "line": 601,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9797,11 +10153,11 @@
       "id": "http-server:http:GET /api/missions/{mission_id}",
       "interface_id": "http:GET /api/missions/{mission_id}",
       "module_id": "component:api",
-      "relationship": "handled by mission_runtime_state",
+      "relationship": "handled by get_mission",
       "source_refs": [
         {
-          "line": 358,
-          "path": "src/c2_imugs2/api.py"
+          "line": 173,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -9815,7 +10171,7 @@
       "relationship": "getPlanningDiagnostics",
       "source_refs": [
         {
-          "line": 472,
+          "line": 576,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9830,7 +10186,7 @@
       "relationship": "handled by planning_diagnostics",
       "source_refs": [
         {
-          "line": 97,
+          "line": 202,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9845,7 +10201,7 @@
       "relationship": "getRuntimeBootstrap",
       "source_refs": [
         {
-          "line": 432,
+          "line": 536,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9860,7 +10216,7 @@
       "relationship": "handled by runtime_bootstrap",
       "source_refs": [
         {
-          "line": 455,
+          "line": 463,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9875,7 +10231,7 @@
       "relationship": "getScenarios",
       "source_refs": [
         {
-          "line": 452,
+          "line": 556,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9887,11 +10243,11 @@
       "id": "http-server:http:GET /api/scenarios",
       "interface_id": "http:GET /api/scenarios",
       "module_id": "component:api",
-      "relationship": "handled by scenario_catalog",
+      "relationship": "handled by catalog",
       "source_refs": [
         {
-          "line": 237,
-          "path": "src/c2_imugs2/api.py"
+          "line": 205,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -9905,7 +10261,7 @@
       "relationship": "getActiveScenario",
       "source_refs": [
         {
-          "line": 448,
+          "line": 552,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9917,14 +10273,44 @@
       "id": "http-server:http:GET /api/scenarios/active",
       "interface_id": "http:GET /api/scenarios/active",
       "module_id": "component:api",
-      "relationship": "handled by active_scenario_runtime",
+      "relationship": "handled by active",
       "source_refs": [
         {
-          "line": 244,
-          "path": "src/c2_imugs2/api.py"
+          "line": 212,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-server:http:POST /api/assistant/messages",
+      "interface_id": "http:POST /api/assistant/messages",
+      "module_id": "component:api",
+      "relationship": "handled by send_message",
+      "source_refs": [
+        {
+          "line": 264,
+          "path": "src/c2_imugs2/api_routers.py"
+        }
+      ],
+      "usage_kind": "http_handler"
+    },
+    {
+      "contract": "",
+      "direction": "",
+      "id": "http-client:sendAssistantMessage:http:POST /api/assistant/messages",
+      "interface_id": "http:POST /api/assistant/messages",
+      "module_id": "component:ui",
+      "relationship": "sendAssistantMessage",
+      "source_refs": [
+        {
+          "line": 621,
+          "path": "frontend/src/api.ts"
+        }
+      ],
+      "usage_kind": "http_call"
     },
     {
       "contract": "",
@@ -9935,7 +10321,7 @@
       "relationship": "createMapFeature",
       "source_refs": [
         {
-          "line": 456,
+          "line": 560,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9950,7 +10336,7 @@
       "relationship": "handled by create_map_feature",
       "source_refs": [
         {
-          "line": 165,
+          "line": 271,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9965,7 +10351,7 @@
       "relationship": "handled by query_osm_roads",
       "source_refs": [
         {
-          "line": 211,
+          "line": 317,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -9980,7 +10366,7 @@
       "relationship": "queryOsmRoads",
       "source_refs": [
         {
-          "line": 440,
+          "line": 544,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9995,8 +10381,8 @@
       "relationship": "handled by init_mission",
       "source_refs": [
         {
-          "line": 320,
-          "path": "src/c2_imugs2/api.py"
+          "line": 166,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -10010,7 +10396,7 @@
       "relationship": "initMission",
       "source_refs": [
         {
-          "line": 493,
+          "line": 597,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10025,7 +10411,7 @@
       "relationship": "approveMission",
       "source_refs": [
         {
-          "line": 501,
+          "line": 605,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10037,11 +10423,11 @@
       "id": "http-server:http:POST /api/missions/{mission_id}/approve",
       "interface_id": "http:POST /api/missions/{mission_id}/approve",
       "module_id": "component:api",
-      "relationship": "handled by approve_mission",
+      "relationship": "handled by approve",
       "source_refs": [
         {
-          "line": 366,
-          "path": "src/c2_imugs2/api.py"
+          "line": 181,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -10052,11 +10438,11 @@
       "id": "http-server:http:POST /api/missions/{mission_id}/start",
       "interface_id": "http:POST /api/missions/{mission_id}/start",
       "module_id": "component:api",
-      "relationship": "handled by start_mission",
+      "relationship": "handled by start",
       "source_refs": [
         {
-          "line": 370,
-          "path": "src/c2_imugs2/api.py"
+          "line": 188,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -10070,7 +10456,7 @@
       "relationship": "startMission",
       "source_refs": [
         {
-          "line": 505,
+          "line": 609,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10082,11 +10468,11 @@
       "id": "http-server:http:POST /api/scenarios/activate",
       "interface_id": "http:POST /api/scenarios/activate",
       "module_id": "component:api",
-      "relationship": "handled by activate_scenario_runtime",
+      "relationship": "handled by activate",
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -10100,7 +10486,7 @@
       "relationship": "launchScenario",
       "source_refs": [
         {
-          "line": 444,
+          "line": 548,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10112,11 +10498,11 @@
       "id": "http-server:http:POST /api/scenarios/launch",
       "interface_id": "http:POST /api/scenarios/launch",
       "module_id": "component:api",
-      "relationship": "handled by activate_scenario_runtime",
+      "relationship": "handled by activate",
       "source_refs": [
         {
-          "line": 254,
-          "path": "src/c2_imugs2/api.py"
+          "line": 217,
+          "path": "src/c2_imugs2/api_routers.py"
         }
       ],
       "usage_kind": "http_handler"
@@ -10130,7 +10516,7 @@
       "relationship": "handled by reset_legacy_runtime",
       "source_refs": [
         {
-          "line": 148,
+          "line": 253,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -10145,7 +10531,7 @@
       "relationship": "resetLegacyRuntime",
       "source_refs": [
         {
-          "line": 489,
+          "line": 593,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10160,7 +10546,7 @@
       "relationship": "handled by update_map_feature",
       "source_refs": [
         {
-          "line": 191,
+          "line": 297,
           "path": "src/c2_imugs2/api.py"
         }
       ],
@@ -10175,7 +10561,7 @@
       "relationship": "updateMapFeature",
       "source_refs": [
         {
-          "line": 464,
+          "line": 568,
           "path": "frontend/src/api.ts"
         }
       ],

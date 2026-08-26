@@ -1,0 +1,4 @@
+Return exactly one JSON object with this shape and no text outside it:
+{{"answer":"operator-facing answer","assumptions":[],"warnings":[],"mission_proposal":null}}
+
+Put factual uncertainties you had to assume in `assumptions`, operational or safety issues in `warnings`, and a complete canonical mission object in `mission_proposal` only when the operator asks for one. Use null when there is no proposal. A mission proposal is a draft for deterministic validation and explicit operator review, never evidence that a command ran.

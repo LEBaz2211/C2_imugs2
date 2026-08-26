@@ -42,6 +42,7 @@ When documents disagree, use this order:
 | [UI to Editable ROS Adapter](UI_BACKEND_LEGACY_ADAPTER.md) | `CURRENT` | Browser-to-adapter-to-ROS integration |
 | [UI to Simulation Interface](UI_SIMULATION_INTERFACE.md) | `CONTRACT` | Stable UI-facing boundary and state semantics |
 | [Editable Runtime Walkthrough](SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md) | `NEEDS REVIEW` | Detailed walkthrough pending revalidation against the evolving planner |
+| [LLM Assistant Context Architecture](LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md) | `CURRENT` | Implemented LangChain assistant, operational picture/diffs, active-feature grounding, persistent mission cards, debug behavior, and remaining safety work |
 
 ## Contracts
 
@@ -61,12 +62,6 @@ do not describe where new backend work belongs.
 | [Legacy ROS Mission Flow](LEGACY_ROS_MISSION_FLOW_DIAGRAM.md) | `REFERENCE` | Frozen runtime flow diagram |
 | [Upstream Comparison](LEGACY_ROS_UPSTREAM_COMPARISON.md) | `REFERENCE` | Provenance and pinned differences |
 | [Legacy Node Contracts](legacy_nodes/README.md) | `REFERENCE` | Per-node source evidence |
-
-## Future Work
-
-| Document | Label | Purpose |
-| --- | --- | --- |
-| [LLM Assistant Context Architecture](LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md) | `FUTURE` | Backend-scoped natural-language mission, operational context, persistence, and retrieval design |
 
 ## Change Discipline
 

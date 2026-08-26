@@ -44,7 +44,7 @@ There are three related concepts which must not be conflated:
 | --- | --- | --- |
 | Scenario catalog | All saved scenarios and immutable versions available for later selection | `MapDB._scenario_versions` and the versioned MapDB collections |
 | Selected draft scenario | The one scenario currently being edited or previewed in Scenario Lab | Browser scenario-library state, reconciled with `GET /api/scenarios` |
-| Active runtime scenario | The only scenario currently controlling the planner, ROS coordination, robot containers and C2 mission validation | Validated `active_scenario.json`, the active Mongo marker, planner config and live Docker/ROS/Mongo checks |
+| Active runtime scenario | The only scenario currently controlling the planner, ROS coordination, robot containers and C2 mission validation | Durable `MapDB._active_scenario` plus activation record, reconciled with planner config and live Docker/ROS/Mongo checks; `active_scenario.json` is a generated cache |
 
 Selecting a scenario in the Scenario Lab dropdown changes only the draft being
 edited. It does **not** change simulated reality. Only a successful Activate
@@ -84,6 +84,11 @@ The following rules are non-negotiable for scenario work:
 
 - Exactly one runtime scenario may be active. Retained immutable collections
   are history/catalog entries and must never be merged into the active graph.
+- MongoDB is the durable activation authority. The runtime JSON file is a
+  generated/degraded cache, and a cached `ready` value never overrides failed
+  live readiness checks.
+- Repeating activation of the same content-hash version while its runtime is
+  still healthy is idempotent and must not restart or clear the backend.
 - `MapDB.rma` and the full `map_features`/GeoJSON response are authoring
   libraries, not a fallback runtime reality.
 - Scenario Lab must render only the selected draft's feature IDs, road imports
@@ -128,8 +133,11 @@ library.
 - [ ] Complete and verify a reliable multi-robot mission flow with a clear UI, diagnostics, and modular backend boundaries.
 - [ ] Update the backend to adapt to STANAG 4817, and make sure all features tested and working.
 - [ ] Integrate with MQTT system.
-- [ ] Create context retrieval to provide to LLM
-- [ ] NL to Mission description generation and pipeline.
+- [x] Create the bounded revisioned operational-picture foundation provided to the LLM on every message.
+- [x] Add the first NL-to-mission draft pipeline with deterministic schema/semantic/ready-scenario membership validation and explicit operator review.
+- [ ] Add request-scoped planner preflight, full scenario/fleet feasibility checks, authentication, and evaluation before any model command tools.
+- [ ] Add database-backed activation fencing and restart resume/rollback before running more than one API worker.
+- [ ] Enforce write-once scenario collections or add bounded recurring content-digest verification.
 - [ ] Test for small reapetable mission.
 - [ ] Create large level scenarios for benchmarking.
 

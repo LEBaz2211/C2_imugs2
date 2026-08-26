@@ -161,8 +161,15 @@ def _source_digest(paths: list[Path], repo_root: Path) -> str:
 
 
 def _add_http_contracts(repo_root: Path, nodes: dict[str, dict[str, Any]], edges: dict[str, dict[str, Any]]) -> None:
-    api_path = repo_root / "src" / "c2_imugs2" / "api.py"
-    for route in _fastapi_routes(api_path, repo_root):
+    api_paths = (
+        repo_root / "src" / "c2_imugs2" / "api.py",
+        repo_root / "src" / "c2_imugs2" / "api_routers.py",
+    )
+    for route in (
+        route
+        for api_path in api_paths
+        for route in _fastapi_routes(api_path, repo_root)
+    ):
         node_id = f"http:{route['method']} {route['path']}"
         nodes[node_id] = _node(
             node_id,
@@ -215,28 +222,80 @@ def _fastapi_routes(path: Path, repo_root: Path) -> list[dict[str, Any]]:
         return []
     tree = ast.parse(path.read_text(encoding="utf-8"))
     routes: list[dict[str, Any]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
-                continue
-            method = decorator.func.attr.lower()
-            if method not in HTTP_METHODS:
-                continue
-            if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
-                continue
-            route_path = decorator.args[0].value
-            if isinstance(route_path, str) and route_path.startswith("/api/"):
+
+    class RouteVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.router_prefixes: list[dict[str, str]] = [{}]
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            self._visit_function(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+            self._visit_function(node)
+
+        def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            # Decorators on this function resolve against its enclosing scope.
+            self._record_decorators(node)
+            local_prefixes = dict(self.router_prefixes[-1])
+            for statement in node.body:
+                if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    continue
+                value = statement.value
+                if not isinstance(value, ast.Call) or not _call_is_named(value.func, "APIRouter"):
+                    continue
+                prefix = next(
+                    (
+                        keyword.value.value
+                        for keyword in value.keywords
+                        if keyword.arg == "prefix"
+                        and isinstance(keyword.value, ast.Constant)
+                        and isinstance(keyword.value.value, str)
+                    ),
+                    "",
+                )
+                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        local_prefixes[target.id] = prefix
+            self.router_prefixes.append(local_prefixes)
+            for statement in node.body:
+                self.visit(statement)
+            self.router_prefixes.pop()
+
+        def _record_decorators(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                    continue
+                method = decorator.func.attr.lower()
+                if method not in HTTP_METHODS:
+                    continue
+                if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
+                    continue
+                route_path = decorator.args[0].value
+                if not isinstance(route_path, str):
+                    continue
+                owner = decorator.func.value
+                prefix = self.router_prefixes[-1].get(owner.id, "") if isinstance(owner, ast.Name) else ""
+                full_path = f"{prefix}{route_path}"
+                if not full_path.startswith("/api/"):
+                    continue
                 routes.append(
                     {
                         "method": method.upper(),
-                        "path": route_path,
+                        "path": full_path,
                         "handler": node.name,
                         "source_ref": _source_ref(path, repo_root, node.lineno),
                     }
                 )
+
+    RouteVisitor().visit(tree)
     return routes
+
+
+def _call_is_named(value: ast.expr, name: str) -> bool:
+    return (isinstance(value, ast.Name) and value.id == name) or (
+        isinstance(value, ast.Attribute) and value.attr == name
+    )
 
 
 def _frontend_api_calls(path: Path, repo_root: Path) -> list[dict[str, Any]]:

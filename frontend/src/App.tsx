@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, ChevronRight, Clock, FileJson, GripVertical, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, Clock, FileJson, GripVertical, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import {
   forgetMission as forgetMissionRecord,
   getContracts,
   getActiveScenario,
+  getAssistantStatus,
   getDiagnostics,
   getLegacyTrace,
   getMissionState,
@@ -22,9 +23,14 @@ import {
   launchScenario,
   queryOsmRoads,
   resetLegacyRuntime,
+  resetAssistantConversation,
+  sendAssistantMessage,
   startMission,
   updateMapFeature,
   type AgentUpdateEvent,
+  type AssistantDebugTrace,
+  type AssistantMessageResponse,
+  type AssistantStatus,
   type ContractGraph,
   type DiagnosticsState,
   type LegacyResetResult,
@@ -54,6 +60,9 @@ import type { Agent, MapFeature, MissionConfig } from "./types";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
+const ASSISTANT_SESSION_STORAGE_KEY = "c2_imugs2_assistant_session_v1";
+const ASSISTANT_MISSION_DRAFTS_STORAGE_KEY = "c2_imugs2_assistant_mission_drafts_v1";
+const MAX_ASSISTANT_TRANSCRIPT_ITEMS = 80;
 const RIGHT_PANE_WIDTHS_STORAGE_KEY = "c2_imugs2_right_pane_widths";
 const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, scenario: 860 } as const;
 const MIN_RIGHT_PANE_WIDTHS = { c2: 380, scenario: 520 } as const;
@@ -61,6 +70,136 @@ const MIN_MAP_WIDTH = 360;
 const RESIZE_HANDLE_WIDTH = 8;
 
 type ResizableWorkspace = keyof typeof DEFAULT_RIGHT_PANE_WIDTHS;
+
+type AssistantTranscriptItem = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  response?: AssistantMessageResponse;
+  debugRequested?: boolean;
+};
+
+type AssistantSession = {
+  conversationId: string;
+  messages: AssistantTranscriptItem[];
+};
+
+function assistantDebugGateEnabled() {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("assistantDebug") === "1";
+}
+
+function newAssistantSession(): AssistantSession {
+  return { conversationId: crypto.randomUUID(), messages: [] };
+}
+
+function readAssistantSession(): AssistantSession {
+  if (typeof window === "undefined") return newAssistantSession();
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_SESSION_STORAGE_KEY) ?? "null") as {
+      conversation_id?: unknown;
+      messages?: unknown;
+    } | null;
+    if (!stored || typeof stored.conversation_id !== "string" || !stored.conversation_id.trim() || !Array.isArray(stored.messages)) {
+      return newAssistantSession();
+    }
+    const messages = stored.messages
+      .filter((item): item is AssistantTranscriptItem => {
+        if (!item || typeof item !== "object") return false;
+        const candidate = item as Partial<AssistantTranscriptItem>;
+        return typeof candidate.id === "string"
+          && (candidate.role === "user" || candidate.role === "assistant")
+          && typeof candidate.text === "string";
+      })
+      .slice(-MAX_ASSISTANT_TRANSCRIPT_ITEMS);
+    return { conversationId: stored.conversation_id, messages };
+  } catch {
+    return newAssistantSession();
+  }
+}
+
+function writeAssistantSession(conversationId: string, messages: AssistantTranscriptItem[]) {
+  if (typeof window === "undefined") return;
+  const retained = messages.slice(-MAX_ASSISTANT_TRANSCRIPT_ITEMS);
+  const payload = { conversation_id: conversationId, messages: retained };
+  try {
+    window.localStorage.setItem(ASSISTANT_SESSION_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Debug traces can be large. Keep the visible conversation and proposals
+    // if the browser's local-storage quota cannot retain every trace envelope.
+    const withoutDebug = retained.map((item) => item.response?.debug_trace
+      ? { ...item, response: { ...item.response, debug_trace: undefined } }
+      : item);
+    try {
+      window.localStorage.setItem(ASSISTANT_SESSION_STORAGE_KEY, JSON.stringify({
+        conversation_id: conversationId,
+        messages: withoutDebug,
+      }));
+    } catch {
+      // A disabled or exhausted local-storage implementation must not block chat.
+    }
+  }
+}
+
+function assistantProposalConfig(response?: AssistantMessageResponse): MissionConfig | undefined {
+  if (!response?.mission_proposal || response.mission_proposal_validation?.valid !== true) return undefined;
+  try {
+    return normalizeMission(response.mission_proposal);
+  } catch {
+    return undefined;
+  }
+}
+
+function assistantProposalConfigs(messages: AssistantTranscriptItem[]) {
+  const configs: Record<string, MissionConfig> = {};
+  for (const item of messages) {
+    const config = assistantProposalConfig(item.response);
+    if (config) configs[config.mission_id] = config;
+  }
+  return configs;
+}
+
+function readAssistantMissionDrafts() {
+  if (typeof window === "undefined") return {} as Record<string, MissionConfig>;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_MISSION_DRAFTS_STORAGE_KEY) ?? "{}") as Record<string, unknown>;
+    const configs: Record<string, MissionConfig> = {};
+    for (const value of Object.values(stored)) {
+      try {
+        const config = normalizeMission(value);
+        configs[config.mission_id] = config;
+      } catch {
+        // Ignore stale entries that no longer satisfy the mission contract.
+      }
+    }
+    return configs;
+  } catch {
+    return {} as Record<string, MissionConfig>;
+  }
+}
+
+function writeAssistantMissionDraft(config: MissionConfig) {
+  if (typeof window === "undefined") return;
+  try {
+    const configs = readAssistantMissionDrafts();
+    configs[config.mission_id] = config;
+    window.localStorage.setItem(ASSISTANT_MISSION_DRAFTS_STORAGE_KEY, JSON.stringify(configs));
+  } catch {
+    // Browser persistence is best-effort; the in-memory mission remains usable.
+  }
+}
+
+function removeAssistantMissionDraft(missionId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const configs = readAssistantMissionDrafts();
+    if (!configs[missionId]) return;
+    delete configs[missionId];
+    window.localStorage.setItem(ASSISTANT_MISSION_DRAFTS_STORAGE_KEY, JSON.stringify(configs));
+  } catch {
+    // Browser persistence is best-effort; hidden IDs still suppress the card.
+  }
+}
 
 function readRightPaneWidths(): Record<ResizableWorkspace, number> {
   if (typeof window === "undefined") return { ...DEFAULT_RIGHT_PANE_WIDTHS };
@@ -154,14 +293,21 @@ function missionGeometryRefFromFeature(feature: MapFeature) {
   return { feature_id: feature.feature_id };
 }
 
-function directGeometryRefFromFeature(feature: MapFeature) {
-  if (isUserMapFeature(feature)) {
-    return geometryLiteralFromFeature(feature);
+function mergeMissionState(current: Record<string, MissionState>, update: MissionState) {
+  const next = { ...current };
+  if (update.command_target === true) {
+    for (const [missionId, state] of Object.entries(next)) {
+      if (missionId !== update.mission_id && state.command_target === true) {
+        next[missionId] = { ...state, command_target: false };
+      }
+    }
   }
-  return { feature_id: feature.feature_id };
+  next[update.mission_id] = { ...next[update.mission_id], ...update };
+  return next;
 }
 
 export default function App() {
+  const [initialAssistantSession] = useState<AssistantSession>(() => readAssistantSession());
   const [agents, setAgents] = useState<Agent[]>(fallbackAgents);
   const [agentTelemetry, setAgentTelemetry] = useState<Record<string, AgentUpdateEvent>>({});
   const [mapFeatures, setMapFeatures] = useState<MapFeature[]>(fallbackFeatures);
@@ -172,7 +318,12 @@ export default function App() {
   const [mission, setMission] = useState<MissionConfig | undefined>();
   const [missionText, setMissionText] = useState("");
   const [missionState, setMissionState] = useState<MissionState | undefined>();
-  const [missionConfigs, setMissionConfigs] = useState<Record<string, MissionConfig>>({});
+  const [missionConfigs, setMissionConfigs] = useState<Record<string, MissionConfig>>(() => ({
+    ...assistantProposalConfigs(initialAssistantSession.messages),
+    // The dedicated draft is the operator's latest working copy; the
+    // transcript envelope is only the original model proposal.
+    ...readAssistantMissionDrafts(),
+  }));
   const [missionStates, setMissionStates] = useState<Record<string, MissionState>>({});
   const [hiddenMissionIds, setHiddenMissionIds] = useState<Set<string>>(() => readHiddenMissionIds());
   const [showNewMission, setShowNewMission] = useState(false);
@@ -190,6 +341,7 @@ export default function App() {
   const [apiError, setApiError] = useState("");
   const [commandFeedback, setCommandFeedback] = useState<{ tone: "default" | "ok" | "warn" | "error"; message: string } | undefined>();
   const [busyCommand, setBusyCommand] = useState<"init" | "approve" | "start" | undefined>();
+  const [busyCommandMissionId, setBusyCommandMissionId] = useState<string | undefined>();
   const [initRequestedAt, setInitRequestedAt] = useState<number | undefined>();
   const [nowMs, setNowMs] = useState(Date.now());
   const [tab, setTab] = useState("mission");
@@ -210,7 +362,15 @@ export default function App() {
   const [mapViewFocus, setMapViewFocus] = useState<{ view: ScenarioMapView; nonce: number } | undefined>();
   const [mapDraftResetNonce, setMapDraftResetNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [assistantPrompt, setAssistantPrompt] = useState("Send Themis Fr to the selected objective point using roads.");
+  const [assistantConversationId, setAssistantConversationId] = useState(initialAssistantSession.conversationId);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantMessages, setAssistantMessages] = useState<AssistantTranscriptItem[]>(initialAssistantSession.messages);
+  const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | undefined>();
+  const [assistantStatusBusy, setAssistantStatusBusy] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
+  const [assistantError, setAssistantError] = useState("");
+  const [assistantDebugEnabled, setAssistantDebugEnabled] = useState(false);
+  const [assistantDebugAvailable] = useState(() => assistantDebugGateEnabled());
   const [rightPaneWidths, setRightPaneWidths] = useState<Record<ResizableWorkspace, number>>(() => readRightPaneWidths());
   const activeMissionIdRef = useRef<string | undefined>();
   const draftMissionIdRef = useRef<string | undefined>();
@@ -224,9 +384,18 @@ export default function App() {
   }, [rightPaneWidths]);
 
   useEffect(() => {
+    writeAssistantSession(assistantConversationId, assistantMessages);
+  }, [assistantConversationId, assistantMessages]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!assistantOpen || assistantStatus) return;
+    refreshAssistantStatus().catch(() => undefined);
+  }, [assistantOpen]);
 
   useEffect(() => {
     if (!jsonFocus || !missionText.trim()) return;
@@ -350,7 +519,7 @@ export default function App() {
 
   function applyMissionRuntimeUpdate(update: MissionState, source = "mission_feedback") {
     const activeMissionId = activeMissionIdRef.current;
-    setMissionStates((current) => ({ ...current, [update.mission_id]: { ...current[update.mission_id], ...update } }));
+    setMissionStates((current) => mergeMissionState(current, update));
     if (activeMissionId && update.mission_id === activeMissionId) {
       setMissionState((current) => ({ ...current, ...update }));
       if (hasPlannedPaths(update.planned_paths)) {
@@ -370,8 +539,8 @@ export default function App() {
     const activeMissionId = activeMissionIdRef.current;
     if (update.missions?.length) {
       setMissionStates((current) => {
-        const next = { ...current };
-        for (const missionUpdate of update.missions ?? []) next[missionUpdate.mission_id] = { ...next[missionUpdate.mission_id], ...missionUpdate };
+        let next = current;
+        for (const missionUpdate of update.missions ?? []) next = mergeMissionState(next, missionUpdate);
         return next;
       });
       const activeUpdate = activeMissionId ? update.missions.find((item) => item.mission_id === activeMissionId) : undefined;
@@ -587,12 +756,23 @@ export default function App() {
 
   function storeDraftMission(next: MissionConfig) {
     const previousDraftId = draftMissionIdRef.current;
+    const persistedAssistantDrafts = readAssistantMissionDrafts();
+    const isAssistantOwned = Boolean(
+      persistedAssistantDrafts[next.mission_id]
+      || (previousDraftId && persistedAssistantDrafts[previousDraftId]),
+    );
     setMissionConfigs((current) => {
       const updated = { ...current };
       if (previousDraftId && previousDraftId !== next.mission_id && !missionStates[previousDraftId]) delete updated[previousDraftId];
       if (!missionStates[next.mission_id]) updated[next.mission_id] = next;
       return updated;
     });
+    if (isAssistantOwned) {
+      if (previousDraftId && previousDraftId !== next.mission_id) {
+        removeAssistantMissionDraft(previousDraftId);
+      }
+      writeAssistantMissionDraft(next);
+    }
     draftMissionIdRef.current = missionStates[next.mission_id] ? undefined : next.mission_id;
   }
 
@@ -668,6 +848,7 @@ export default function App() {
       writeHiddenMissionIds(next);
       return next;
     });
+    removeAssistantMissionDraft(missionId);
     if (activeMissionIdRef.current === missionId) clearMission();
     setCommandFeedback({ tone: "ok", message: "Mission removed from the adapter/UI list. Legacy ROS runtime is unchanged; use Clean Test DB in Diagnostics for test cleanup." });
   }
@@ -854,7 +1035,7 @@ export default function App() {
               ...((transit["optimization"] ?? transit["optimalization"]) as Record<string, unknown> | undefined),
               road_usage: 1,
             },
-            roads: [...roads, directGeometryRefFromFeature(feature)],
+            roads: [...roads, missionGeometryRefFromFeature(feature)],
           },
         },
         { needle: '"geometries"', label: "mission road" },
@@ -868,7 +1049,7 @@ export default function App() {
           vehicles,
           objective: {
             ...base.objective,
-            line_of_sight: directGeometryRefFromFeature(feature),
+            line_of_sight: missionGeometryRefFromFeature(feature),
           },
         },
         { needle: '"line_of_sight"', label: "line_of_sight" },
@@ -908,15 +1089,16 @@ export default function App() {
     }
   }
 
-  async function runCommand(command: "init" | "approve" | "start", action: () => Promise<MissionState>) {
+  async function runCommand(command: "init" | "approve" | "start", action: () => Promise<MissionState>, missionId?: string) {
     setApiError("");
     setBusyCommand(command);
+    setBusyCommandMissionId(missionId);
     if (command === "init") setInitRequestedAt(Date.now());
     setCommandFeedback({ tone: "warn", message: `${commandLabel(command)} request sent to the adapter...` });
     try {
       const result = await action();
       setMissionState(result);
-      setMissionStates((current) => ({ ...current, [result.mission_id]: { ...current[result.mission_id], ...result } }));
+      setMissionStates((current) => mergeMissionState(current, result));
       setCommandFeedback({ tone: "ok", message: commandSuccessMessage(command, result) });
       return result;
     } catch (error) {
@@ -926,13 +1108,17 @@ export default function App() {
       throw error;
     } finally {
       setBusyCommand(undefined);
+      setBusyCommandMissionId(undefined);
     }
   }
 
   async function sendInitMission() {
+    const parsed = normalizeMission(JSON.parse(missionText));
+    await initializeMissionConfig(parsed);
+  }
+
+  async function initializeMissionConfig(next: MissionConfig) {
     await runCommand("init", async () => {
-      const parsed = normalizeMission(JSON.parse(missionText));
-      const next = parsed;
       activeMissionIdRef.current = next.mission_id;
       setMission(next);
       setMissionState(undefined);
@@ -945,18 +1131,19 @@ export default function App() {
       setMission(updated);
       setMissionText(JSON.stringify(updated, null, 2));
       setMissionConfigs((current) => ({ ...current, [result.mission_id]: updated }));
+      if (readAssistantMissionDrafts()[result.mission_id]) writeAssistantMissionDraft(updated);
       return result;
-    });
+    }, next.mission_id);
   }
 
   async function sendApproveMission() {
     if (!mission) return;
-    await runCommand("approve", () => approveMission(mission.mission_id));
+    await runCommand("approve", () => approveMission(mission.mission_id), mission.mission_id);
   }
 
   async function sendStartMission() {
     if (!mission) return;
-    await runCommand("start", () => startMission(mission.mission_id));
+    await runCommand("start", () => startMission(mission.mission_id), mission.mission_id);
   }
 
   async function refreshLegacyTrace() {
@@ -1040,6 +1227,11 @@ export default function App() {
       setMissionState(undefined);
       setMissionStates({});
       setMissionConfigs({});
+      try {
+        window.localStorage.removeItem(ASSISTANT_MISSION_DRAFTS_STORAGE_KEY);
+      } catch {
+        // Local drafts are already cleared from this UI session.
+      }
       setHiddenMissionIds(new Set());
       writeHiddenMissionIds(new Set());
       setPlannerState(undefined);
@@ -1054,22 +1246,166 @@ export default function App() {
     }
   }
 
-  function draftFromAssistant() {
-    const firstAgent = c2Agents[0]?.agent_id ?? LEGACY_AGENT_ID;
-    const base = mission ?? emptyMission("Draft navigation mission", firstAgent);
-    updateMission({
-      ...base,
-      mission_id: crypto.randomUUID(),
-      name: "Draft navigation mission",
-      behavior: 0,
-      vehicles: [firstAgent],
-      transit: {
-        geofence: base.transit?.["geofence"],
-        optimization: { road_usage: /road/i.test(assistantPrompt) ? 1 : 0.4, energy: 0.8 },
-        desired_vehicle_constraints: { max_speed: 4 },
+  async function refreshAssistantStatus() {
+    setAssistantStatusBusy(true);
+    setAssistantError("");
+    try {
+      setAssistantStatus(await getAssistantStatus());
+    } catch (error) {
+      setAssistantStatus(undefined);
+      setAssistantError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAssistantStatusBusy(false);
+    }
+  }
+
+  async function submitAssistantMessage() {
+    const message = assistantPrompt.trim();
+    if (!message || assistantBusy || !assistantStatus?.configured) return;
+
+    const debugRequested = assistantDebugAvailable && assistantDebugEnabled;
+    const assistantMessageId = crypto.randomUUID();
+    setAssistantError("");
+    setAssistantPrompt("");
+    setAssistantMessages((current) => [
+      ...current,
+      { id: crypto.randomUUID(), role: "user", text: message },
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        text: "Generating a validated response…",
+        debugRequested,
       },
-    }, { needle: '"transit"', label: "transit" });
+    ]);
+    setAssistantBusy(true);
+    try {
+      const response = await sendAssistantMessage({
+        conversation_id: assistantConversationId,
+        message,
+        debug: debugRequested || undefined,
+      });
+      registerAssistantProposal(response);
+      setAssistantConversationId(response.conversation_id);
+      setAssistantMessages((current) => current.map((item) => item.id === assistantMessageId
+        ? { ...item, text: response.answer, response }
+        : item));
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : String(error));
+      setAssistantMessages((current) => current.map((item) => item.id === assistantMessageId
+        ? {
+            ...item,
+            text: "Assistant response failed before a validated answer was returned.",
+          }
+        : item));
+    } finally {
+      setAssistantBusy(false);
+    }
+  }
+
+  async function clearAssistantConversation() {
+    if (assistantBusy) return;
+    setAssistantBusy(true);
+    setAssistantError("");
+    try {
+      await resetAssistantConversation(assistantConversationId);
+      setAssistantConversationId(crypto.randomUUID());
+      setAssistantMessages([]);
+      setAssistantPrompt("");
+    } catch (error) {
+      setAssistantError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAssistantBusy(false);
+    }
+  }
+
+  function registerAssistantProposal(response: AssistantMessageResponse) {
+    const proposed = assistantProposalConfig(response);
+    if (!proposed) return undefined;
+    const state = missionStates[proposed.mission_id];
+    // Once a proposal is in the ordinary mission editor, that editor owns the
+    // working copy. Reopening or commanding the conversation card must not
+    // silently replace operator edits with the original model envelope.
+    const config = missionConfigs[proposed.mission_id]
+      ?? asMissionConfig(state?.config)
+      ?? proposed;
+    setMissionConfigs((current) => ({ ...current, [config.mission_id]: current[config.mission_id] ?? config }));
+    writeAssistantMissionDraft(config);
+    setHiddenMissionIds((current) => {
+      if (!current.has(config.mission_id)) return current;
+      const next = new Set(current);
+      next.delete(config.mission_id);
+      writeHiddenMissionIds(next);
+      return next;
+    });
+    return config;
+  }
+
+  function selectAssistantProposal(response: AssistantMessageResponse, openManualUi: boolean) {
+    const config = registerAssistantProposal(response);
+    if (!config) {
+      setAssistantError("The proposed mission could not be loaded as a valid mission configuration.");
+      return undefined;
+    }
+    const state = missionStates[config.mission_id];
+    activeMissionIdRef.current = state ? config.mission_id : undefined;
+    draftMissionIdRef.current = state ? undefined : config.mission_id;
+    setMission(config);
+    setMissionText(JSON.stringify(config, null, 2));
+    setMissionState(state);
+    setPlannerState(hasPlannedPaths(state?.planned_paths)
+      ? { mission_id: config.mission_id, paths: state?.planned_paths, source: "adapter_state", received_at: state?.updated_at }
+      : undefined);
     setShowNewMission(true);
+    setWorkspace("c2");
+    setTab("mission");
+    setMapFocus(undefined);
+    setMapFocusPoints(undefined);
+    if (openManualUi) setAssistantOpen(false);
+    return config;
+  }
+
+  function validateAssistantProposal(response: AssistantMessageResponse) {
+    const config = selectAssistantProposal(response, false);
+    if (!config) return;
+    const issues = validateMission(config, c2Agents, c2MapFeatures);
+    setCommandFeedback(issues.length === 0
+      ? { tone: "ok", message: "Mission validated against the current UI contracts and is now shown on the map." }
+      : { tone: "error", message: `Mission validation failed: ${issues.join(" ")}` });
+  }
+
+  async function runAssistantMissionCommand(response: AssistantMessageResponse, command: "init" | "approve" | "start") {
+    const config = selectAssistantProposal(response, false);
+    if (!config) return;
+    const issues = validateMission(config, c2Agents, c2MapFeatures);
+    if (issues.length > 0) {
+      setCommandFeedback({ tone: "error", message: `Mission validation failed: ${issues.join(" ")}` });
+      return;
+    }
+    if (command === "init") {
+      if (!activeScenarioRuntime?.ready) {
+        setCommandFeedback({ tone: "error", message: scenarioReadinessMessage });
+        return;
+      }
+      await initializeMissionConfig(config);
+      return;
+    }
+    const state = missionStates[config.mission_id];
+    const status = state ? missionStatusLabel(state) : "DRAFT";
+    if (state?.command_target !== true) {
+      setCommandFeedback({ tone: "warn", message: "Another mission is the legacy command target. Re-init this mission before Approve or Start." });
+      return;
+    }
+    if (command === "approve" && !["PLANNED", "PLANNED_ALTERNATIVE"].includes(status)) {
+      setCommandFeedback({ tone: "warn", message: "Wait for a planned mission before approving it." });
+      return;
+    }
+    if (command === "start" && status !== "ACCEPTED") {
+      setCommandFeedback({ tone: "warn", message: "Wait for an accepted mission before starting it." });
+      return;
+    }
+    await runCommand(command, () => command === "approve"
+      ? approveMission(config.mission_id)
+      : startMission(config.mission_id), config.mission_id);
   }
 
   const hasMission = Boolean(missionText.trim());
@@ -1087,8 +1423,9 @@ export default function App() {
       : scenarioReadinessMessage;
   const currentStatus = missionState ? missionStatusLabel(missionState) : "";
   const missionMatchesState = Boolean(mission && missionState?.mission_id === mission.mission_id);
-  const canApproveMission = missionMatchesState && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
-  const canStartMission = missionMatchesState && currentStatus === "ACCEPTED";
+  const missionIsCommandTarget = missionState?.command_target === true;
+  const canApproveMission = missionMatchesState && missionIsCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
+  const canStartMission = missionMatchesState && missionIsCommandTarget && currentStatus === "ACCEPTED";
   const missionList = useMemo(() => {
     const ids = new Set([...Object.keys(missionConfigs), ...Object.keys(missionStates)]);
     return [...ids].filter((missionId) => !hiddenMissionIds.has(missionId)).map((missionId) => ({
@@ -1104,7 +1441,17 @@ export default function App() {
   const resizableWorkspace: ResizableWorkspace = workspace === "scenario" ? "scenario" : "c2";
   const rightPaneWidth = rightPaneWidths[resizableWorkspace];
   const rightPaneMinWidth = MIN_RIGHT_PANE_WIDTHS[resizableWorkspace];
-  const assistantPaneWidth = assistantOpen ? 340 : 48;
+  const assistantActive = workspace === "c2" && assistantOpen;
+  const assistantPaneWidth = 48;
+
+  function toggleAssistant() {
+    if (assistantActive) {
+      setAssistantOpen(false);
+      return;
+    }
+    setWorkspace("c2");
+    setAssistantOpen(true);
+  }
 
   function resizeRightPane(width: number) {
     setRightPaneWidths((current) => ({ ...current, [resizableWorkspace]: Math.round(width) }));
@@ -1200,10 +1547,10 @@ export default function App() {
       >
         <header className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
-            {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
+            {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : assistantActive ? <Bot className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
             <div>
-              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "Scenario Lab" : "Mission Definition"}</h2>
-              <p className="text-xs text-muted-foreground">{workspace === "scenario" ? "Situation, vehicles, and map assets." : "UI to adapter to old REST/ROS."}</p>
+              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "Scenario Lab" : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
+              <p className="text-xs text-muted-foreground">{workspace === "scenario" ? "Situation, vehicles, and map assets." : assistantActive ? "Natural-language drafting connected to the manual editor." : "UI to adapter to old REST/ROS."}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1216,7 +1563,9 @@ export default function App() {
                 { value: "contracts", label: "Contracts" },
               ]}
             />
-            {workspace === "c2" ? (
+            {assistantActive ? (
+              <Badge tone={assistantStatus?.configured ? "ok" : "default"}>assistant</Badge>
+            ) : workspace === "c2" ? (
               !hasSelectedMission ? <Badge>empty</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
             ) : (
               <Badge tone="ok">builder</Badge>
@@ -1224,7 +1573,7 @@ export default function App() {
           </div>
         </header>
 
-        {workspace === "c2" && (
+        {workspace === "c2" && !assistantActive && (
           <div className="space-y-3 border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Tabs
@@ -1271,11 +1620,11 @@ export default function App() {
                 <ShieldCheck className="h-4 w-4" />
                 {busyCommand === "init" ? "Initializing" : "Init"}
               </Button>
-              <Button size="sm" variant="outline" onClick={() => sendApproveMission().catch(() => undefined)} disabled={!canApproveMission || Boolean(busyCommand)} title={canApproveMission ? "Approve planned mission" : "Wait until the legacy mission status is PLANNED"}>
+              <Button size="sm" variant="outline" onClick={() => sendApproveMission().catch(() => undefined)} disabled={!canApproveMission || Boolean(busyCommand)} title={canApproveMission ? "Approve planned mission" : missionState && !missionIsCommandTarget ? "Re-init this mission to make it the legacy command target" : "Wait until the legacy mission status is PLANNED"}>
                 <CheckCircle2 className="h-4 w-4" />
                 {busyCommand === "approve" ? "Approving" : "Approve"}
               </Button>
-              <Button size="sm" onClick={() => sendStartMission().catch(() => undefined)} disabled={!canStartMission || Boolean(busyCommand)} title={canStartMission ? "Start accepted mission" : "Wait until the legacy mission status is ACCEPTED"}>
+              <Button size="sm" onClick={() => sendStartMission().catch(() => undefined)} disabled={!canStartMission || Boolean(busyCommand)} title={canStartMission ? "Start accepted mission" : missionState && !missionIsCommandTarget ? "Re-init this mission to make it the legacy command target" : "Wait until the legacy mission status is ACCEPTED"}>
                 <Play className="h-4 w-4" />
                 {busyCommand === "start" ? "Starting" : "Start"}
               </Button>
@@ -1290,8 +1639,42 @@ export default function App() {
           </div>
         )}
 
-        <section className="min-h-0 flex-1 overflow-auto overflow-x-hidden p-4">
-          {workspace === "c2" ? (
+        <section className={assistantActive ? "flex min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto overflow-x-hidden p-4"}>
+          {assistantActive ? (
+            <AssistantPanel
+              status={assistantStatus}
+              statusBusy={assistantStatusBusy}
+              busy={assistantBusy}
+              error={assistantError}
+              messages={assistantMessages}
+              prompt={assistantPrompt}
+              missionConfigs={missionConfigs}
+              missionStates={missionStates}
+              selectedMissionId={mission?.mission_id}
+              plannerState={plannerState}
+              agentTelemetry={agentTelemetry}
+              busyCommand={busyCommand}
+              busyCommandMissionId={busyCommandMissionId}
+              initRequestedAt={initRequestedAt}
+              nowMs={nowMs}
+              activeScenarioReady={activeScenarioRuntime?.ready === true}
+              commandFeedback={commandFeedback}
+              debugAvailable={assistantDebugAvailable}
+              debugEnabled={assistantDebugEnabled}
+              onPromptChange={setAssistantPrompt}
+              onDebugEnabledChange={setAssistantDebugEnabled}
+              onSend={() => submitAssistantMessage().catch(() => undefined)}
+              onReset={() => clearAssistantConversation().catch(() => undefined)}
+              onRefreshStatus={() => refreshAssistantStatus().catch(() => undefined)}
+              onBack={() => setAssistantOpen(false)}
+              onOpenMission={(response) => {
+                const config = selectAssistantProposal(response, true);
+                if (config) setCommandFeedback({ tone: "ok", message: "Assistant mission opened in the manual editor and shown on the map." });
+              }}
+              onValidateMission={validateAssistantProposal}
+              onMissionCommand={(response, command) => runAssistantMissionCommand(response, command).catch(() => undefined)}
+            />
+          ) : workspace === "c2" ? (
             <>
               {tab === "mission" && (
                 <MissionPanel
@@ -1360,29 +1743,595 @@ export default function App() {
         </section>
       </aside>
 
-      <aside className={assistantOpen ? "w-[340px] border-l border-border bg-panel transition-all" : "w-12 border-l border-border bg-panel transition-all"}>
-        <button className="flex h-14 w-full items-center justify-center border-b border-border hover:bg-muted" onClick={() => setAssistantOpen((value) => !value)} title="Mission assistant">
-          {assistantOpen ? <ChevronRight className="h-5 w-5" /> : <Bot className="h-5 w-5 text-primary" />}
+      <aside className="flex w-12 shrink-0 flex-col border-l border-border bg-panel">
+        <button
+          className={`flex h-14 w-full items-center justify-center border-b border-border hover:bg-muted ${assistantActive ? "bg-muted" : ""}`}
+          onClick={toggleAssistant}
+          title={assistantActive ? "Return to manual mission UI" : "Open C2 Assistant"}
+          aria-label={assistantActive ? "Return to manual mission UI" : "Open C2 Assistant"}
+          aria-pressed={assistantActive}
+        >
+          {assistantActive ? <ArrowLeft className="h-5 w-5 text-primary" /> : <Bot className="h-5 w-5 text-primary" />}
         </button>
-        {assistantOpen && (
-          <div className="space-y-4 p-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <MessageSquareText className="h-4 w-4 text-primary" />
-                <h2 className="text-sm font-semibold">Mission Assistant</h2>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">Local drafting helper. LLM benchmarking comes later.</p>
-            </div>
-            <Textarea className="h-36 resize-none font-sans text-sm" value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} />
-            <Button className="w-full" onClick={draftFromAssistant}>
-              <Send className="h-4 w-4" />
-              Draft Mission
-            </Button>
-          </div>
-        )}
       </aside>
     </main>
   );
+}
+
+function AssistantPanel({
+  status,
+  statusBusy,
+  busy,
+  error,
+  messages,
+  prompt,
+  missionConfigs,
+  missionStates,
+  selectedMissionId,
+  plannerState,
+  agentTelemetry,
+  busyCommand,
+  busyCommandMissionId,
+  initRequestedAt,
+  nowMs,
+  activeScenarioReady,
+  commandFeedback,
+  debugAvailable,
+  debugEnabled,
+  onPromptChange,
+  onDebugEnabledChange,
+  onSend,
+  onReset,
+  onRefreshStatus,
+  onBack,
+  onOpenMission,
+  onValidateMission,
+  onMissionCommand,
+}: {
+  status?: AssistantStatus;
+  statusBusy: boolean;
+  busy: boolean;
+  error: string;
+  messages: AssistantTranscriptItem[];
+  prompt: string;
+  missionConfigs: Record<string, MissionConfig>;
+  missionStates: Record<string, MissionState>;
+  selectedMissionId?: string;
+  plannerState?: PlannerUpdateEvent;
+  agentTelemetry: Record<string, AgentUpdateEvent>;
+  busyCommand?: "init" | "approve" | "start";
+  busyCommandMissionId?: string;
+  initRequestedAt?: number;
+  nowMs: number;
+  activeScenarioReady: boolean;
+  commandFeedback?: { tone: "default" | "ok" | "warn" | "error"; message: string };
+  debugAvailable: boolean;
+  debugEnabled: boolean;
+  onPromptChange: (value: string) => void;
+  onDebugEnabledChange: (value: boolean) => void;
+  onSend: () => void;
+  onReset: () => void;
+  onRefreshStatus: () => void;
+  onBack: () => void;
+  onOpenMission: (response: AssistantMessageResponse) => void;
+  onValidateMission: (response: AssistantMessageResponse) => void;
+  onMissionCommand: (response: AssistantMessageResponse, command: "init" | "approve" | "start") => void;
+}) {
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth", block: "end" });
+  }, [busy, messages.length, messages[messages.length - 1]?.text]);
+
+  const configured = status?.configured === true;
+  const statusTone = statusBusy ? "default" : configured ? "ok" : "warn";
+  const statusLabel = statusBusy ? "checking" : configured ? "ready" : "not configured";
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 space-y-2 border-b border-border p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <MessageSquareText className="h-4 w-4 shrink-0 text-primary" />
+              <h2 className="text-sm font-semibold">Mission Assistant</h2>
+            </div>
+            <p
+              className="mt-1 truncate text-xs text-muted-foreground"
+              title={status ? `${status.base_url} · max output ${status.max_output_tokens} tokens · thinking ${status.thinking_enabled ? "enabled" : "disabled"}${status.preserve_thinking ? " and preserved" : ""}` : undefined}
+            >
+              {status ? `${status.model} · ${status.thinking_enabled ? `${status.reasoning_effort || "max"} thinking` : "thinking off"} · prompts ${status.prompt_version}` : "Backend-grounded mission drafting"}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button type="button" size="sm" variant="outline" onClick={onBack}>
+              <ArrowLeft className="h-4 w-4" />
+              Manual UI
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              disabled={busy || messages.length === 0}
+              onClick={onReset}
+              title="Reset conversation"
+              aria-label="Reset assistant conversation"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Badge tone={statusTone}>{statusLabel}</Badge>
+          <div className="flex items-center gap-1">
+            {debugAvailable && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className={debugEnabled ? "border-primary/40 bg-primary/10 text-primary" : undefined}
+                role="switch"
+                aria-checked={debugEnabled}
+                disabled={busy}
+                onClick={() => onDebugEnabledChange(!debugEnabled)}
+                title="Include and reveal the safe backend model-input and execution trace for new messages"
+              >
+                <Bug className="h-3.5 w-3.5" />
+                Debug {debugEnabled ? "on" : "off"}
+              </Button>
+            )}
+            {!configured && !statusBusy && (
+              <Button type="button" size="sm" variant="outline" onClick={onRefreshStatus}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
+            )}
+          </div>
+        </div>
+        {debugEnabled && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-950">
+            Diagnostic capture is enabled for new messages. Backend context reads and validation events are separate from LLM tool calls; this assistant currently exposes no callable tools to the model.
+          </div>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" aria-live="polite">
+        {messages.length === 0 && (
+          <div className="rounded-md border border-dashed border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
+            Ask about the current map, fleet, missions, or request a mission draft. Each answer is grounded in a fresh operational-picture revision.
+          </div>
+        )}
+
+        {messages.map((item) => {
+          const response = item.response;
+          const proposal = assistantProposalConfig(response);
+          const proposalState = proposal ? missionStates[proposal.mission_id] : undefined;
+          const proposalConfig = proposal
+            ? missionConfigs[proposal.mission_id] ?? asMissionConfig(proposalState?.config) ?? proposal
+            : undefined;
+          const proposalSelected = Boolean(proposalConfig && selectedMissionId === proposalConfig.mission_id);
+          return (
+            <div key={item.id} className={item.role === "user" ? "flex justify-end" : "flex justify-start"}>
+              <div
+                className={
+                  item.role === "user"
+                    ? "max-w-[90%] rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs"
+                    : "max-w-[96%] space-y-2 rounded-md border border-border bg-background px-3 py-2 text-xs"
+                }
+                >
+                <p className="whitespace-pre-wrap break-words leading-5">{item.text}</p>
+
+                {response && (
+                  <>
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                      <span>picture r{response.picture_revision}</span>
+                      <span aria-hidden="true">·</span>
+                      <span title={response.picture_observed_at}>{formatAssistantObservedAt(response.picture_observed_at)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>prompt {response.prompt_version}</span>
+                    </div>
+
+                    {response.warnings.length > 0 && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-950">
+                        <p className="font-medium">Warnings</p>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {response.warnings.map((warning, index) => <li key={`${item.id}-warning-${index}`}>{warning}</li>)}
+                        </ul>
+                      </div>
+                    )}
+
+                    {response.assumptions.length > 0 && (
+                      <details className="rounded-md border border-border bg-muted px-2 py-1.5 text-muted-foreground">
+                        <summary className="cursor-pointer font-medium text-foreground">
+                          {response.assumptions.length} assumption{response.assumptions.length === 1 ? "" : "s"}
+                        </summary>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {response.assumptions.map((assumption, index) => <li key={`${item.id}-assumption-${index}`}>{assumption}</li>)}
+                        </ul>
+                      </details>
+                    )}
+
+                    {response.mission_proposal && (
+                      <AssistantMissionCard
+                        response={response}
+                        config={proposalConfig}
+                        state={proposalState}
+                        plannerState={proposalSelected ? plannerState : undefined}
+                        agentTelemetry={agentTelemetry}
+                        busyCommand={busyCommandMissionId === proposalConfig?.mission_id ? busyCommand : undefined}
+                        initRequestedAt={proposalSelected ? initRequestedAt : undefined}
+                        nowMs={nowMs}
+                        selected={proposalSelected}
+                        activeScenarioReady={activeScenarioReady}
+                        feedback={proposalSelected ? commandFeedback : undefined}
+                        onOpen={() => onOpenMission(response)}
+                        onValidate={() => onValidateMission(response)}
+                        onCommand={(command) => onMissionCommand(response, command)}
+                      />
+                    )}
+                  </>
+                )}
+
+                {debugEnabled && item.role === "assistant" && (
+                  <AssistantDebugDisclosure
+                    debugRequested={item.debugRequested === true}
+                    trace={response?.debug_trace}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {busy && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Reading context and generating the answer…
+          </div>
+        )}
+        <div ref={transcriptEndRef} />
+      </div>
+
+      <form
+        className="shrink-0 space-y-2 border-t border-border p-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSend();
+        }}
+      >
+        {error && <div className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-900">{error}</div>}
+        {!statusBusy && status && !status.configured && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-950">
+            The backend has no assistant API key configured. Configure it server-side, then retry status.
+          </div>
+        )}
+        <Textarea
+          className="min-h-20 resize-none font-sans text-sm"
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          placeholder={configured ? "Ask about operations or request a mission…" : "Assistant unavailable"}
+          disabled={!configured || busy}
+          aria-label="Message the mission assistant"
+        />
+        <Button type="submit" className="w-full" disabled={!configured || busy || !prompt.trim()}>
+          <Send className="h-4 w-4" />
+          {busy ? "Working…" : "Send"}
+        </Button>
+        <p className="text-[11px] leading-4 text-muted-foreground">Validated proposals are saved in Missions. Runtime commands remain explicit operator actions.</p>
+      </form>
+    </div>
+  );
+}
+
+function AssistantMissionCard({
+  response,
+  config,
+  state,
+  plannerState,
+  agentTelemetry,
+  busyCommand,
+  initRequestedAt,
+  nowMs,
+  selected,
+  activeScenarioReady,
+  feedback,
+  onOpen,
+  onValidate,
+  onCommand,
+}: {
+  response: AssistantMessageResponse;
+  config?: MissionConfig;
+  state?: MissionState;
+  plannerState?: PlannerUpdateEvent;
+  agentTelemetry: Record<string, AgentUpdateEvent>;
+  busyCommand?: "init" | "approve" | "start";
+  initRequestedAt?: number;
+  nowMs: number;
+  selected: boolean;
+  activeScenarioReady: boolean;
+  feedback?: { tone: "default" | "ok" | "warn" | "error"; message: string };
+  onOpen: () => void;
+  onValidate: () => void;
+  onCommand: (command: "init" | "approve" | "start") => void;
+}) {
+  const validation = response.mission_proposal_validation;
+  const valid = validation?.valid === true && Boolean(config);
+  const status = state ? missionStatusLabel(state) : "DRAFT";
+  const isCommandTarget = state?.command_target === true;
+  const canApprove = valid && isCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status) && !busyCommand;
+  const canStart = valid && isCommandTarget && status === "ACCEPTED" && !busyCommand;
+  const canInit = valid && activeScenarioReady && !busyCommand;
+
+  return (
+    <div className={`space-y-2 rounded-md border bg-muted p-2 ${selected ? "border-primary shadow-sm" : "border-border"}`}>
+      <div className="flex items-start justify-between gap-2">
+        <button
+          type="button"
+          className="min-w-0 flex-1 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onOpen}
+          disabled={!config}
+          title={config ? "Open this mission in the manual editor and show it on the map" : "This proposal is not a loadable mission"}
+        >
+          <div className="truncate font-semibold">{config?.name ?? "Mission proposal"}</div>
+          <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{config?.mission_id ?? "No valid mission ID"}</div>
+        </button>
+        <Badge tone={valid ? state ? missionStateTone(state) : "ok" : "error"}>
+          {valid ? state ? humanizeEnum(status) : "Validated draft" : "Invalid"}
+        </Badge>
+      </div>
+
+      {config && (
+        <div className="flex flex-wrap gap-1">
+          <Badge>{behaviorLabel(config.behavior)}</Badge>
+          <Badge>{vehicleCountLabel(config)}</Badge>
+          <Badge>{objectiveSummary(config)}</Badge>
+          <Badge tone="ok">saved in Missions</Badge>
+        </div>
+      )}
+
+      {validation?.valid === false && validation.issues?.length > 0 && (
+        <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+          {validation.issues.map((issue, index) => (
+            <li key={`${config?.mission_id ?? "proposal"}-issue-${index}`}>
+              {issue.path ? `${issue.path}: ` : ""}{issue.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {valid && (
+        <>
+          <MissionRuntimeStatus
+            mission={config}
+            missionState={state}
+            plannerState={plannerState}
+            agentTelemetry={agentTelemetry}
+            busyCommand={busyCommand}
+            initRequestedAt={initRequestedAt}
+            nowMs={nowMs}
+          />
+          <p className="text-[10px] leading-4 text-muted-foreground">
+            Draft validation is deterministic. Init requests planning; Approve and Start unlock only for the latest initialized mission after confirmed runtime transitions.
+          </p>
+          {state && !isCommandTarget && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-950">
+              Another mission is the legacy command target. Re-init this mission before Approve or Start.
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button type="button" size="sm" variant="outline" onClick={onValidate} disabled={Boolean(busyCommand)} title="Revalidate against the current UI contracts and show this mission on the map">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Validate + map
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={onOpen} disabled={Boolean(busyCommand)} title="Open the editable mission in the manual UI">
+              <FileJson className="h-3.5 w-3.5" />
+              Open
+            </Button>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button type="button" size="sm" variant="outline" onClick={() => onCommand("init")} disabled={!canInit} title={activeScenarioReady ? "Initialize this mission and request planning" : "A ready environment is required before Init"}>
+              <ShieldCheck className="h-3.5 w-3.5" />
+              {busyCommand === "init" ? "Initializing" : state ? "Re-init" : "Init"}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => onCommand("approve")} disabled={!canApprove} title={canApprove ? "Approve this planned mission" : state && !isCommandTarget ? "Re-init this mission to make it the legacy command target" : "Approve unlocks when mission status is PLANNED"}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              {busyCommand === "approve" ? "Approving" : "Approve"}
+            </Button>
+            <Button type="button" size="sm" onClick={() => onCommand("start")} disabled={!canStart} title={canStart ? "Start this accepted mission" : state && !isCommandTarget ? "Re-init this mission to make it the legacy command target" : "Start unlocks when mission status is ACCEPTED"}>
+              <Play className="h-3.5 w-3.5" />
+              {busyCommand === "start" ? "Starting" : "Start"}
+            </Button>
+          </div>
+        </>
+      )}
+
+      {selected && feedback && (
+        <div className={`rounded-md border px-2 py-1.5 text-[11px] leading-4 ${feedback.tone === "error" ? "border-red-200 bg-red-50 text-red-900" : feedback.tone === "warn" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+          {feedback.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssistantDebugDisclosure({
+  debugRequested,
+  trace,
+}: {
+  debugRequested: boolean;
+  trace?: AssistantDebugTrace | null;
+}) {
+  if (!debugRequested) {
+    return (
+      <div className="mt-2 rounded-md border border-dashed border-border bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+        This turn has no debug capture. Enable Debug before sending a new message.
+      </div>
+    );
+  }
+
+  const modelMessages = firstDebugArray(trace, ["model_messages", "messages", "prompt_messages"]);
+  const toolCalls = firstDebugArray(trace, ["tool_calls", "model_tool_calls", "llm_tool_calls"]);
+  const traceEvents = firstDebugArray(trace, ["events", "backend_events", "execution_events"]);
+  const modelEvents = traceEvents.filter(isModelProviderDebugEvent);
+  const backendEvents = traceEvents.filter((event) => !isModelProviderDebugEvent(event) && debugEventType(event) !== "tool_call");
+
+  return (
+    <div className="mt-2 space-y-2 border-t border-dashed border-border pt-2 text-[11px]">
+      <div className="flex flex-wrap items-center justify-between gap-1">
+        <span className="font-medium text-foreground">Diagnostic trace</span>
+        <Badge tone={trace ? "ok" : "warn"}>{trace ? "captured" : "unavailable"}</Badge>
+      </div>
+
+      <div className="rounded-md border border-border bg-panel p-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium">LLM tool calls</span>
+          <Badge tone={toolCalls.length > 0 ? "warn" : "default"}>{toolCalls.length}</Badge>
+        </div>
+        {toolCalls.length === 0 ? (
+          <p className="mt-1 leading-4 text-muted-foreground">
+            None. This assistant currently exposes no callable tools to the model.
+          </p>
+        ) : (
+          <div className="mt-2 space-y-1.5">
+            {toolCalls.map((toolCall, index) => (
+              <DebugTraceCard key={`llm-tool-${index}`} value={toolCall} fallbackLabel={`Tool call ${index + 1}`} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <details className="rounded-md border border-border bg-panel">
+        <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">
+          Exact model input ({modelMessages.length} message{modelMessages.length === 1 ? "" : "s"}; secrets redacted)
+        </summary>
+        <div className="space-y-1.5 border-t border-border p-2">
+          {modelMessages.length === 0 ? (
+            <p className="leading-4 text-muted-foreground">No model-input capture was returned.</p>
+          ) : modelMessages.map((modelMessage, index) => (
+            <DebugTraceCard key={`model-message-${index}`} value={modelMessage} fallbackLabel={`Message ${index + 1}`} />
+          ))}
+        </div>
+      </details>
+
+      {modelEvents.length > 0 && (
+        <details className="rounded-md border border-border bg-panel">
+          <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">
+            Model/provider request ({modelEvents.length} event{modelEvents.length === 1 ? "" : "s"})
+          </summary>
+          <div className="border-t border-border p-2">
+            <p className="mb-1.5 leading-4 text-muted-foreground">
+              Provider request and result events are diagnostics, not tool calls.
+            </p>
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-foreground">
+              {safeDebugJson(modelEvents)}
+            </pre>
+          </div>
+        </details>
+      )}
+
+      <details className="rounded-md border border-border bg-panel">
+        <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">
+          Backend context and validation ({backendEvents.length} event{backendEvents.length === 1 ? "" : "s"})
+        </summary>
+        <div className="space-y-1.5 border-t border-border p-2">
+          <p className="leading-4 text-muted-foreground">
+            These are deterministic backend operations, not tools available to or selected by the LLM.
+          </p>
+          {backendEvents.length === 0 ? (
+            <p className="leading-4 text-muted-foreground">No backend events were returned.</p>
+          ) : backendEvents.map((event, index) => (
+            <DebugTraceCard key={`backend-event-${index}`} value={event} fallbackLabel={`Backend event ${index + 1}`} />
+          ))}
+        </div>
+      </details>
+
+      {trace && (
+        <details className="rounded-md border border-border bg-panel">
+          <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">Raw safe trace envelope</summary>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-t border-border p-2 font-mono text-[10px] leading-4 text-muted-foreground">
+            {safeDebugJson(trace)}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function DebugTraceCard({ value, fallbackLabel }: { value: unknown; fallbackLabel: string }) {
+  const record = asDebugRecord(value);
+  const label = debugLabel(record, fallbackLabel);
+  const status = typeof record?.status === "string" ? record.status : undefined;
+  return (
+    <div className="rounded-md border border-border bg-background p-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate font-medium text-foreground" title={label}>{label}</span>
+        {status && <Badge tone={status.toLowerCase().includes("error") ? "error" : "default"}>{status}</Badge>}
+      </div>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-foreground">
+        {safeDebugJson(value)}
+      </pre>
+    </div>
+  );
+}
+
+function firstDebugArray(trace: AssistantDebugTrace | null | undefined, keys: string[]): unknown[] {
+  if (!trace) return [];
+  for (const key of keys) {
+    const value = trace[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function asDebugRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function debugLabel(record: Record<string, unknown> | undefined, fallback: string) {
+  if (!record) return fallback;
+  for (const key of ["name", "role", "type", "event", "operation"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return fallback;
+}
+
+function debugEventType(value: unknown) {
+  const record = asDebugRecord(value);
+  for (const key of ["type", "event", "name", "operation"]) {
+    const candidate = record?.[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim().toLowerCase();
+  }
+  return "";
+}
+
+function isModelProviderDebugEvent(value: unknown) {
+  const type = debugEventType(value);
+  return type.startsWith("model_") || type.startsWith("provider_");
+}
+
+function safeDebugJson(value: unknown) {
+  const sensitiveKey = /^(authorization|proxy_authorization|api[_-]?key|apikey|x[_-]?api[_-]?key|password|secret)$/i;
+  const redactString = (text: string) => text
+    .replace(/\bBearer\s+[^\s"']+/gi, "Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9:_-]{8,}/g, "[REDACTED API KEY]");
+  try {
+    return JSON.stringify(value, (key, item) => {
+      if (sensitiveKey.test(key)) return "[REDACTED]";
+      return typeof item === "string" ? redactString(item) : item;
+    }, 2) ?? "null";
+  } catch {
+    return "[Unserializable debug value]";
+  }
+}
+
+function formatAssistantObservedAt(value: string) {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return value;
+  return timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function VerticalResizeHandle({

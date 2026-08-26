@@ -223,19 +223,79 @@ Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`
           "type": "string"
         },
         "geometry": {
-          "type": "object",
-          "required": [
-            "geometry_type",
-            "coordinates"
-          ],
-          "properties": {
-            "geometry_type": {
-              "type": "string"
-            },
-            "coordinates": {}
-          }
+          "$ref": "#/$defs/inlineGeometry"
         }
       }
+    },
+    "position": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "inlineGeometry": {
+      "type": "object",
+      "required": [
+        "geometry_type",
+        "coordinates"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "geometry_type": {
+              "const": "Point"
+            },
+            "coordinates": {
+              "$ref": "#/$defs/position"
+            }
+          }
+        },
+        {
+          "properties": {
+            "geometry_type": {
+              "const": "LineString"
+            },
+            "coordinates": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/position"
+              },
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "geometry_type": {
+              "const": "Polygon"
+            },
+            "coordinates": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/position"
+                },
+                "minItems": 4
+              },
+              "minItems": 1,
+              "maxItems": 1
+            }
+          }
+        }
+      ]
     },
     "timeWindow": {
       "type": "object",

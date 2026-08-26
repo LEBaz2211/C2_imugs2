@@ -18,7 +18,7 @@ FastAPI handler `agents`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by agents | `—` | [`src/c2_imugs2/api.py:267`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L267) |
+| handled by agents | `—` | [`src/c2_imugs2/api.py:343`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L343) |
 
 ## Verified one-robot navigation data
 
@@ -58,4 +58,4 @@ Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:267`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L267)
+- [`src/c2_imugs2/api.py:343`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L343)

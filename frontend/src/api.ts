@@ -109,6 +109,7 @@ export type MissionState = {
   status?: number | string | null;
   status_name?: string;
   status_source?: "adapter_acknowledgement" | "mission_feedback" | string;
+  command_target?: boolean;
   requested_status?: number;
   requested_status_name?: string;
   issue?: number | string | null;
@@ -429,6 +430,109 @@ export type ForgottenMission = {
   message: string;
 };
 
+export type AssistantStatus = {
+  configured: boolean;
+  provider: string;
+  model: string;
+  base_url: string;
+  prompt_version: string;
+  one_request_per_message: boolean;
+  native_structured_output: boolean;
+  streaming: boolean;
+  reasoning_effort: string;
+  max_output_tokens: number;
+  thinking_enabled: boolean;
+  preserve_thinking: boolean;
+  debug_trace_supported: boolean;
+  model_tools_enabled: boolean;
+};
+
+export type AssistantMissionProposalIssue = {
+  path?: string;
+  message: string;
+};
+
+export type AssistantScenarioBinding = {
+  scenario_id: string | null;
+  version: string | null;
+  map_collection: string | null;
+  content_hash: string | null;
+  map_feature_hash: string | null;
+  activation_id: string | null;
+  activation_token: string | null;
+  status: string | null;
+  ready: boolean;
+};
+
+export type AssistantMissionProposalValidation = {
+  valid: boolean;
+  scope: string;
+  scenario_binding?: AssistantScenarioBinding;
+  issues: AssistantMissionProposalIssue[];
+};
+
+export type AssistantMessageRequest = {
+  conversation_id: string;
+  message: string;
+  debug?: boolean;
+};
+
+export type AssistantDebugModelMessage = {
+  type?: string;
+  role?: string;
+  content?: unknown;
+  [key: string]: unknown;
+};
+
+export type AssistantDebugEvent = {
+  type?: string;
+  name?: string;
+  status?: string;
+  sequence?: number;
+  timestamp?: string;
+  input?: unknown;
+  output?: unknown;
+  details?: unknown;
+  [key: string]: unknown;
+};
+
+export type AssistantDebugToolCall = {
+  id?: string;
+  name?: string;
+  status?: string;
+  arguments?: unknown;
+  input?: unknown;
+  output?: unknown;
+  [key: string]: unknown;
+};
+
+export type AssistantDebugTrace = {
+  model_messages?: AssistantDebugModelMessage[];
+  events?: AssistantDebugEvent[];
+  tool_calls?: AssistantDebugToolCall[];
+  [key: string]: unknown;
+};
+
+export type AssistantMessageResponse = {
+  conversation_id: string;
+  answer: string;
+  picture_revision: string;
+  picture_observed_at: string;
+  picture_scenario_binding?: AssistantScenarioBinding | null;
+  prompt_version: string;
+  assumptions: string[];
+  warnings: string[];
+  mission_proposal?: Record<string, unknown> | null;
+  mission_proposal_validation?: AssistantMissionProposalValidation;
+  model_usage?: Record<string, unknown> | null;
+  debug_trace?: AssistantDebugTrace | null;
+};
+
+export type AssistantConversationReset = {
+  conversation_id: string;
+  reset: boolean;
+};
+
 export async function getRuntimeBootstrap(mapName = "rma"): Promise<RuntimeBootstrap> {
   return getJson(`/api/runtime/bootstrap?map=${encodeURIComponent(mapName)}`);
 }
@@ -508,6 +612,18 @@ export async function startMission(missionId: string): Promise<MissionState> {
 
 export async function forgetMission(missionId: string): Promise<ForgottenMission> {
   return deleteJson(`/api/missions/${encodeURIComponent(missionId)}`);
+}
+
+export async function getAssistantStatus(): Promise<AssistantStatus> {
+  return getJson("/api/assistant/status");
+}
+
+export async function sendAssistantMessage(request: AssistantMessageRequest): Promise<AssistantMessageResponse> {
+  return postJson("/api/assistant/messages", request);
+}
+
+export async function resetAssistantConversation(conversationId: string): Promise<AssistantConversationReset> {
+  return deleteJson(`/api/assistant/conversations/${encodeURIComponent(conversationId)}`);
 }
 
 export function createEventSource() {

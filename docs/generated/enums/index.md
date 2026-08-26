@@ -12,7 +12,7 @@ Enum declarations are extracted from Python and C++ source. Same-name declaratio
 | Source | Enum groups |
 |---|---:|
 | [autonomy_msgs](sources/autonomy-msgs.md) | 5 |
-| [c2_imugs2](sources/c2-imugs2.md) | 6 |
+| [c2_imugs2](sources/c2-imugs2.md) | 9 |
 | [c2_msgs](sources/c2-msgs.md) | 10 |
 | [centralized_msgs](sources/centralized-msgs.md) | 11 |
 | [task_msgs](sources/task-msgs.md) | 5 |

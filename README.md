@@ -63,10 +63,27 @@ docker compose -f docker-compose.backend.yml up --build
 Start the API and UI in another terminal:
 
 ```bash
+export C2_IMUGS2_LLM_API_KEY='<LM Studio API key>'
 docker compose up -d --build c2-imugs2-api c2-imugs2-ui
 ```
 
+The API defaults to LM Studio at `http://10.67.80.81:1234/v1` with model
+`qwen/qwen3.8-27b`. Override `C2_IMUGS2_LLM_BASE_URL` or
+`C2_IMUGS2_LLM_MODEL` in the shell when needed. Keep
+`C2_IMUGS2_LLM_API_KEY` in the process environment; do not commit it to the
+repository. Versioned prompts are in
+`src/c2_imugs2/assistant/prompt_templates/`; the current default is `v2`. Copy
+the latest version to a new directory and
+set `C2_IMUGS2_LLM_PROMPT_VERSION` to change prompt versions reproducibly.
+
 Open `http://localhost:5173`.
+
+Assistant replies use one non-streaming LM Studio request with Qwen thinking
+enabled at maximum `xhigh` effort. For a bounded diagnostic view, open
+`http://localhost:5173/?assistantDebug=1` and enable **Debug** before sending a
+message. The panel then shows the exact redacted model input, final provider
+event, and any actual tool calls. The current model has no callable tools;
+backend context reads and validation are labelled separately.
 
 Health and diagnostic endpoints:
 
@@ -74,7 +91,35 @@ Health and diagnostic endpoints:
 curl -s http://localhost:8000/api/health | python3 -m json.tool
 curl -s http://localhost:8000/api/diagnostics | python3 -m json.tool
 curl -s http://localhost:8000/api/legacy/trace | python3 -m json.tool
+curl -s http://localhost:8000/api/assistant/status | python3 -m json.tool
 ```
+
+The assistant sends exactly one model request per accepted message, allows only
+one in-flight generation, receives a fresh revisioned operational picture each
+time, and can only stage validated drafts for operator review. Valid proposals
+are retained in the browser conversation, added to the mission list, and can be
+opened on the map or advanced with explicit operator controls. Active named
+map features come from the exact activated MapDB collection. The model sees
+this as the current environment and does not receive internal
+scenario-management identity. It has no mission-command or
+infrastructure-write tools.
+
+## MongoDB maintenance
+
+The normal API Compose service safely bootstraps required indexes at startup.
+Operators can inspect the same idempotent plan or preview periodic-feedback
+compaction from the CLI:
+
+```bash
+c2-imugs2-mongo-bootstrap --mongodb-url mongodb://localhost:27017
+c2-imugs2-mongo-bootstrap --mongodb-url mongodb://localhost:27017 --compact-feedback
+```
+
+Compaction is dry-run by default. Deletion requires the explicit
+`--apply-feedback-compaction` flag; review the preview before using it. A run
+also refuses to load more than 100,000 feedback documents unless the operator
+scopes it with `--feedback-mission-id` or explicitly raises
+`--feedback-max-documents` after a memory-capacity review.
 
 To run the frozen legacy stack instead, follow the
 [legacy ROS instructions](legacy_ros/README.md).
@@ -133,3 +178,4 @@ Additional technical documents:
 - [Editable backend mission walkthrough](docs/SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
 - [Frozen-reference mission walkthrough](docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md)
 - [Backend/legacy comparison](docs/LEGACY_ROS_UPSTREAM_COMPARISON.md)
+- [LLM assistant and operational context](docs/LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md)

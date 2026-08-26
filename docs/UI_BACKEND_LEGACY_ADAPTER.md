@@ -41,6 +41,10 @@ POST   /api/map/osm-roads/query?map=rma
 GET    /api/scenarios
 GET    /api/scenarios/active
 POST   /api/scenarios/activate
+GET    /api/assistant/status
+GET    /api/assistant/operational-picture
+POST   /api/assistant/messages
+DELETE /api/assistant/conversations/{conversation_id}
 GET    /api/agents
 GET    /api/mission-examples
 POST   /api/missions/init
@@ -51,13 +55,56 @@ DELETE /api/missions/{mission_id}
 GET    /api/events
 ```
 
-`/api/missions/init` requires a ready active scenario, performs partial handwritten structural validation, normalizes old mission config aliases, ensures the legacy mission id is UUID-shaped, then posts `action=initialize` to the old REST bridge. The canonical JSON Schema is not currently executed by this handler. Scenario roads are not added to mission JSON.
+`/api/missions/init` requires a ready active scenario, normalizes old mission
+config aliases, executes the canonical draft-2020-12 JSON Schema and semantic
+checks, verifies scenario vehicle membership, ensures the legacy mission ID is
+UUID-shaped, then posts `action=initialize` to the old REST bridge. Scenario
+roads are not added to mission JSON.
 
-`/api/scenarios/activate` content-addresses the complete scenario, writes its selected assets and downloaded OSM LineStrings to an immutable MapDB collection, clears prior mission runtime, restarts centralized coordination and the planner, replaces the prior scenario robot containers, and returns success only after the exact collection and all robot IDs are verified.
+`/api/scenarios/activate` content-addresses the complete scenario, records
+durable activation phases in MongoDB, writes its selected assets and downloaded
+OSM LineStrings to an immutable MapDB collection, clears prior mission runtime,
+restarts centralized coordination and the planner, replaces the prior scenario
+robot containers, and returns success only after the exact collection and all
+robot IDs are verified. Repeating the same healthy content is idempotent.
+
+`/api/assistant/messages` performs one non-streaming LangChain request to the
+configured LM Studio server, with maximum Qwen reasoning enabled and provider
+retries disabled. It injects a freshly
+materialized, source-labelled operational picture into every message and
+reports the revision used. The model-facing projection calls the active world
+the current environment and omits scenario/version/collection/activation
+identity; the backend retains that identity for stale-proposal validation.
+Bounded active Point/Polygon feature facts are read from the exact active MapDB
+collection, so a named feature can be grounded without treating mutable
+authoring state as active truth. A generated mission is schema/semantically
+checked and bound internally to current ready runtime/vehicle membership,
+displayed as a draft, and never initialized automatically.
+
+`/api/assistant/operational-picture` exposes the same first-full, then keyed
+diff protocol for inspection. A supplied `since_checksum` is verified; the
+assistant's internal conversation path always supplies it.
+
+The UI hides assistant diagnostics unless the URL contains
+`?assistantDebug=1`. Enabling **Debug** before a message requests the exact
+redacted model input, final provider event, and any actual tool calls for that
+turn. Backend context and validation events are identified separately. No
+model-callable tools are currently configured. The browser stores a bounded
+message transcript and conversation ID locally. Every deterministically valid
+proposal is also registered immediately as a draft mission, so leaving the
+assistant does not make it disappear from the mission list. Its latest manual
+edits are persisted separately from the original transcript envelope, and a
+conversation reset does not delete that saved draft.
 
 `/api/missions/{id}/approve` and `/start` post `action=change_status` to the old REST bridge using the legacy numeric mission request values.
 
-The old status envelope contains no mission id. `/c2_node` applies it to the last mission initialized through that bridge, so the path parameter does not provide reliable concurrent-mission targeting. The adapter also reports `ACCEPTED`/`STARTED` optimistically after HTTP success; ROS feedback is the authoritative confirmation.
+The old status envelope contains no mission id. `/c2_node` applies it to the
+last mission initialized through that bridge. The adapter therefore forwards a
+status command only when the route mission exists, is visible, and equals the
+last successfully initialized target; otherwise it returns `404` or `409`
+without calling the bridge. It also requires PLANNED/PLANNED_ALTERNATIVE before
+Approve and ACCEPTED before Start. Immediate `ACCEPTED`/`STARTED` responses are
+still adapter acknowledgements; ROS feedback is the authoritative confirmation.
 
 The UI command buttons mean:
 
@@ -68,9 +115,14 @@ Approve backend posts action=change_status with legacy requested_state=1
 Start   backend posts action=change_status with legacy requested_state=2
 ```
 
-The app opens without a selected mission. Mission JSON comes from an explicit example selection, drawing on the map, pasting JSON, or the local drafting helper.
+The app opens without a selected mission. Mission JSON comes from an explicit
+example selection, drawing on the map, pasting JSON, or a valid assistant
+proposal. Such a proposal is registered as a local draft immediately and has a
+conversation card with progress, Open/Validate, and state-appropriate
+Init/Approve/Start actions. Clicking it selects the ordinary mission workspace
+and updates the map through the same state as the normal mission list.
 
-Deleting a mission removes it from adapter/UI runtime only. It does not delete old ROS or MongoDB records.
+Deleting a mission removes it from adapter/UI runtime only. It does not delete editable-backend ROS or MongoDB records.
 
 `/api/events` is SSE. It emits:
 

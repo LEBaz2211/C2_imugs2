@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -21,6 +22,7 @@ except ImportError:  # Keep pure snapshot construction usable in lightweight tes
         pass
 
 from .legacy_map import load_legacy_geojson_map
+from .mongo_maintenance import MongoIndexManager, map_feature_index_specs
 from .scenario_launch import _docker_request, launch_scenario
 
 
@@ -30,10 +32,22 @@ DEFAULT_EDGE_CONTAINER = "c2-imugs2-backend-edge-agent-sim-1"
 ACTIVE_STATE_FILE = "active_scenario.json"
 PLANNER_CONFIG_FILE = "active_planner.yaml"
 MAP_METADATA_COLLECTION = "_scenario_versions"
+ACTIVE_SCENARIO_COLLECTION = "_active_scenario"
+ACTIVATION_COLLECTION = "_scenario_activations"
+SCENARIO_STATE_SCHEMA_VERSION = "1.0"
 
 
 class ScenarioNotReadyError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _DurableActiveLookup:
+    """Tri-state read of the MongoDB active-scenario singleton."""
+
+    reachable: bool
+    state: dict[str, Any] | None = None
+    error: str | None = None
 
 
 def build_scenario_snapshot(repo_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -150,6 +164,46 @@ class ScenarioRuntimeManager:
         self._lock = threading.Lock()
 
     def active(self) -> dict[str, Any] | None:
+        """Load durable active state, using the file cache for diagnostics only.
+
+        MongoDB is the production authority.  The JSON file is retained as a
+        generated cache so an unavailable database can still produce a useful
+        stale/failed diagnostic, but it must never be sufficient proof of
+        readiness by itself.
+        """
+        lookup = self._active_from_mongo()
+        if lookup.reachable:
+            if lookup.state is not None:
+                self._save_state(lookup.state)
+                return lookup.state
+            # A successful authoritative read with no singleton means there is
+            # no active scenario.  A stale local file must not override that.
+            return None
+
+        cached = self._cached_active()
+        detail = lookup.error or "MongoDB active-scenario authority is unavailable"
+        if not cached:
+            return {
+                "status": "unavailable",
+                "ready": False,
+                "durable_authority": "unavailable",
+                "cache_diagnostic_only": True,
+                "error": detail,
+            }
+        diagnostic = deepcopy(cached)
+        diagnostic.update(
+            {
+                "status": "stale",
+                "ready": False,
+                "durable_authority": "unavailable",
+                "cache_diagnostic_only": True,
+                "cached_status": cached.get("status"),
+                "error": f"active scenario authority is unavailable: {detail}",
+            }
+        )
+        return diagnostic
+
+    def _cached_active(self) -> dict[str, Any] | None:
         path = self.repo_root / "data" / "runtime" / ACTIVE_STATE_FILE
         if not path.exists():
             return None
@@ -158,6 +212,22 @@ class ScenarioRuntimeManager:
         except (OSError, json.JSONDecodeError):
             return None
         return value if isinstance(value, dict) else None
+
+    def _active_from_mongo(self) -> _DurableActiveLookup:
+        if MongoClient is None:
+            return _DurableActiveLookup(False, error="pymongo is not installed")
+        try:
+            with MongoClient(self.mongodb_url, serverSelectionTimeoutMS=300) as client:
+                client.admin.command("ping")
+                value = client["MapDB"][ACTIVE_SCENARIO_COLLECTION].find_one(
+                    {"singleton": "active"},
+                    {"_id": 0, "singleton": 0},
+                )
+        except PyMongoError as exc:
+            return _DurableActiveLookup(False, error=str(exc))
+        return _DurableActiveLookup(
+            True, state=value if isinstance(value, dict) else None
+        )
 
     def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
         state = self.validated_active()
@@ -174,13 +244,11 @@ class ScenarioRuntimeManager:
     def validated_active(self) -> dict[str, Any] | None:
         """Return active state after checking that its external reality still exists."""
         state = self.active()
+        if state and state.get("cache_diagnostic_only"):
+            return state
         if not state or state.get("status") not in {"ready", "stale"}:
             return state
-        issues = self._active_runtime_issues(state)
-        if not issues and state.get("status") == "stale":
-            planner_issue = self._planner_readiness_issue(state)
-            if planner_issue:
-                issues.append(planner_issue)
+        issues = self._ready_runtime_issues(state)
         if not issues and state.get("status") == "ready":
             return state
         if not issues:
@@ -194,11 +262,7 @@ class ScenarioRuntimeManager:
             )
             recovered.pop("error", None)
             recovered.pop("stale_at", None)
-            self._save_state(recovered)
-            try:
-                self._mark_active_in_mongo(recovered)
-            except RuntimeError:
-                pass
+            self._publish_observed_state(recovered)
             return recovered
 
         if state.get("status") == "stale" and state.get("error") == "active scenario runtime is stale: " + "; ".join(issues):
@@ -212,11 +276,7 @@ class ScenarioRuntimeManager:
                 "stale_at": _utc_now(),
             }
         )
-        self._save_state(stale)
-        try:
-            self._mark_active_in_mongo(stale)
-        except RuntimeError:
-            pass
+        self._publish_observed_state(stale)
         return stale
 
     def list_scenarios(self) -> list[dict[str, Any]]:
@@ -299,22 +359,42 @@ class ScenarioRuntimeManager:
         reality_changed = False
         try:
             snapshot = build_scenario_snapshot(self.repo_root, payload)
+            if (
+                previous
+                and previous.get("content_hash") == snapshot["content_hash"]
+                and previous.get("status") == "ready"
+                and not self._ready_runtime_issues(previous)
+            ):
+                return {**previous, "idempotent_reuse": True}
+            activated_at = _utc_now()
             state = {
                 **{key: value for key, value in snapshot.items() if key != "features"},
+                "state_schema_version": SCENARIO_STATE_SCHEMA_VERSION,
+                "activation_id": uuid.uuid4().hex,
+                "activation_phase": "validated",
+                "phase_updated_at": activated_at,
+                "phase_history": [
+                    {"phase": "validated", "recorded_at": activated_at}
+                ],
                 "status": "activating",
                 "ready": False,
-                "activated_at": _utc_now(),
+                "activated_at": activated_at,
                 "containers": [],
                 "activation_token": uuid.uuid4().hex,
             }
-            self._save_state(state)
+            self._publish_transition(state)
             self._persist_immutable_snapshot(snapshot)
+            self._advance_activation(state, "snapshot_persisted")
             self._write_planner_config(snapshot["map_collection"], state["activation_token"])
+            self._advance_activation(state, "planner_configured")
             reality_changed = True
             self._replace_previous_runtime(previous)
+            self._advance_activation(state, "previous_runtime_stopped")
             self._clear_scenario_runtime_records()
+            self._advance_activation(state, "runtime_records_cleared")
             self._restart_container(COORDINATION_CONTAINER, "centralized coordination")
             self._restart_planner()
+            self._advance_activation(state, "backend_restarted")
             launched = launch_scenario(
                 self.repo_root,
                 payload,
@@ -324,8 +404,9 @@ class ScenarioRuntimeManager:
             if not launched.get("docker_started"):
                 raise RuntimeError(str(launched.get("message") or "scenario robot containers did not start"))
             state["containers"] = launched.get("containers") or []
-            self._save_state(state)
+            self._advance_activation(state, "robots_launched")
             self._wait_until_ready(snapshot, state["containers"], state["activation_token"])
+            self._advance_activation(state, "runtime_verified")
             # Mission nodes from the old coordination process may publish one
             # final feedback sample while Docker is stopping it. Remove those
             # stragglers only after the replacement runtime is verified.
@@ -342,19 +423,39 @@ class ScenarioRuntimeManager:
                     "docker_started": True,
                 }
             )
-            self._save_state(state)
-            self._mark_active_in_mongo(state)
+            self._advance_activation(state, "ready")
             return state
         except Exception as exc:
             if not reality_changed and previous:
-                self._save_state(previous)
+                if state:
+                    failed_attempt = {
+                        **state,
+                        "status": "failed",
+                        "ready": False,
+                        "error": str(exc),
+                        "failed_at": _utc_now(),
+                        "retryable": True,
+                    }
+                    self._set_activation_phase(failed_attempt, "failed")
+                    self._record_activation_best_effort(failed_attempt)
+                if not previous.get("cache_diagnostic_only"):
+                    self._publish_observed_state(previous)
                 raise ScenarioNotReadyError(str(exc)) from exc
             state = state or {
                 "scenario_id": str(payload.get("scenario_id") or "unknown"),
                 "name": str(payload.get("name") or payload.get("scenario_id") or "unknown"),
             }
-            state.update({"status": "failed", "ready": False, "error": str(exc), "failed_at": _utc_now()})
-            self._save_state(state)
+            state.update(
+                {
+                    "status": "failed",
+                    "ready": False,
+                    "error": str(exc),
+                    "failed_at": _utc_now(),
+                    "retryable": True,
+                }
+            )
+            self._set_activation_phase(state, "failed")
+            self._publish_observed_state(state)
             raise ScenarioNotReadyError(str(exc)) from exc
         finally:
             self._lock.release()
@@ -389,6 +490,7 @@ class ScenarioRuntimeManager:
                             }
                         },
                     )
+                    self._ensure_snapshot_indexes(client, snapshot["map_collection"])
                     return
                 if snapshot["map_collection"] in database.list_collection_names():
                     raise RuntimeError("scenario map collection exists without immutable version metadata")
@@ -412,8 +514,17 @@ class ScenarioRuntimeManager:
                         "immutable": True,
                     }
                 )
+                self._ensure_snapshot_indexes(client, snapshot["map_collection"])
         except PyMongoError as exc:
             raise RuntimeError(f"could not create immutable MapDB snapshot: {exc}") from exc
+
+    @staticmethod
+    def _ensure_snapshot_indexes(client: Any, collection_name: str) -> None:
+        outcomes = MongoIndexManager(client).ensure(map_feature_index_specs(collection_name))
+        failures = [outcome for outcome in outcomes if outcome.status not in {"created", "existing"}]
+        if failures:
+            details = "; ".join(f"{item.name}: {item.detail}" for item in failures)
+            raise RuntimeError(f"immutable scenario indexes are not ready: {details}")
 
     def _write_planner_config(self, collection: str, activation_token: str) -> None:
         source = self.repo_root / "backend" / "config" / "config_planner.yaml"
@@ -589,7 +700,7 @@ class ScenarioRuntimeManager:
         return issues
 
     def _planner_readiness_issue(self, state: dict[str, Any]) -> str | None:
-        """Require the original exact planner proof before recovering stale state."""
+        """Require the exact planner collection/token proof for live readiness."""
         collection_name = str(state.get("map_collection") or "")
         activation_token = str(state.get("activation_token") or "")
         if not collection_name or not activation_token:
@@ -607,18 +718,87 @@ class ScenarioRuntimeManager:
             return "planner has not reported the active MapDB collection and activation token"
         return None
 
+    def _ready_runtime_issues(self, state: dict[str, Any]) -> list[str]:
+        """Apply one readiness proof to both observation and idempotent reuse."""
+        issues = self._active_runtime_issues(state)
+        if not issues:
+            planner_issue = self._planner_readiness_issue(state)
+            if planner_issue:
+                issues.append(planner_issue)
+        return issues
+
     def _mark_active_in_mongo(self, state: dict[str, Any]) -> None:
         if MongoClient is None:
             raise RuntimeError("pymongo is required for scenario activation")
         try:
             with MongoClient(self.mongodb_url, serverSelectionTimeoutMS=3000) as client:
-                client["MapDB"]["_active_scenario"].replace_one(
+                client["MapDB"][ACTIVE_SCENARIO_COLLECTION].replace_one(
                     {"singleton": "active"},
                     {"singleton": "active", **deepcopy(state)},
                     upsert=True,
                 )
         except PyMongoError as exc:
             raise RuntimeError(f"could not publish active scenario marker: {exc}") from exc
+
+    def _record_activation(self, state: dict[str, Any]) -> None:
+        activation_id = str(state.get("activation_id") or "")
+        if not activation_id:
+            return
+        if MongoClient is None:
+            raise RuntimeError("pymongo is required for scenario activation")
+        record = deepcopy(state)
+        record["recorded_at"] = _utc_now()
+        try:
+            with MongoClient(self.mongodb_url, serverSelectionTimeoutMS=3000) as client:
+                client["MapDB"][ACTIVATION_COLLECTION].replace_one(
+                    {"activation_id": activation_id},
+                    record,
+                    upsert=True,
+                )
+        except PyMongoError as exc:
+            raise RuntimeError(f"could not persist scenario activation record: {exc}") from exc
+
+    def _record_activation_best_effort(self, state: dict[str, Any]) -> None:
+        try:
+            self._record_activation(state)
+        except RuntimeError:
+            pass
+
+    def _publish_transition(self, state: dict[str, Any]) -> None:
+        """Durably publish a transition before updating the generated file cache."""
+        self._record_activation(state)
+        self._mark_active_in_mongo(state)
+        self._save_state(state)
+
+    def _publish_observed_state(self, state: dict[str, Any]) -> None:
+        """Publish readiness observations, retaining diagnostics if Mongo is down."""
+        try:
+            self._record_activation(state)
+            self._mark_active_in_mongo(state)
+        except RuntimeError:
+            pass
+        self._save_state(state)
+
+    def _advance_activation(self, state: dict[str, Any], phase: str) -> None:
+        self._set_activation_phase(state, phase)
+        self._publish_transition(state)
+
+    @staticmethod
+    def _set_activation_phase(state: dict[str, Any], phase: str) -> None:
+        recorded_at = _utc_now()
+        state["activation_phase"] = phase
+        state["phase_updated_at"] = recorded_at
+        history = state.setdefault("phase_history", [])
+        if not isinstance(history, list):
+            history = []
+            state["phase_history"] = history
+        last_phase = (
+            history[-1].get("phase")
+            if history and isinstance(history[-1], dict)
+            else None
+        )
+        if last_phase != phase:
+            history.append({"phase": phase, "recorded_at": recorded_at})
 
     def _save_state(self, state: dict[str, Any]) -> None:
         path = self.repo_root / "data" / "runtime" / ACTIVE_STATE_FILE

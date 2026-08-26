@@ -22,15 +22,25 @@ record current behavior without presenting it as permanent architecture.
 ```text
 React/Vite/Leaflet UI
   -> FastAPI JSON + SSE adapter
+     -> thin mission, scenario, and assistant routers over application services
      -> legacy REST client for mission commands
      -> rosbridge client for ROS diagnostics and live reads
      -> scenario activation + immutable MapDB snapshots
+     -> revisioned OperationalPicture read model
+     -> LangChain chat adapter -> LM Studio OpenAI-compatible API
   -> Dockerized editable ROS backend (`docker-compose.backend.yml`)
      -> C2 -> interface -> orchestrator -> mission manager
      -> planner -> fleet manager -> edge supervisor -> autonomy sim
 ```
 
-The UI never constructs ROS messages or connects directly to rosbridge. The backend owns partial structural validation, legacy alias translation, coordinate conversion, feature inlining, and feedback normalization. The canonical JSON Schemas are currently design contracts rather than validators executed by the mission endpoint.
+The UI never constructs ROS messages or connects directly to rosbridge. The
+backend executes the canonical mission JSON Schema and semantic checks after
+legacy-alias normalization, and owns coordinate conversion, feature inlining,
+compatibility translation, and feedback normalization. Generated assistant
+proposals pass through the same deterministic schema/semantic validator,
+including finite coordinate/range and Point, LineString, or closed single-ring
+Polygon checks, and remain editable drafts until an operator explicitly
+initializes them.
 
 ## Frontend UI Conventions
 
@@ -71,7 +81,9 @@ mission_config + selected agents -> validated task_plan
 | Area | Main files | Responsibility |
 | --- | --- | --- |
 | UI | `frontend/src/App.tsx`, `MapView.tsx`, `api.ts` | Operator workflow, map rendering, API/SSE consumption |
-| Compatibility API | `src/c2_imugs2/api.py` | Stable UI endpoints and normalized runtime state |
+| Compatibility API | `src/c2_imugs2/api.py`, `api_routers.py`, `application_services.py` | Composition, stable UI endpoints, and mission/scenario command orchestration |
+| Assistant | `assistant/`, `operational_picture.py`, `operational_context.py`, `live_operational.py` | Versioned prompts, one-shot LangChain calls, and a bounded source-labelled picture on every message |
+| Persistence maintenance | `mongo_maintenance.py` | Idempotent indexes and explicit dry-run-first feedback compaction |
 | Legacy command adapter | `legacy_rest.py` | Old REST actions and canonical-to-legacy field translation |
 | ROS read adapter | `rosbridge.py` | Diagnostics and topic subscriptions |
 | Map adapter | `legacy_map.py` | Legacy GeoJSON, runtime features, explicit polygon-bounded OSM queries |
@@ -91,7 +103,10 @@ canonical transit.optimization
   -> legacy transit.optimalization
 ```
 
-Runtime user features are also converted at this boundary: the UI may refer to a saved feature, but the adapter sends inline geometry when the old planner cannot resolve that runtime `feature_id`.
+Runtime user features are also converted at this boundary: the UI may refer to
+a saved feature, but the adapter sends inline geometry when the editable
+backend planner's inherited compatibility path cannot resolve that runtime
+`feature_id`.
 
 Scenario roads are not mission geometry. The mission carries objectives and constraints; the active scenario's roads live in its MapDB snapshot.
 
@@ -104,18 +119,43 @@ flowchart LR
     UI[Scenario Lab] -->|polygon OSM download| Draft[Browser scenario draft]
     Draft -->|POST /api/scenarios/activate| API[Scenario runtime manager]
     API --> Hash[Hash complete scenario version]
-    Hash --> Map[(MapDB.scenario_id_version)]
-    API --> Config[Write active planner config]
+    Hash --> Authority[(Activation record + active singleton)]
+    Authority -->|ACTIVATING + phase updates| Map[(MapDB.scenario_id_version)]
+    Authority --> Config[Write active planner config]
     Config --> Restart[Restart coordination and planner]
     API --> Robots[Replace robot containers]
     Restart --> Verify{Planner loaded exact collection?}
     Robots --> Verify2{All robot IDs registered?}
-    Verify --> Ready[Active scenario READY]
+    Verify --> Ready[Publish READY phase]
     Verify2 --> Ready
+    Ready --> Authority
+    Authority --> Cache[Generated active_scenario.json cache]
     Ready --> Init[Mission Init allowed]
 ```
 
-Only one scenario may be active. Each activation creates or reuses a content-addressed, immutable collection named `MapDB.scenario_<id>_<version>`. Old version collections are retained for reproducibility; they are not merged into the active graph. `MapDB.rma` remains the legacy seed and Scenario Lab authoring library, not the planner's source after activation. Central coordination is restarted during the switch so mission nodes from the previous reality cannot survive into the new one.
+Only one scenario may be active. MongoDB's `MapDB._active_scenario` singleton
+is the durable authority; `data/runtime/active_scenario.json` is a generated
+cache. Each activation has an idempotency/content hash, durable activation ID
+and phase record in `MapDB._scenario_activations`, and creates or reuses a
+content-addressed, immutable collection named
+`MapDB.scenario_<id>_<version>`. Re-activating the same verified content is a
+no-op. Old version collections are retained for reproducibility; they are not
+merged into the active graph. `MapDB.rma` remains the legacy seed and Scenario
+Lab authoring library, not the planner's source after activation. Central
+coordination is restarted during a real switch so mission nodes from the
+previous reality cannot survive into the new one.
+
+“Immutable” is currently an application invariant: creation/reuse verifies the
+complete content hash, while routine READY checks verify collection identity
+and count. MongoDB does not yet deny a privileged same-count mutation. Use
+write-once database permissions or a recurring digest proof before treating
+the stored map hash as continuous tamper evidence.
+
+Activation serialization is currently process-local and Compose runs one API
+worker. The phase and singleton writes are durable diagnostics, but they are
+not a MongoDB transaction, distributed lock, or automatic restart-resume
+protocol. Multi-worker deployment therefore requires database-backed fencing
+and explicit resume/rollback recovery before it is safe.
 
 OSM has one operational path: the operator explicitly downloads roads inside a Scenario Lab polygon, the browser keeps those GeoJSON LineStrings in the scenario draft, and activation freezes them as `road` features in the versioned MapDB collection. The deployed planner has `load_osm_from_network: false`; it does not make a second live OSMnx download.
 
@@ -144,6 +184,75 @@ planner.updated
 ```
 
 Mission status and path availability are separate. Planner readiness is not evidence of a route; a usable route comes from mission feedback containing waypoint tasks.
+
+## Operational Context And LLM Assistant
+
+The assistant reasons about the editable backend, not `legacy_ros/`. A backend
+provider builds bounded internal runtime, agent, mission, plan, health, and
+warning sections with stable IDs, freshness and provenance. It also reads
+mission-relevant Point and single-ring Polygon facts from the exact active
+MapDB collection, within strict feature and coordinate budgets; mutable map
+authoring files are excluded until activation. The first message receives a
+full `OperationalPicture`; later messages request a checksum-bound keyed diff
+from the conversation's previous revision. The orchestrator materializes and
+validates the new full picture before including it in that message's prompt.
+Every answer reports the revision it used.
+
+Internal scenario/version/collection/hash/activation identity is retained for
+post-generation stale-proposal checks but projected out of model messages. The
+LLM sees a `current_environment` abstraction containing readiness, map
+summary, bounded active features, fleet, missions, plans, health, and warnings;
+it does not know the scenario-management mechanism.
+
+The model boundary uses LangChain's OpenAI chat adapter against the configured
+LM Studio server. It performs exactly one non-streaming model invocation per
+operator message, disables provider retries, permits only one in-flight
+generation and rejects concurrent work instead of queueing a burst, bounds
+conversation history, and never lets the model query ROS, MongoDB, Docker, or
+runtime files directly. Qwen thinking is enabled explicitly at its maximum
+`xhigh` effort, and the completion budget is large enough that reasoning does
+not consume the entire response before the final answer. Prompts are versioned text files in
+`src/c2_imugs2/assistant/prompt_templates/` and selected with
+`C2_IMUGS2_LLM_PROMPT_VERSION`.
+
+`POST /api/assistant/messages` returns the canonical response envelope after
+that request completes. A hidden UI gate, `?assistantDebug=1`, reveals a
+per-turn Debug switch. When requested, the safe trace contains the exact
+redacted messages sent to the model, the final provider event, and any actual
+provider tool calls; deterministic context and validation events are shown
+separately. No tools are currently bound to the model. The query parameter is
+a discoverability gate, not an authorization boundary. The browser retains a
+bounded transcript and conversation ID in local storage, and keeps validated
+assistant mission working copies in a separate local draft store so clearing
+chat does not delete a mission. Backend conversation and operational-picture
+state remain bounded and in process.
+
+The assistant is proposal-only. It has no Init, Approve, Start, scenario
+activation, Docker, or database-write tool. A proposal must pass canonical
+schema, inline-geometry semantics, ready-scenario and vehicle-membership
+validation, and an exact comparison between the scenario binding in the
+picture used for generation and the current post-generation binding. A valid
+proposal is registered immediately as a local draft, appears both in the
+conversation and the normal mission list, and can be selected to preview its
+geometry on the map. Conversation-card Validate, Init, Approve, and Start
+controls call the same deterministic UI/backend paths as the manual workspace;
+none is invoked by the model. Init remains an explicit operator command,
+Approve requires planner feedback, and Start requires acceptance. Because the
+inherited status body has no mission ID, the adapter also requires the route ID
+to equal the last successfully initialized backend target before forwarding a
+status command. Draft validation does not prove map containment, behavior
+compatibility, or route feasibility.
+
+The current API has wildcard CORS and no authentication, so it is suitable only
+for a trusted operator network. The assistant's one-in-flight guard is load
+protection, not access control or a complete rate limiter.
+
+Mongo indexes are bootstrapped safely at API startup in the normal Compose
+deployment and whenever a new immutable scenario collection is created.
+Feedback compaction is a separate maintenance operation and is dry-run by
+default; applying deletions requires an explicit CLI flag. The command also has
+a default 100,000-document memory guard and requires explicit mission scoping
+or an operator-raised cap for larger histories.
 
 ## Replacement Strategy
 
