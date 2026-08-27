@@ -13,7 +13,7 @@ from typing import Any, Protocol, TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from c2_imugs2.operational_picture import OperationalPicture
+from c2_imugs2.operations.models import OperationalPicture
 
 from .config import AssistantSettings
 from .models import (
@@ -27,7 +27,7 @@ from .prompts import PromptCatalog
 from .provider import ChatModelProvider
 
 if TYPE_CHECKING:
-    from c2_imugs2.operational_context import OperationalUpdate
+    from c2_imugs2.operations.service import OperationalUpdate
 
 
 class AssistantInputError(ValueError):
@@ -57,7 +57,7 @@ PictureMaterializer = Callable[[OperationalPicture | None, Any], OperationalPict
 def _default_materializer(
     current: OperationalPicture | None, update: Any
 ) -> OperationalPicture:
-    from c2_imugs2.operational_context import materialize_operational_update
+    from c2_imugs2.operations.service import materialize_operational_update
 
     return materialize_operational_update(current, update)
 
@@ -316,7 +316,7 @@ class AssistantOrchestrator:
         try:
             return self._materialize(current, update)
         except Exception as exc:
-            from c2_imugs2.operational_context import OperationalUpdateError
+            from c2_imugs2.operations.service import OperationalUpdateError
 
             if not isinstance(exc, OperationalUpdateError):
                 raise
@@ -349,8 +349,16 @@ class AssistantOrchestrator:
         )
         if not isinstance(map_features, list):
             map_features = []
+        operator_objectives = self._environment_safe_value(
+            environment_data.get("operator_objectives", [])
+        )
+        if not isinstance(operator_objectives, list):
+            operator_objectives = []
         observation = self._environment_safe_value(
             environment_data.get("map_feature_observation", {})
+        )
+        operator_objective_observation = self._environment_safe_value(
+            environment_data.get("operator_objective_observation", {})
         )
         readiness = self._environment_safe_value(
             {
@@ -370,9 +378,17 @@ class AssistantOrchestrator:
             "readiness": readiness,
             "map": map_facts,
             "map_features": map_features,
+            "operator_objectives": operator_objectives,
         }
         if isinstance(observation, dict) and observation:
             current_environment["map_feature_observation"] = observation
+        if (
+            isinstance(operator_objective_observation, dict)
+            and operator_objective_observation
+        ):
+            current_environment["operator_objective_observation"] = (
+                operator_objective_observation
+            )
 
         picture_dict = picture.to_dict()
         return {

@@ -1,0 +1,10 @@
+<example>
+Operator request: Create a navigation mission for the connected rover.
+
+Relevant evidence: one exact connected agent ID is available, but the request
+and current environment provide no destination coordinates or named Point
+feature.
+
+Expected response:
+{{"answer":"What destination should the rover navigate to? Provide a named Point from the current environment or a [longitude, latitude] coordinate.","assumptions":[],"warnings":[],"mission_proposal":null}}
+</example>

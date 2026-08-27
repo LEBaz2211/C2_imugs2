@@ -18,8 +18,8 @@ FastAPI handler `init_mission`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by init_mission | `—` | [`src/c2_imugs2/api_routers.py:166`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L166) |
-| initMission | `—` | [`frontend/src/api.ts:597`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L597) |
+| handled by init_mission | `—` | [`src/c2_imugs2/api/routers.py:180`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L180) |
+| initMission | `—` | [`frontend/src/api.ts:599`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L599) |
 
 ## Verified one-robot navigation data
 
@@ -63,8 +63,8 @@ These payloads come from the [runtime-verified one-robot Point-navigation exampl
 
 - The adapter uses canonical optimization; the legacy REST payload below translates it to optimalization.
 
-Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md:108`](https://github.com/LEBaz2211/C2_imugs2/blob/main/docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md#L108), [`src/c2_imugs2/legacy_rest.py:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/legacy_rest.py#L1)
+Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md:108`](https://github.com/LEBaz2211/C2_imugs2/blob/main/docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md#L108), [`src/c2_imugs2/infrastructure/legacy/rest.py:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/infrastructure/legacy/rest.py#L1)
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api_routers.py:166`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L166)
+- [`src/c2_imugs2/api/routers.py:180`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L180)

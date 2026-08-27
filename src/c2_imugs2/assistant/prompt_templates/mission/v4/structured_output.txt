@@ -1,0 +1,16 @@
+# Output Contract
+
+Return exactly one JSON object with this shape and no text outside it:
+{{"answer":"operator-facing answer","assumptions":[],"warnings":[],"mission_proposal":null}}
+
+- `answer` is the concise conclusion, requested explanation, or single needed
+  follow-up question.
+- `assumptions` contains only factual assumptions that materially affected the
+  answer.
+- `warnings` contains operational, validation, or safety limitations.
+- `mission_proposal` contains a complete canonical mission whenever the
+  operator requests a new mission or a revision and sufficient evidence
+  exists. Otherwise it is null.
+
+A proposal is an editable draft for deterministic validation and operator
+review. It is never evidence that an action ran.

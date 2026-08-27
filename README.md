@@ -72,9 +72,10 @@ The API defaults to LM Studio at `http://10.67.80.81:1234/v1` with model
 `C2_IMUGS2_LLM_MODEL` in the shell when needed. Keep
 `C2_IMUGS2_LLM_API_KEY` in the process environment; do not commit it to the
 repository. Versioned prompts are in
-`src/c2_imugs2/assistant/prompt_templates/`; the current default is `v3`. Copy
-the latest version to a new directory and
-set `C2_IMUGS2_LLM_PROMPT_VERSION` to change prompt versions reproducibly.
+`src/c2_imugs2/assistant/prompt_templates/`; the current default is
+`mission/v4`. Prompt IDs may be grouped as `<family>/<release>`, and manifest
+releases can compose ordered system sections and examples. Set
+`C2_IMUGS2_LLM_PROMPT_VERSION` to select an exact release reproducibly.
 
 Open `http://localhost:5173`.
 
@@ -132,7 +133,7 @@ frontend API calls, Compose configuration, and JSON Schemas.
 
 ```bash
 .venv/bin/python -m pip install -e ".[docs]"
-.venv/bin/python -m c2_imugs2.contract_docs generate
+.venv/bin/python -m c2_imugs2.contracts.docs generate
 .venv/bin/mkdocs serve
 ```
 

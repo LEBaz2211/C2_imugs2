@@ -1,0 +1,14 @@
+# Dynamic Context
+
+<current_environment revision="{picture_revision}" observed_at="{picture_observed_at}">
+```json
+{operational_picture_json}
+```
+</current_environment>
+
+<operator_request>
+{user_message}
+</operator_request>
+
+Answer the operator's current request using the instruction priority and the
+evidence above.

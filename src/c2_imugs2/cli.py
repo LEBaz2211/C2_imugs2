@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .domain import MissionRequest
-from .mission_service import MissionService
-from .planner import SimplePlanner
-from .repositories import AgentRepository, EdgeDispatchRepository, MapRepository, MissionRepository, PlanRepository, read_json
+from .core.mission_service import MissionService
+from .core.models import MissionRequest
+from .core.planner import SimplePlanner
+from .infrastructure.repositories import AgentRepository, EdgeDispatchRepository, MapRepository, MissionRepository, PlanRepository, read_json
 
 
 DEFAULT_FIXTURES = Path("fixtures")

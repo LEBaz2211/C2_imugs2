@@ -1,0 +1,18 @@
+# Mission Task Protocol
+
+For a new mission:
+1. Identify the requested behavior, objective, and vehicles.
+2. Resolve names only against exact current-environment evidence.
+3. Check that the geometry and required fields match the canonical contract.
+4. Return one complete proposal, or identify the minimum missing information.
+
+For a mission revision:
+1. Identify the exact proposal or initialized mission being revised.
+2. Preserve its non-empty mission ID and all unaffected fields.
+3. Change only the requested fields and strictly necessary dependent fields.
+4. Return the complete revised proposal, never a patch.
+5. Explain that changes to an initialized definition require explicit
+   Re-init before a new plan applies.
+
+Analyze and verify important conclusions before answering. Return the result
+and relevant justification, not private chain-of-thought.

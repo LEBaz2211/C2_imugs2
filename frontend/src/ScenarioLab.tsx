@@ -126,28 +126,28 @@ const DEFAULT_VEHICLE_MODELS: VehicleModel[] = [
     label: "Themis Fr",
     vehicle_type: "UGV",
     default_name: "Themis Fr",
-    constraints: { max_speed: 4.5, max_acceleration: 8, max_weight: 16, max_tilt_angle: 1.8 },
+    constraints: { max_speed: 4.5, max_acceleration: 8, max_weight: 16, max_tilt_angle: 1.8, coverage_width_m: 6 },
     builtin: true,
   },
   {
     id: "ugv-standard",
     label: "UGV standard",
     vehicle_type: "UGV",
-    constraints: { max_speed: 4, max_acceleration: 8, max_weight: 16, max_tilt_angle: 1.8 },
+    constraints: { max_speed: 4, max_acceleration: 8, max_weight: 16, max_tilt_angle: 1.8, coverage_width_m: 6 },
     builtin: true,
   },
   {
     id: "ugv-scout",
     label: "UGV scout",
     vehicle_type: "UGV",
-    constraints: { max_speed: 6, max_acceleration: 10, max_weight: 10, max_tilt_angle: 1.6 },
+    constraints: { max_speed: 6, max_acceleration: 10, max_weight: 10, max_tilt_angle: 1.6, coverage_width_m: 6 },
     builtin: true,
   },
   {
     id: "ugv-heavy",
     label: "UGV heavy",
     vehicle_type: "UGV",
-    constraints: { max_speed: 2.5, max_acceleration: 5, max_weight: 40, max_tilt_angle: 1.2 },
+    constraints: { max_speed: 2.5, max_acceleration: 5, max_weight: 40, max_tilt_angle: 1.2, coverage_width_m: 6 },
     builtin: true,
   },
 ];
@@ -826,6 +826,7 @@ function VehiclePanel({
             <Badge>{selectedModel.vehicle_type}</Badge>
             <Badge>{selectedModel.constraints.max_speed ?? 0} m/s</Badge>
             <Badge>{selectedModel.constraints.max_weight ?? 0} kg</Badge>
+            <Badge>{selectedModel.constraints.coverage_width_m ?? 6} m swath</Badge>
             {selectedModel.builtin ? <Badge>built-in</Badge> : <Badge tone="ok">custom</Badge>}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -852,6 +853,7 @@ function VehiclePanel({
             <div className="mt-2 flex flex-wrap gap-1">
               <Badge>{agent.status}</Badge>
               {typeof agent.constraints.max_speed === "number" && <Badge>{agent.constraints.max_speed.toFixed(1)} m/s</Badge>}
+              {typeof agent.constraints.coverage_width_m === "number" && <Badge>{agent.constraints.coverage_width_m.toFixed(1)} m swath</Badge>}
             </div>
           </button>
         ))}
@@ -934,6 +936,7 @@ function AgentEditor({
           <NumberField label="Straight slope" value={agent.constraints.max_straight_slope} min={0} step={0.1} onChange={(value) => updateConstraint("max_straight_slope", value)} />
           <NumberField label="Side slope" value={agent.constraints.max_side_slope} min={0} step={0.1} onChange={(value) => updateConstraint("max_side_slope", value)} />
           <NumberField label="Max tilt" value={agent.constraints.max_tilt_angle} min={0} step={0.01} onChange={(value) => updateConstraint("max_tilt_angle", value)} />
+          <NumberField label="Coverage swath (m)" value={agent.constraints.coverage_width_m} min={0.1} step={0.1} onChange={(value) => updateConstraint("coverage_width_m", value)} />
         </div>
       </div>
     </div>
@@ -1306,6 +1309,7 @@ function normalizeModelConstraints(value: unknown): Agent["constraints"] {
     max_side_slope: numberOrUndefined(source.max_side_slope),
     max_weight: numberOrUndefined(source.max_weight),
     max_tilt_angle: numberOrUndefined(source.max_tilt_angle),
+    coverage_width_m: positiveNumberOrDefault(source.coverage_width_m, 6),
   };
 }
 
@@ -1313,6 +1317,11 @@ function numberOrUndefined(value: unknown) {
   if (value === undefined || value === null || value === "") return undefined;
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
+}
+
+function positiveNumberOrDefault(value: unknown, fallback: number) {
+  const number = numberOrUndefined(value);
+  return number !== undefined && number > 0 ? number : fallback;
 }
 
 function uniqueVehicleModelName(base: string, models: VehicleModel[]) {
@@ -1425,6 +1434,7 @@ function scenarioAgentFromAgent(agent: Agent): ScenarioAgent {
       max_side_slope: constraints.max_side_slope ?? 0,
       max_weight: constraints.max_weight ?? 0,
       max_tilt_angle: constraints.max_tilt_angle ?? 0,
+      coverage_width_m: positiveNumberOrDefault(constraints.coverage_width_m, 6),
     },
     capabilities: [],
   };

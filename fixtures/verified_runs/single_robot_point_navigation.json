@@ -369,7 +369,7 @@
           "line": 108
         },
         {
-          "path": "src/c2_imugs2/legacy_rest.py",
+          "path": "src/c2_imugs2/infrastructure/legacy/rest.py",
           "line": 1
         }
       ]
@@ -1150,7 +1150,7 @@
       ]
     },
     "TaskState": {
-      "definition": "task_msgs.TaskState used by Fleet and Edge; not c2_imugs2.domain.TaskState",
+      "definition": "task_msgs.TaskState used by Fleet and Edge; not c2_imugs2.core.models.TaskState",
       "values": [
         {
           "value": 0,

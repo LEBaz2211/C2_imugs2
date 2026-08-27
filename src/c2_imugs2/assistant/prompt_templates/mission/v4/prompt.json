@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "version": "mission/v4",
+  "system": [
+    "system/01_objective.txt",
+    "system/02_instruction_priority.txt",
+    "system/03_capabilities.txt",
+    "system/04_evidence.txt",
+    "system/05_task_protocol.txt",
+    "system/06_uncertainty.txt",
+    "system/07_response_style.txt"
+  ],
+  "mission_contract": "mission_contract.txt",
+  "examples": [
+    "examples/01_runtime_evidence.txt",
+    "examples/02_missing_mission_input.txt"
+  ],
+  "user_message": "user_message.txt",
+  "structured_output": "structured_output.txt"
+}

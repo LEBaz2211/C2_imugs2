@@ -59,6 +59,7 @@ export type Agent = {
     max_side_slope?: number;
     max_weight?: number;
     max_tilt_angle?: number;
+    coverage_width_m?: number;
   };
   capabilities: string[];
 };

@@ -5,9 +5,9 @@
 > declarations are not proof of runtime availability. Linked runtime examples are
 > separate `legacy_ros` evidence from `docker-compose.legacy-ros.yml` and do not verify the current editable backend.
 
-## c2_imugs2.domain.MissionRequest
+## c2_imugs2.core.models.MissionRequest
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:38`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L38)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:40`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L40)
 
 | Value | Member | Source comment |
 |---:|---|---|

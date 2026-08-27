@@ -127,11 +127,13 @@ Important conventions:
 - The mission editor keeps selected saved assets traceable by `feature_id`;
   selecting **Use geofence** creates a coverage mission and writes the same ID
   to `transit.geofence.feature_id` and `objective.geometries[0].feature_id`.
-  It sets `behavior=1`, `maximize_coverage=true`, and uses a `6 m` default swath
-  unless the draft already specifies coverage widths. At mission initialization,
-  the adapter inlines runtime user-feature geometry only in the translated copy
-  sent to old REST/ROS when the planner cannot resolve that ID. Scenario roads
-  remain in MapDB and are not sent in mission JSON.
+  It sets `behavior=1`, `maximize_coverage=true`, and uses each selected scenario
+  vehicle's `constraints.coverage_width_m` swath. An existing draft width takes
+  precedence, and vehicles without a usable value retain the `6 m` fallback.
+  At mission initialization, the adapter inlines runtime user-feature geometry
+  only in the translated copy sent to old REST/ROS when the planner cannot
+  resolve that ID. Scenario roads remain in MapDB and are not sent in mission
+  JSON.
 
 Allowed UI-created feature geometries:
 

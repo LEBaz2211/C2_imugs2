@@ -9,4 +9,4 @@ Routes extracted from FastAPI decorators.
 
 | Contract | Type/details | Evidence |
 |---|---|---|
-| [PUT /api/map/features/{feature_id}](../put-api-map-features-feature-id.md) | `update_map_feature` | [`src/c2_imugs2/api.py:297`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L297) |
+| [PUT /api/map/features/{feature_id}](../put-api-map-features-feature-id.md) | `update_map_feature` | [`src/c2_imugs2/api/app.py:300`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L300) |

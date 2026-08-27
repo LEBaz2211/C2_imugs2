@@ -18,9 +18,9 @@ FastAPI handler `mission_examples`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getMissionExamples | `—` | [`frontend/src/api.ts:585`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L585) |
-| handled by mission_examples | `—` | [`src/c2_imugs2/api.py:379`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L379) |
+| getMissionExamples | `—` | [`frontend/src/api.ts:587`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L587) |
+| handled by mission_examples | `—` | [`src/c2_imugs2/api/app.py:382`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L382) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:379`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L379)
+- [`src/c2_imugs2/api/app.py:382`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L382)

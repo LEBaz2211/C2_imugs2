@@ -92,7 +92,7 @@ class AssistantSettings:
     reasoning_effort: Literal["low", "medium", "xhigh"] = "xhigh"
     enable_thinking: bool = True
     preserve_thinking: bool = True
-    prompt_version: str = "v3"
+    prompt_version: str = "mission/v4"
     max_history_turns: int = 6
     max_conversations: int = 128
     max_user_message_chars: int = 12_000
@@ -156,7 +156,7 @@ class AssistantSettings:
             preserve_thinking=_env_bool(
                 "C2_IMUGS2_LLM_PRESERVE_THINKING", True
             ),
-            prompt_version=os.getenv("C2_IMUGS2_LLM_PROMPT_VERSION", "v3"),
+            prompt_version=os.getenv("C2_IMUGS2_LLM_PROMPT_VERSION", "mission/v4"),
             max_history_turns=_env_int(
                 "C2_IMUGS2_LLM_MAX_HISTORY_TURNS", 6, minimum=0
             ),

@@ -18,9 +18,9 @@ FastAPI handler `legacy_trace`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getLegacyTrace | `—` | [`frontend/src/api.ts:589`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L589) |
-| handled by legacy_trace | `—` | [`src/c2_imugs2/api.py:222`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L222) |
+| getLegacyTrace | `—` | [`frontend/src/api.ts:591`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L591) |
+| handled by legacy_trace | `—` | [`src/c2_imugs2/api/app.py:225`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L225) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:222`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L222)
+- [`src/c2_imugs2/api/app.py:225`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L225)

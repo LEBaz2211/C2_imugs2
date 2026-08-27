@@ -23,8 +23,8 @@ from c2_imugs2.assistant.orchestrator import (
 )
 from c2_imugs2.assistant.prompts import PromptCatalog, PromptConfigurationError
 from c2_imugs2.assistant.provider import LangChainOpenAIProvider
-from c2_imugs2.operational_context import OperationalContextService, OperationalUpdateError
-from c2_imugs2.operational_picture import (
+from c2_imugs2.operations.service import OperationalContextService, OperationalUpdateError
+from c2_imugs2.operations.models import (
     Freshness,
     OperationalItem,
     OperationalPicture,
@@ -117,6 +117,19 @@ PARADE_MAP_FEATURE = {
     "source_id": "MapDB.active",
 }
 
+OPERATOR_OBJECTIVE = {
+    "feature_id": "entry-1",
+    "name": "Entry 1",
+    "feature_type": "objective",
+    "geometry": {
+        "geometry_type": "Point",
+        "coordinates": [4.3932479, 50.8445956],
+    },
+    "active_map_asset": False,
+    "usage": "inline_geometry_only",
+    "source_id": "adapter.operator_objectives",
+}
+
 
 def scenario_picture_materializer(
     current: OperationalPicture | None, update: int
@@ -167,12 +180,20 @@ def map_feature_picture_materializer(
                     "feature_count": 1,
                     "road_count": 0,
                     "map_features": [PARADE_MAP_FEATURE],
+                    "operator_objectives": [OPERATOR_OBJECTIVE],
                     "map_feature_observation": {
                         "freshness": "fresh",
                         "returned_count": 1,
                         "feature_limit": 64,
                         "geometry_coordinate_limit": 128,
                         "truncated": False,
+                    },
+                    "operator_objective_observation": {
+                        "freshness": "fresh",
+                        "returned_count": 1,
+                        "feature_limit": 64,
+                        "truncated": False,
+                        "usage": "inline Point mission geometry only",
                     },
                 },
             )
@@ -194,7 +215,7 @@ def test_default_settings_target_requested_lm_studio_model_without_a_secret() ->
 
     assert settings.base_url == DEFAULT_LM_STUDIO_BASE_URL
     assert settings.model == DEFAULT_LM_STUDIO_MODEL
-    assert settings.prompt_version == "v3"
+    assert settings.prompt_version == "mission/v4"
     assert settings.reasoning_effort == "xhigh"
     assert settings.enable_thinking is True
     assert settings.preserve_thinking is True
@@ -450,6 +471,13 @@ def test_model_messages_include_exact_active_map_feature_without_internal_bindin
     assert projected_feature == {
         key: value for key, value in PARADE_MAP_FEATURE.items() if key != "source_id"
     }
+    assert model_picture["current_environment"]["operator_objectives"] == [
+        {
+            key: value
+            for key, value in OPERATOR_OBJECTIVE.items()
+            if key != "source_id"
+        }
+    ]
     serialized_picture = json.dumps(model_picture, sort_keys=True)
     for internal_key in (
         "scenario_id",
@@ -699,6 +727,62 @@ def test_prompt_catalog_rejects_path_traversal_and_missing_fields(tmp_path: Path
         catalog.load("broken")
 
 
+def test_prompt_catalog_loads_family_manifest_and_ordered_sections(tmp_path: Path) -> None:
+    prompt_root = tmp_path / "mission" / "test"
+    (prompt_root / "system").mkdir(parents=True)
+    (prompt_root / "system" / "first.txt").write_text("first", encoding="utf-8")
+    (prompt_root / "system" / "second.txt").write_text("second", encoding="utf-8")
+    (prompt_root / "contract.txt").write_text("contract", encoding="utf-8")
+    (prompt_root / "example.txt").write_text("example", encoding="utf-8")
+    (prompt_root / "output.txt").write_text("output", encoding="utf-8")
+    (prompt_root / "user.txt").write_text(
+        "{picture_revision} {picture_observed_at} "
+        "{operational_picture_json} {user_message}",
+        encoding="utf-8",
+    )
+    (prompt_root / "prompt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": "mission/test",
+                "system": ["system/first.txt", "system/second.txt"],
+                "mission_contract": "contract.txt",
+                "examples": ["example.txt"],
+                "user_message": "user.txt",
+                "structured_output": "output.txt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = PromptCatalog(tmp_path).load("mission/test")
+
+    assert bundle.version == "mission/test"
+    assert bundle.system == "first\n\nsecond"
+    assert bundle.examples == "example"
+
+
+def test_prompt_catalog_rejects_manifest_component_traversal(tmp_path: Path) -> None:
+    prompt_root = tmp_path / "mission" / "unsafe"
+    prompt_root.mkdir(parents=True)
+    (prompt_root / "prompt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": "mission/unsafe",
+                "system": ["../outside.txt"],
+                "mission_contract": "contract.txt",
+                "user_message": "user.txt",
+                "structured_output": "output.txt",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PromptConfigurationError, match="unsafe prompt manifest"):
+        PromptCatalog(tmp_path).load("mission/unsafe")
+
+
 def test_v3_prompt_preserves_identity_and_allows_stale_working_copy_edits() -> None:
     bundle = PromptCatalog().load("v3")
 
@@ -706,3 +790,20 @@ def test_v3_prompt_preserves_identity_and_allows_stale_working_copy_edits() -> N
     assert "mission's exact non-empty `mission_id`" in bundle.mission_contract
     assert "explicitly Re-initialized" in bundle.mission_contract
     assert "Do not refuse or return a null proposal solely" in bundle.system
+
+
+def test_v4_prompt_is_capability_accurate_and_structured() -> None:
+    bundle = PromptCatalog().load("mission/v4")
+
+    assert bundle.version == "mission/v4"
+    assert "# Objective" in bundle.system
+    assert "# Instruction Priority" in bundle.system
+    assert "# Capabilities And Boundaries" in bundle.system
+    assert "# Uncertainty" in bundle.system
+    assert "no direct access to source code" in bundle.system
+    assert "backend/" not in bundle.system
+    assert "legacy_ros/" not in bundle.system
+    assert "set `mission_id` to the empty string" in bundle.mission_contract
+    assert "current_environment.operator_objectives" in bundle.system
+    assert "never put its `feature_id`" in bundle.mission_contract
+    assert "<example>" in bundle.examples

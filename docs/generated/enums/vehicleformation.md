@@ -47,9 +47,9 @@ Language: **C++** · Evidence: [`backend/fog/planner/ros2ws/src/message_packages
 | `5` | `LEFT_FLANK` |  |
 | `6` | `RIGHT_FLANK` |  |
 
-## c2_imugs2.domain.VehicleFormation
+## c2_imugs2.core.models.VehicleFormation
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:14`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L14)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:16`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L16)
 
 | Value | Member | Source comment |
 |---:|---|---|

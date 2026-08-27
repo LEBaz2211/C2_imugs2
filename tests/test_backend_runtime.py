@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from c2_imugs2.scenario_runtime import (
+from c2_imugs2.scenarios.runtime import (
     C2_REST_CONTAINER,
     COORDINATION_CONTAINER,
     DEFAULT_EDGE_CONTAINER,

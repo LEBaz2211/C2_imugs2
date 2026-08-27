@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-import c2_imugs2.scenario_runtime as scenario_runtime
-from c2_imugs2.application_services import (
+import c2_imugs2.scenarios.runtime as scenario_runtime
+from c2_imugs2.api.services import (
     ApplicationServiceError,
     BackendMissionApplicationService,
     ScenarioApplicationService,
 )
-from c2_imugs2.domain import MissionRequest
-from c2_imugs2.legacy_rest import LegacyRestResponse
-from c2_imugs2.scenario_runtime import ScenarioRuntimeManager, build_scenario_snapshot
+from c2_imugs2.core.models import MissionRequest
+from c2_imugs2.infrastructure.legacy.rest import LegacyRestResponse
+from c2_imugs2.scenarios.runtime import ScenarioRuntimeManager, build_scenario_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1]

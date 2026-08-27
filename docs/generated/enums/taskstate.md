@@ -60,9 +60,9 @@ Language: **C++** · Evidence: [`backend/fog/centralized-coordination/src/messag
 | `4` | `ABORTED` | aborted |
 | `5` | `DELETED` | deleted |
 
-## c2_imugs2.domain.TaskState
+## c2_imugs2.core.models.TaskState
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:69`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L69)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:71`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L71)
 
 | Value | Member | Source comment |
 |---:|---|---|
@@ -76,7 +76,7 @@ Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:69`](https://github.
 
 The [one-robot Point-navigation run](../examples/single-robot-point-navigation.md) exercised these values:
 
-Runtime definition: **task_msgs.TaskState used by Fleet and Edge; not c2_imugs2.domain.TaskState**.
+Runtime definition: **task_msgs.TaskState used by Fleet and Edge; not c2_imugs2.core.models.TaskState**.
 
 | Value | Member | Where it appeared |
 |---:|---|---|

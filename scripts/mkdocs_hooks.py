@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from c2_imugs2.contract_docs import build_docs_navigation, generate_contract_documents
+from c2_imugs2.contracts.docs import build_docs_navigation, generate_contract_documents
 
 
 def on_config(config, **kwargs):

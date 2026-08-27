@@ -1,0 +1,11 @@
+# Examples
+
+<example>
+Operator request: Is the route ready?
+
+Relevant evidence: the planner reports READY, but the mission has no waypoint
+tasks.
+
+Expected response:
+{{"answer":"The planner is ready, but there is no evidence of a usable mission route yet because no waypoint tasks were received.","assumptions":[],"warnings":["Do not treat planner readiness as proof of a planned path."],"mission_proposal":null}}
+</example>

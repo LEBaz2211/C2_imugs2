@@ -18,9 +18,9 @@ FastAPI handler `reset_conversation`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by reset_conversation | `—` | [`src/c2_imugs2/api_routers.py:299`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L299) |
-| resetAssistantConversation | `—` | [`frontend/src/api.ts:625`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L625) |
+| handled by reset_conversation | `—` | [`src/c2_imugs2/api/routers.py:313`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L313) |
+| resetAssistantConversation | `—` | [`frontend/src/api.ts:627`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L627) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api_routers.py:299`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L299)
+- [`src/c2_imugs2/api/routers.py:313`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L313)

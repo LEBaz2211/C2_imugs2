@@ -83,9 +83,9 @@ Language: **C++** · Evidence: [`backend/fog/planner/ros2ws/src/message_packages
 | `40` | `PLANNING_FAILED_NO_SOLUTION_FOUND` | No planning solution found. New init_mission needed with adjusted configuration. Mission state will be set to PLANNED_FAILED |
 | `41` | `PLANNING_FAILED` | Swarm planner process fail,  Mission state will be set to PLANNED_FAILED. |
 
-## c2_imugs2.domain.MissionIssue
+## c2_imugs2.core.models.MissionIssue
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:47`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L47)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:49`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L49)
 
 | Value | Member | Source comment |
 |---:|---|---|

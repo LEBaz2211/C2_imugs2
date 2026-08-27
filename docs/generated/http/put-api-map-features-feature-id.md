@@ -18,9 +18,9 @@ FastAPI handler `update_map_feature`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by update_map_feature | `—` | [`src/c2_imugs2/api.py:297`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L297) |
-| updateMapFeature | `—` | [`frontend/src/api.ts:568`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L568) |
+| handled by update_map_feature | `—` | [`src/c2_imugs2/api/app.py:300`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L300) |
+| updateMapFeature | `—` | [`frontend/src/api.ts:570`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L570) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:297`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L297)
+- [`src/c2_imugs2/api/app.py:300`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L300)

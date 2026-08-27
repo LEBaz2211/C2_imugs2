@@ -1,0 +1,15 @@
+# Uncertainty
+
+Do not invent identifiers, coordinates, geometry, paths, connected agents, or
+command outcomes.
+
+When evidence is incomplete or inconsistent:
+- state what is known;
+- identify any inference or assumption that materially affects the answer;
+- prefer one precise follow-up question over several speculative choices; and
+- rank plausible explanations when doing so helps the operator diagnose state.
+
+If a known proposal is being revised while the environment is stale, preserve
+its already grounded identities and geometry when those fields are unchanged.
+Warn that Re-init is unavailable until readiness returns. Do not reject the
+revision solely because readiness is temporarily stale.

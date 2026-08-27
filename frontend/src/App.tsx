@@ -967,9 +967,12 @@ export default function App() {
       );
       setCommandFeedback({ tone: "ok", message: `Added objective '${feature.name}' to the mission.` });
     } else if ((feature.feature_type === "geofence" || feature.feature_type === "workspace") && feature.geometry.type === "Polygon") {
+      const vehicleCoverageDistances = coverageDistancesForVehicles(vehicles, c2Agents);
       const coverageDistances = base.objective.maximum_coverage_distances?.length
         ? base.objective.maximum_coverage_distances
-        : [6];
+        : vehicleCoverageDistances?.length
+          ? vehicleCoverageDistances
+          : [6];
       updateMission(
         {
           ...base,
@@ -3596,6 +3599,15 @@ function emptyMission(name: string, agentId: string): MissionConfig {
       maximize_coverage: false,
     },
   };
+}
+
+function coverageDistancesForVehicles(vehicleIds: string[], agents: Agent[]): number[] | undefined {
+  if (!vehicleIds.length) return undefined;
+  const agentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
+  const widths = vehicleIds.map((vehicleId) => agentsById.get(normalizeUuidish(vehicleId))?.constraints.coverage_width_m);
+  if (widths.some((width) => typeof width !== "number" || !Number.isFinite(width) || width <= 0)) return undefined;
+  const validWidths = widths as number[];
+  return validWidths.every((width) => width === validWidths[0]) ? [validWidths[0]] : validWidths;
 }
 
 function formatCoordinates(coordinates: unknown) {

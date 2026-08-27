@@ -43,6 +43,10 @@ Contract rules:
   evidence or is preserved unchanged from the prior proposal. Otherwise use
   inline geometry only from coordinates supplied by the operator or current
   trusted context; ask when coordinates are missing.
+- Entries in `current_environment.operator_objectives` are mutable Point
+  mission-authoring inputs, not active map assets. When one is requested, copy
+  its exact geometry into `objective.geometries[].geometry`. Never put its
+  `feature_id` in the mission proposal.
 - Inline geometry supports Point, LineString, or a single-ring Polygon.
   Positions are exactly `[longitude, latitude]`, with longitude in [-180, 180]
   and latitude in [-90, 90]. A LineString has at least two positions. A Polygon

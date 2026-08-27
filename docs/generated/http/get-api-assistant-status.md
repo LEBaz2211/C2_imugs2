@@ -18,9 +18,9 @@ FastAPI handler `assistant_status`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getAssistantStatus | `—` | [`frontend/src/api.ts:617`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L617) |
-| handled by assistant_status | `—` | [`src/c2_imugs2/api_routers.py:242`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L242) |
+| getAssistantStatus | `—` | [`frontend/src/api.ts:619`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L619) |
+| handled by assistant_status | `—` | [`src/c2_imugs2/api/routers.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L256) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api_routers.py:242`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api_routers.py#L242)
+- [`src/c2_imugs2/api/routers.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L256)

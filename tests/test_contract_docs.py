@@ -2,11 +2,11 @@ import csv
 import io
 from pathlib import Path
 
-from c2_imugs2.contract_docs import build_contract_model, build_docs_navigation, check_contract_documents, generate_contract_documents, render_contract_documents
-from c2_imugs2.contract_inventory import build_contract_inventory
+from c2_imugs2.contracts.docs import build_contract_model, build_docs_navigation, check_contract_documents, generate_contract_documents, render_contract_documents
+from c2_imugs2.contracts.inventory import build_contract_inventory
 from c2_imugs2.contracts import build_contract_graph
-from c2_imugs2.mission_config import validate_mission_config
-from c2_imugs2.task_plan import validate_task_plan
+from c2_imugs2.core.mission_config import validate_mission_config
+from c2_imugs2.core.task_plan import validate_task_plan
 
 
 ROOT = Path(__file__).resolve().parents[1]

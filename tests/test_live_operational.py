@@ -6,9 +6,9 @@ from typing import Any
 
 from pymongo.errors import ServerSelectionTimeoutError
 
-from c2_imugs2.live_operational import LiveOperationalReadModelProvider
-from c2_imugs2.operational_context import OperationalContextService, UpdateMode
-from c2_imugs2.operational_picture import Freshness
+from c2_imugs2.operations.live import LiveOperationalReadModelProvider
+from c2_imugs2.operations.models import Freshness
+from c2_imugs2.operations.service import OperationalContextService, UpdateMode
 
 
 MISSION_ID = "11111111-2222-3333-4444-555555555555"
@@ -333,6 +333,65 @@ def test_live_picture_merges_adapter_and_backend_truth_without_payload_arrays() 
     assert map_pipeline[2] == {"$limit": 65}
     assert "geometry" not in map_pipeline[-1]["$project"]
     assert map_kwargs == {"maxTimeMS": 125, "allowDiskUse": False}
+
+
+def test_operator_authored_point_objectives_are_a_separate_inline_only_overlay() -> None:
+    provider, _, _ = _fixture()
+    provider.operator_objective_provider = lambda map_name: {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": "entry-1",
+                "properties": {
+                    "feature_id": "entry-1",
+                    "feature_type": "objective",
+                    "name": "Entry 1",
+                },
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [4.3932479, 50.8445956],
+                },
+            },
+            {
+                "type": "Feature",
+                "id": "draft-risk",
+                "properties": {
+                    "feature_id": "draft-risk",
+                    "feature_type": "risk",
+                    "name": "Not an objective",
+                },
+                "geometry": {"type": "Polygon", "coordinates": []},
+            },
+        ],
+    }
+
+    picture = provider.read_operational_model()
+    scenario = next(iter(picture.sections["scenario"].items.values()))
+
+    assert scenario.data["operator_objectives"] == [
+        {
+            "feature_id": "entry-1",
+            "name": "Entry 1",
+            "feature_type": "objective",
+            "geometry": {
+                "geometry_type": "Point",
+                "coordinates": [4.3932479, 50.8445956],
+            },
+            "coordinate_count": 2,
+            "freshness": "fresh",
+            "provenance": "operator-authored map objective",
+            "source_id": "adapter.operator_objectives",
+            "active_map_asset": False,
+            "usage": "inline_geometry_only",
+        }
+    ]
+    assert scenario.data["operator_objective_observation"]["returned_count"] == 1
+    assert scenario.source_ids == (
+        "MapDB.active",
+        "adapter.operator_objectives",
+        "scenario-runtime",
+    )
 
 
 def test_oversized_active_map_geometry_is_summarized_without_coordinates() -> None:

@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 from c2_imugs2.api import create_app
 from c2_imugs2.assistant.models import AssistantResponse, AssistantScenarioBinding
 from c2_imugs2.assistant.orchestrator import AssistantBusyError
-from c2_imugs2.legacy_rest import LegacyRestResponse
-from c2_imugs2.operational_context import OperationalContextService
-from c2_imugs2.operational_picture import OperationalReadModel
+from c2_imugs2.infrastructure.legacy.rest import LegacyRestResponse
+from c2_imugs2.operations.models import OperationalReadModel
+from c2_imugs2.operations.service import OperationalContextService
 
 
 ROOT = Path(__file__).resolve().parents[1]

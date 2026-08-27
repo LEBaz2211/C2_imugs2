@@ -35,9 +35,9 @@ Language: **C++** · Evidence: [`backend/fog/planner/ros2ws/src/message_packages
 | `1` | `COVERAGE` | Monitoring/patrolling the objective. Used for mission types: Reconnaissance mission, Patrolling mission |
 | `2` | `NAVIGATE_NO_PLANNING` | Navigation/driving based behavior, but without using the planner: Used to test the navigation (local space) |
 
-## c2_imugs2.domain.Behavior
+## c2_imugs2.core.models.Behavior
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:8`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L8)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:10`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L10)
 
 | Value | Member | Source comment |
 |---:|---|---|

@@ -18,8 +18,8 @@ FastAPI handler `events`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by events | `—` | [`src/c2_imugs2/api.py:396`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L396) |
+| handled by events | `—` | [`src/c2_imugs2/api/app.py:399`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L399) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api.py:396`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api.py#L396)
+- [`src/c2_imugs2/api/app.py:399`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L399)

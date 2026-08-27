@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from c2_imugs2.mission_config import (
+from c2_imugs2.core.mission_config import (
     MissionValidationError,
     load_and_validate_mission,
     normalize_mission_config,

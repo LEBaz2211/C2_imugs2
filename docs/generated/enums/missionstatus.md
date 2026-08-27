@@ -59,9 +59,9 @@ Language: **C++** · Evidence: [`backend/fog/planner/ros2ws/src/message_packages
 | `9` | `DELETED` | Missio is deleted from the system. |
 | `10` | `COMPLETED` |  |
 
-## c2_imugs2.domain.MissionStatus
+## c2_imugs2.core.models.MissionStatus
 
-Language: **Python** · Evidence: [`src/c2_imugs2/domain.py:24`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/domain.py#L24)
+Language: **Python** · Evidence: [`src/c2_imugs2/core/models.py:26`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/core/models.py#L26)
 
 | Value | Member | Source comment |
 |---:|---|---|

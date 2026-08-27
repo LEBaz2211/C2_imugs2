@@ -64,7 +64,8 @@ to the Missions collection and its default Mission section.
 
 ## Replacement Core
 
-The independent core is organized around ports in `src/c2_imugs2/ports.py`:
+The independent core is organized around ports in
+`src/c2_imugs2/core/ports.py`:
 
 - `PlannerPort`
 - `AgentRepositoryPort`
@@ -86,15 +87,13 @@ mission_config + selected agents -> validated task_plan
 | Area | Main files | Responsibility |
 | --- | --- | --- |
 | UI | `frontend/src/App.tsx`, `MapView.tsx`, `api.ts` | Operator workflow, map rendering, API/SSE consumption |
-| Compatibility API | `src/c2_imugs2/api.py`, `api_routers.py`, `application_services.py` | Composition, stable UI endpoints, and mission/scenario command orchestration |
-| Assistant | `assistant/`, `operational_picture.py`, `operational_context.py`, `live_operational.py` | Versioned prompts, one-shot LangChain calls, and a bounded source-labelled picture on every message |
-| Persistence maintenance | `mongo_maintenance.py` | Idempotent indexes and explicit dry-run-first feedback compaction |
-| Legacy command adapter | `legacy_rest.py` | Old REST actions and canonical-to-legacy field translation |
-| ROS read adapter | `rosbridge.py` | Diagnostics and topic subscriptions |
-| Map adapter | `legacy_map.py` | Legacy GeoJSON, runtime features, explicit polygon-bounded OSM queries |
-| Scenario runtime | `scenario_runtime.py`, `scenario_launch.py` | Freeze a scenario version, switch the planner, replace and verify robot containers |
-| Domain contracts | `domain.py`, `mission_config.py`, `task_plan.py`, `schemas/` | Enums, normalization, and validation |
-| Modular core | `mission_service.py`, `ports.py`, `repositories.py`, `planner.py` | Replaceable non-ROS orchestration |
+| Compatibility API | `src/c2_imugs2/api/` | Composition, stable UI endpoints, and mission/scenario command orchestration |
+| Assistant | `src/c2_imugs2/assistant/` | Versioned prompts and one-shot LangChain model calls |
+| Operational read side | `src/c2_imugs2/operations/` | Typed pictures, live-source projection, revisions, diffs, and recovery |
+| Infrastructure | `src/c2_imugs2/infrastructure/` | Mongo maintenance, file repositories, rosbridge, planner, map, and legacy REST adapters |
+| Scenario runtime | `src/c2_imugs2/scenarios/` | Freeze a scenario version, switch the planner, replace and verify robot containers |
+| Domain and application core | `src/c2_imugs2/core/`, `schemas/` | Enums, ports, mission/task validation, services, and replaceable planning |
+| Contract tooling | `src/c2_imugs2/contracts/` | Contract graph, curated evidence, inventory, and generated documentation |
 | Editable ROS runtime | `backend/` | Writable ROS nodes, planner, edge runtime, configuration, and embedded interfaces |
 | Frozen legacy reference | `legacy_ros/` | Read-only historical runtime used only for inspection and compatibility comparison |
 
@@ -221,8 +220,10 @@ The assistant reasons about the editable backend, not `legacy_ros/`. A backend
 provider builds bounded internal runtime, agent, mission, plan, health, and
 warning sections with stable IDs, freshness and provenance. It also reads
 mission-relevant Point and single-ring Polygon facts from the exact active
-MapDB collection, within strict feature and coordinate budgets; mutable map
-authoring files are excluded until activation. The first message receives a
+MapDB collection, within strict feature and coordinate budgets. Mutable
+operator-authored Point objectives are projected separately as inline-only
+mission inputs; they are never presented as active map assets. Other mutable
+map authoring features remain excluded until activation. The first message receives a
 full `OperationalPicture`; later messages request a checksum-bound keyed diff
 from the conversation's previous revision. The orchestrator materializes and
 validates the new full picture before including it in that message's prompt.
@@ -241,9 +242,11 @@ generation and rejects concurrent work instead of queueing a burst, bounds
 conversation history, and never lets the model query ROS, MongoDB, Docker, or
 runtime files directly. Qwen thinking is enabled explicitly at its maximum
 `xhigh` effort, and the completion budget is large enough that reasoning does
-not consume the entire response before the final answer. Prompts are versioned text files in
-`src/c2_imugs2/assistant/prompt_templates/` and selected with
-`C2_IMUGS2_LLM_PROMPT_VERSION`.
+not consume the entire response before the final answer. Prompts are immutable,
+family-qualified releases in `src/c2_imugs2/assistant/prompt_templates/` and
+selected with `C2_IMUGS2_LLM_PROMPT_VERSION`. Manifest-based releases compose
+small ordered behavior, contract, example, dynamic-context, and output
+components. Historical flat versions remain loadable for reproducibility.
 
 `POST /api/assistant/messages` returns the canonical response envelope after
 that request completes. A hidden UI gate, `?assistantDebug=1`, reveals all

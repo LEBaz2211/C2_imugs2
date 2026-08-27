@@ -25,14 +25,20 @@ docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
 [project.scripts]
 c2-imugs2 = "c2_imugs2.cli:main"
 c2-imugs2-api = "c2_imugs2.api:main"
-c2-imugs2-contract-docs = "c2_imugs2.contract_docs:main"
-c2-imugs2-mongo-bootstrap = "c2_imugs2.mongo_maintenance:main"
+c2-imugs2-contract-docs = "c2_imugs2.contracts.docs:main"
+c2-imugs2-mongo-bootstrap = "c2_imugs2.infrastructure.mongo:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"c2_imugs2.assistant" = ["prompt_templates/*/*.txt", "prompt_templates/*.md"]
+"c2_imugs2.assistant" = [
+    "prompt_templates/*.md",
+    "prompt_templates/*/*.txt",
+    "prompt_templates/*/*/*.json",
+    "prompt_templates/*/*/*.txt",
+    "prompt_templates/*/*/*/*.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

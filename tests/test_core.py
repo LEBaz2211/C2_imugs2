@@ -4,13 +4,11 @@ from typing import Any
 import pytest
 
 from c2_imugs2.cli import build_service
-from c2_imugs2.domain import AgentProfile
-from c2_imugs2.domain import MissionRequest, MissionStatus
-from c2_imugs2.mission_config import MissionValidationError, load_and_validate_mission
-from c2_imugs2.mission_service import MissionService
-from c2_imugs2.repositories import read_json
-from c2_imugs2.repositories import AgentRepository, EdgeDispatchRepository, MissionRepository, PlanRepository
-from c2_imugs2.task_plan import validate_task_plan
+from c2_imugs2.core.mission_config import MissionValidationError, load_and_validate_mission
+from c2_imugs2.core.mission_service import MissionService
+from c2_imugs2.core.models import AgentProfile, MissionRequest, MissionStatus
+from c2_imugs2.core.task_plan import validate_task_plan
+from c2_imugs2.infrastructure.repositories import AgentRepository, EdgeDispatchRepository, MissionRepository, PlanRepository, read_json
 
 
 ROOT = Path(__file__).resolve().parents[1]

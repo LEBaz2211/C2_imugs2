@@ -5,9 +5,9 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
-import c2_imugs2.mongo_maintenance as mongo_maintenance
+import c2_imugs2.infrastructure.mongo as mongo_maintenance
 import pytest
-from c2_imugs2.mongo_maintenance import (
+from c2_imugs2.infrastructure.mongo import (
     FeedbackCompactionPlan,
     FeedbackCompactionResult,
     FeedbackRetentionPolicy,

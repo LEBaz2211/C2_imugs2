@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-import c2_imugs2.legacy_map as legacy_map
-from c2_imugs2.api import (
+import c2_imugs2.infrastructure.legacy.map as legacy_map
+from c2_imugs2.api.app import (
     create_app as _create_app,
     _inline_user_feature_refs,
     _load_forgotten_missions,
@@ -16,10 +16,10 @@ from c2_imugs2.api import (
     _normalize_mission_feedback,
     _planned_paths_from_planning_doc,
 )
-from c2_imugs2.domain import MissionRequest
-from c2_imugs2.legacy_rest import LegacyRestResponse, to_legacy_mission_config
-from c2_imugs2.scenario_launch import launch_scenario
-from c2_imugs2.scenario_runtime import ScenarioNotReadyError, ScenarioRuntimeManager, build_scenario_snapshot
+from c2_imugs2.core.models import MissionRequest
+from c2_imugs2.infrastructure.legacy.rest import LegacyRestResponse, to_legacy_mission_config
+from c2_imugs2.scenarios.launch import launch_scenario
+from c2_imugs2.scenarios.runtime import ScenarioNotReadyError, ScenarioRuntimeManager, build_scenario_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,7 +285,7 @@ def test_ready_runtime_requires_exact_planner_proof(tmp_path: Path, monkeypatch)
     manager._active_runtime_issues = lambda state: []  # type: ignore[method-assign]
     manager._publish_observed_state = lambda state: published.append(deepcopy(state))  # type: ignore[method-assign]
     monkeypatch.setattr(
-        "c2_imugs2.scenario_runtime._docker_request",
+        "c2_imugs2.scenarios.runtime._docker_request",
         lambda socket, method, path: (
             200,
             "MAP IS LOADED collection=MapDB.scenario_missing_planner_proof_v1 "
@@ -326,7 +326,7 @@ def test_ready_runtime_accepts_matching_planner_collection_and_token(
             "activation=activation-1",
         )
 
-    monkeypatch.setattr("c2_imugs2.scenario_runtime._docker_request", planner_logs)
+    monkeypatch.setattr("c2_imugs2.scenarios.runtime._docker_request", planner_logs)
 
     result = manager.validated_active()
 

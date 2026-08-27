@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from c2_imugs2.operational_context import (
+from c2_imugs2.operations.service import (
     FullSnapshotReason,
     OperationalContextService,
     OperationalUpdate,
@@ -12,7 +12,7 @@ from c2_imugs2.operational_context import (
     UpdateMode,
     materialize_operational_update,
 )
-from c2_imugs2.operational_picture import (
+from c2_imugs2.operations.models import (
     OPERATIONAL_SECTION_NAMES,
     Freshness,
     OperationalItem,
@@ -22,7 +22,7 @@ from c2_imugs2.operational_picture import (
     SectionMetadata,
     SourceReference,
 )
-from c2_imugs2.live_operational import (
+from c2_imugs2.operations.live import (
     LiveOperationalReadModelProvider,
     MongoOperationalSnapshot,
 )
