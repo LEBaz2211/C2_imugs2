@@ -74,7 +74,8 @@ Activation is a transaction boundary:
 4. Write the planner configuration with that exact collection and a unique
    activation token.
 5. Stop the previous scenario containers, clear scenario-dependent runtime
-   records, and restart central coordination and the planner.
+   records, and restart central coordination, the planner, the C2 REST bridge,
+   and rosbridge.
 6. Create only the requested scenario robot containers.
 7. Mark the scenario ready only after the planner reports the exact collection
    and token, required containers are running, and every configured canonical
@@ -134,7 +135,7 @@ library.
 - [ ] Update the backend to adapt to STANAG 4817, and make sure all features tested and working.
 - [ ] Integrate with MQTT system.
 - [x] Create the bounded revisioned operational-picture foundation provided to the LLM on every message.
-- [x] Add the first NL-to-mission draft pipeline with deterministic schema/semantic/ready-scenario membership validation and explicit operator review.
+- [x] Add the first NL-to-mission draft pipeline with deterministic schema/semantic/environment membership validation, separate command-readiness gating, and explicit operator review.
 - [ ] Add request-scoped planner preflight, full scenario/fleet feasibility checks, authentication, and evaluation before any model command tools.
 - [ ] Add database-backed activation fencing and restart resume/rollback before running more than one API worker.
 - [ ] Enforce write-once scenario collections or add bounded recurring content-digest verification.
@@ -153,7 +154,43 @@ This is the subtasks of task 3 of ZE Plan
 
 ## ZE Log
 
+- **2026-08-27 — A live HTTP gateway can be absent from the ROS graph after a
+  host network change:** Long-running host-network `c2-ros-rest` and
+  `rosbridge` containers kept accepting HTTP/WebSocket connections after their
+  CycloneDDS sockets were bound to a vanished host interface. Init returned
+  HTTP 200, but `/c2_node` was absent and the planner received nothing; repeated
+  `ddsi_udp_conn_write ... retcode -1` messages were the tell. The local
+  all-in-one simulation now uses `ROS_LOCALHOST_ONLY=1` with an expanded
+  CycloneDDS automatic participant-index range, and real scenario activation
+  restarts both gateways with coordination and the planner. If this
+  recurs, check the ROS graph for `/c2_node` and `/rosbridge_websocket`, not only
+  ports 5001/9090. A deployment with remote ROS hosts needs an explicit stable
+  CycloneDDS interface/discovery configuration instead of localhost-only mode.
+
+- **2026-08-27 — Diagnostic graph rendering can make a ready planner appear
+  hung:** The planner logged `MAP IS LOADED` and then synchronously annotated an
+  80,684-edge graph on its single ROS executor. State timers, `CreatePlanner`,
+  and `GetPlan` could not run while it rendered. Automatic graph-image rendering
+  is now kept out of initialization and planning callbacks; diagnostics must not
+  block command or feedback paths.
+
 ## Session Problem Log
+
+- **2026-08-27 — A bounded log tail is not durable planner readiness:** Large
+  task-plan JSON output pushed the planner's startup collection/token marker
+  beyond the last 1,000 Docker log lines, causing a healthy unchanged planner
+  to become `stale` and disabling Init/Re-init. Activation-time marker proof is
+  now retained while the same Docker planner process `StartedAt` remains in
+  place; a restarted process must prove the marker again.
+
+- **2026-08-27 — Mission proposal editability is not command readiness:** A
+  temporary stale runtime caused the assistant to refuse a harmless change to
+  an already grounded mission, while the browser also kept the first model
+  envelope instead of adopting a same-ID revision. Canonical proposal editing
+  is now allowed when the hidden environment identity still matches; Init and
+  Re-init retain the strict READY check. A revision replaces the browser
+  working copy, marks the prior plan as belonging to the old definition, and
+  disables Approve/Start until the operator explicitly Re-initializes it.
 
 - **2026-08-12 — Cross-scenario map leakage:** C2 used the global map feature
   library whenever `activeScenarioRuntime.ready` was false. A transient missing

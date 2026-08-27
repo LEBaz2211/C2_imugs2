@@ -287,16 +287,9 @@ class PlannerNode(Node):
             )
             return
 
-        # Plotting is diagnostic output and must not invalidate a usable plan.
-        if not self.path_image_saved:
-            try:
-                self.plot_graph_service(paths=self.paths)
-            except Exception as e:
-                self.get_logger().warning(
-                    f"Could not render plan for mission {mission_id}: "
-                    f"{type(e).__name__}: {e}"
-                )
-                
+        # Graph rendering is intentionally not performed here.  Large scenario
+        # graphs can take minutes to annotate and this callback runs on the ROS
+        # executor, so rendering here would block planner state and services.
 
     def set_mission_service_callback(self, request, response):
         # Process the CreatePlanner service request here
@@ -625,8 +618,9 @@ class PlannerNode(Node):
             f"activation={self.scenario_activation_token} "
             f"nodes={self.G.number_of_nodes()} edges={self.G.number_of_edges()}"
         )
-        self.plot_graph_service()
-        self.get_logger().info('Graph Image Saved ')
+        # Keep diagnostic rendering out of initialization.  This method runs on
+        # the ROS executor and must return before state timers and services can
+        # respond; callers may still request/publish an already rendered image.
 
 
 

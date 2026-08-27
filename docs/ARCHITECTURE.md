@@ -57,6 +57,11 @@ belongs in the Diagnostics view or an explicit disclosure. Responsive panels
 must preserve access to every action without forcing the map below its useful
 minimum size.
 
+Pane hierarchy belongs directly below the workspace title and above section
+tabs, readiness, runtime state, and commands. A selected mission keeps that
+same context header across Mission, Plan, Assets, and Diagnostics; Back returns
+to the Missions collection and its default Mission section.
+
 ## Replacement Core
 
 The independent core is organized around ports in `src/c2_imugs2/ports.py`:
@@ -108,6 +113,14 @@ a saved feature, but the adapter sends inline geometry when the editable
 backend planner's inherited compatibility path cannot resolve that runtime
 `feature_id`.
 
+The canonical schema permits missions without `transit`. The inherited planner
+does not, so mission initialization adds a conservative `max_speed` only to the
+backend-bound copy: the minimum positive speed declared by the selected active
+scenario agents, or `1.0 m/s` when none is available. Explicit mission speed
+wins, and the canonical mission stored by the adapter remains unchanged. The
+editable planner also defaults safely for direct ROS clients that bypass the
+adapter.
+
 Scenario roads are not mission geometry. The mission carries objectives and constraints; the active scenario's roads live in its MapDB snapshot.
 
 ## One Active Scenario
@@ -122,7 +135,7 @@ flowchart LR
     Hash --> Authority[(Activation record + active singleton)]
     Authority -->|ACTIVATING + phase updates| Map[(MapDB.scenario_id_version)]
     Authority --> Config[Write active planner config]
-    Config --> Restart[Restart coordination and planner]
+    Config --> Restart[Restart coordination, planner, REST bridge, and rosbridge]
     API --> Robots[Replace robot containers]
     Restart --> Verify{Planner loaded exact collection?}
     Robots --> Verify2{All robot IDs registered?}
@@ -142,8 +155,13 @@ content-addressed, immutable collection named
 no-op. Old version collections are retained for reproducibility; they are not
 merged into the active graph. `MapDB.rma` remains the legacy seed and Scenario
 Lab authoring library, not the planner's source after activation. Central
-coordination is restarted during a real switch so mission nodes from the
-previous reality cannot survive into the new one.
+coordination and both ROS gateways are restarted during a real switch so
+mission nodes or DDS participants from the previous reality cannot survive
+into the new one. Because the editable simulation runs every ROS participant
+on one host-network namespace, it pins DDS discovery to loopback with
+`ROS_LOCALHOST_ONLY=1` and raises CycloneDDS's automatic participant-index
+range for the multi-process fleet. Remote-robot deployments must replace that
+with an explicit stable CycloneDDS network/discovery configuration.
 
 “Immutable” is currently an application invariant: creation/reuse verifies the
 complete content hash, while routine READY checks verify collection identity
@@ -161,10 +179,22 @@ OSM has one operational path: the operator explicitly downloads roads inside a S
 
 Mission endpoints may fall between graph junctions. The planner projects those endpoints onto risk-safe edges and splits the selected edges only in a request-local graph copy. These virtual endpoint nodes must never be written to, or reused to mutate, the active scenario's immutable MapDB snapshot or its base routing graph.
 
-Activation stays non-ready unless both checks pass:
+Diagnostic graph-image rendering is not run synchronously during map
+initialization or mission planning. Both are ROS executor callbacks, so a large
+render would prevent planner state, services, and mission feedback from making
+progress even after the map-ready marker was logged.
+
+Activation stays non-ready unless all checks pass:
 
 - the planner logs that it loaded the exact versioned MapDB collection and produced a non-empty graph;
+- coordination, the planner, the C2 REST bridge, and rosbridge containers are running;
 - every configured robot container is running and its canonical ID appears in `RuntimeDB.ConnectedVehicles`.
+
+The exact planner collection/token marker is captured during activation. Large
+plan JSON logs may later move that startup line beyond Docker's bounded log
+tail; readiness therefore retains the verified proof only while Docker reports
+the same planner process `StartedAt`. A planner process started after
+verification must emit the exact marker again.
 
 Mission Init is rejected with HTTP `409` while no scenario is ready or when a mission names a robot outside the active scenario.
 
@@ -216,25 +246,37 @@ not consume the entire response before the final answer. Prompts are versioned t
 `C2_IMUGS2_LLM_PROMPT_VERSION`.
 
 `POST /api/assistant/messages` returns the canonical response envelope after
-that request completes. A hidden UI gate, `?assistantDebug=1`, reveals a
-per-turn Debug switch. When requested, the safe trace contains the exact
+that request completes. A hidden UI gate, `?assistantDebug=1`, reveals all
+advanced inspection surfaces: Scenario Lab, Contracts, C2 Diagnostics, and the
+assistant's per-turn Debug switch. When requested, the safe trace contains the exact
 redacted messages sent to the model, the final provider event, and any actual
 provider tool calls; deterministic context and validation events are shown
 separately. No tools are currently bound to the model. The query parameter is
-a discoverability gate, not an authorization boundary. The browser retains a
-bounded transcript and conversation ID in local storage, and keeps validated
-assistant mission working copies in a separate local draft store so clearing
-chat does not delete a mission. Backend conversation and operational-picture
-state remain bounded and in process.
+a discoverability gate, not an authorization boundary. The browser retains up
+to 20 conversations with 80 visible transcript items each in local storage,
+supports New/select/delete navigation, and migrates the former single-session
+store. Validated assistant mission working copies stay in a separate local
+draft store, so deleting chat does not delete a mission. Backend conversation
+and operational-picture state remain bounded and in process, so model-side
+continuity after an API restart is best-effort even though browser transcripts
+remain available.
 
 The assistant is proposal-only. It has no Init, Approve, Start, scenario
 activation, Docker, or database-write tool. A proposal must pass canonical
-schema, inline-geometry semantics, ready-scenario and vehicle-membership
-validation, and an exact comparison between the scenario binding in the
-picture used for generation and the current post-generation binding. A valid
-proposal is registered immediately as a local draft, appears both in the
-conversation and the normal mission list, and can be selected to preview its
-geometry on the map. Conversation-card Validate, Init, Approve, and Start
+schema, inline-geometry semantics, environment vehicle-membership validation,
+and an exact comparison between the environment binding in the picture used
+for generation and the current post-generation binding. Proposal editability
+and command readiness are deliberately separate: a complete proposal bound to
+the same temporarily stale environment may still be revised, while Init and
+Re-init remain blocked until the runtime is READY. A new model proposal leaves
+`mission_id` empty and the adapter assigns it programmatically; a revision
+preserves the existing mission ID and replaces that mission's browser working
+copy. If the mission was already initialized, its existing status and route
+are labelled as belonging to the previous definition, and Approve/Start remain
+disabled until explicit Re-init produces state for the revised configuration.
+A valid proposal is registered immediately as a local draft, appears both in
+the conversation and the normal mission list, and can be selected to preview
+its geometry on the map. Conversation-card Validate, Init/Re-init, Approve, and Start
 controls call the same deterministic UI/backend paths as the manual workspace;
 none is invoked by the model. Init remains an explicit operator command,
 Approve requires planner feedback, and Start requires acceptance. Because the

@@ -72,18 +72,19 @@ The API defaults to LM Studio at `http://10.67.80.81:1234/v1` with model
 `C2_IMUGS2_LLM_MODEL` in the shell when needed. Keep
 `C2_IMUGS2_LLM_API_KEY` in the process environment; do not commit it to the
 repository. Versioned prompts are in
-`src/c2_imugs2/assistant/prompt_templates/`; the current default is `v2`. Copy
+`src/c2_imugs2/assistant/prompt_templates/`; the current default is `v3`. Copy
 the latest version to a new directory and
 set `C2_IMUGS2_LLM_PROMPT_VERSION` to change prompt versions reproducibly.
 
 Open `http://localhost:5173`.
 
 Assistant replies use one non-streaming LM Studio request with Qwen thinking
-enabled at maximum `xhigh` effort. For a bounded diagnostic view, open
-`http://localhost:5173/?assistantDebug=1` and enable **Debug** before sending a
-message. The panel then shows the exact redacted model input, final provider
-event, and any actual tool calls. The current model has no callable tools;
-backend context reads and validation are labelled separately.
+enabled at maximum `xhigh` effort. The ordinary UI keeps advanced inspection
+out of the operator flow. Open `http://localhost:5173/?assistantDebug=1` to
+reveal Scenario Lab, Contracts, C2 Diagnostics, and the assistant's **Debug**
+control. Enabling Debug before a message shows the exact redacted model input,
+final provider event, and any actual tool calls. The current model has no
+callable tools; backend context reads and validation are labelled separately.
 
 Health and diagnostic endpoints:
 

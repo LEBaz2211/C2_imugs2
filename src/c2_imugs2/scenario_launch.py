@@ -11,6 +11,11 @@ from typing import Any
 
 EDGE_IMAGE = "c2-imugs2/backend-edge-agent-sim:local"
 BACKEND_CONFIG_DIR = Path("backend/config")
+LOCAL_CYCLONEDDS_URI = (
+    "<CycloneDDS><Domain><Discovery><ParticipantIndex>auto</ParticipantIndex>"
+    "<MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain>"
+    "</CycloneDDS>"
+)
 
 
 def launch_scenario(
@@ -152,6 +157,8 @@ def _compose_yaml(containers: list[dict[str, Any]], host_root: Path) -> str:
                 "    environment:",
                 f"      ROS_DOMAIN_ID: \"{os.environ.get('ROS_DOMAIN_ID', '112')}\"",
                 f"      RMW_IMPLEMENTATION: \"{os.environ.get('RMW_IMPLEMENTATION', 'rmw_cyclonedds_cpp')}\"",
+                f"      ROS_LOCALHOST_ONLY: \"{os.environ.get('ROS_LOCALHOST_ONLY', '1')}\"",
+                f"      CYCLONEDDS_URI: \"{os.environ.get('CYCLONEDDS_URI', LOCAL_CYCLONEDDS_URI)}\"",
                 "      C2_INTERFACE_AVOID_ROS_PREFIX: \"FALSE\"",
                 f"      AGENT_ID: {container['agent_env_id']}",
                 f"      AUTONOMY_TOPIC_PREFIX: {container['topic_prefix']}",
@@ -217,6 +224,8 @@ def _start_containers_with_docker_socket(socket_path: str, containers: list[dict
             "Env": [
                 f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', '112')}",
                 f"RMW_IMPLEMENTATION={os.environ.get('RMW_IMPLEMENTATION', 'rmw_cyclonedds_cpp')}",
+                f"ROS_LOCALHOST_ONLY={os.environ.get('ROS_LOCALHOST_ONLY', '1')}",
+                f"CYCLONEDDS_URI={os.environ.get('CYCLONEDDS_URI', LOCAL_CYCLONEDDS_URI)}",
                 "C2_INTERFACE_AVOID_ROS_PREFIX=FALSE",
                 f"AGENT_ID={container['agent_env_id']}",
                 f"AUTONOMY_TOPIC_PREFIX={container['topic_prefix']}",

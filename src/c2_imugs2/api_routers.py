@@ -38,7 +38,7 @@ def _http_error(exc: ApplicationServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-def _require_complete_ready_scenario_binding(
+def _require_complete_scenario_binding(
     binding: AssistantScenarioBinding | None,
     *,
     source: str,
@@ -50,12 +50,11 @@ def _require_complete_ready_scenario_binding(
         raise ValueError(
             f"{source} environment binding is incomplete: {', '.join(missing)}"
         )
-    if not binding.ready or (binding.status or "").lower() != "ready":
-        raise ValueError(
-            f"{source} environment binding is not ready "
-            f"(status={binding.status!r}, ready={binding.ready})"
-        )
     return binding
+
+
+def _binding_is_ready(binding: AssistantScenarioBinding) -> bool:
+    return binding.ready and (binding.status or "").lower() == "ready"
 
 
 def _require_same_scenario_binding(
@@ -113,7 +112,7 @@ def _assistant_response_payload(
 
     active_binding: AssistantScenarioBinding | None = None
     try:
-        picture_binding = _require_complete_ready_scenario_binding(
+        picture_binding = _require_complete_scenario_binding(
             response.picture_scenario_binding,
             source="operational picture",
         )
@@ -122,7 +121,7 @@ def _assistant_response_payload(
                 "post-generation current environment validation is unavailable"
             )
         validated, active_scenario = validate_proposal(proposal)
-        active_binding = _require_complete_ready_scenario_binding(
+        active_binding = _require_complete_scenario_binding(
             AssistantScenarioBinding.from_mapping(active_scenario),
             source="post-generation current environment",
         )
@@ -142,12 +141,27 @@ def _assistant_response_payload(
             {"type": "proposal_validation", "status": "invalid", "issue_count": 1},
         )
     else:
+        command_ready = _binding_is_ready(active_binding)
         result["mission_proposal"] = validated
         result["mission_proposal_validation"] = {
             "valid": True,
             "scope": "schema_semantics_and_current_environment",
             "issues": [],
             "scenario_binding": active_binding.model_dump(mode="json"),
+            "command_ready": command_ready,
+            "command_issues": (
+                []
+                if command_ready
+                else [
+                    {
+                        "message": (
+                            "The proposal is editable and valid, but Init/Re-init remains disabled "
+                            "until the current environment is ready "
+                            f"(status={active_binding.status!r}, ready={active_binding.ready})."
+                        )
+                    }
+                ]
+            ),
         }
         _append_api_debug_event(
             result,

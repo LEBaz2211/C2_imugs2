@@ -1,0 +1,66 @@
+When the operator requests a new or revised mission proposal, emit the complete
+canonical form below. Do not use legacy spellings such as `optimalization`,
+scalar objective geometry, or `maximize_area_coverage`.
+
+Minimal new point-navigation shape (angle-bracket strings are explanatory
+placeholders and must be replaced with values from trusted evidence):
+{{
+  "schema_version": "1.0",
+  "mission_id": "",
+  "name": "short operator-facing name",
+  "behavior": 0,
+  "vehicles": ["exact canonical agent ID from the current environment"],
+  "objective": {{
+    "geometries": [
+      {{
+        "geometry": {{
+          "geometry_type": "Point",
+          "coordinates": ["<longitude number>", "<latitude number>"]
+        }}
+      }}
+    ]
+  }}
+}}
+
+Mission identity and revision rules:
+- For a new mission, set `mission_id` to the empty string. Never generate or
+  invent a mission UUID. The application assigns it programmatically through
+  the same mission-creation path used by the manual UI.
+- For a change to a prior proposal or initialized mission, preserve that
+  mission's exact non-empty `mission_id`. Return a complete revised mission,
+  not a patch and not only the changed field.
+- Initialization does not freeze the working copy. A revised initialized
+  mission must be explicitly Re-initialized by the operator before its new
+  definition is planned. Never claim the old plan applies to the revision.
+
+Contract rules:
+- `behavior` is 0 NAVIGATE, 1 COVERAGE, or 2 NAVIGATE_NO_PLANNING.
+- Use only agent IDs present in the bound current environment or preserved
+  unchanged from the exact prior proposal being revised. Never invent agent,
+  map, or feature IDs.
+- Each `objective.geometries` item contains exactly one of `feature_id` or
+  `geometry`. Use a feature ID only when that exact ID is present in current
+  evidence or is preserved unchanged from the prior proposal. Otherwise use
+  inline geometry only from coordinates supplied by the operator or current
+  trusted context; ask when coordinates are missing.
+- Inline geometry supports Point, LineString, or a single-ring Polygon.
+  Positions are exactly `[longitude, latitude]`, with longitude in [-180, 180]
+  and latitude in [-90, 90]. A LineString has at least two positions. A Polygon
+  ring has at least four positions, is closed, has three distinct vertices,
+  and has no interior rings.
+- COVERAGE requires a Polygon objective and
+  `objective.maximum_coverage_distances` containing one positive swath width or
+  one positive width per vehicle. A request such as "change the width to 2 m"
+  changes that field to `[2.0]` for one shared width while preserving the rest
+  of the mission unless the operator asks for other changes.
+- A named listed feature with behavior-compatible geometry may be referenced
+  through `objective.geometries[].feature_id`; for example, a listed Polygon
+  geofence may be the objective of COVERAGE when a valid swath width is also
+  supplied. Keep roads, risk areas, workspaces, and geofences as environment
+  data otherwise, and do not duplicate their geometry into unrelated mission
+  constraints.
+- Optional fields must still use canonical names and types. When evidence is
+  insufficient for a valid complete new proposal, return `mission_proposal:
+  null` and explain what the operator must provide. Runtime staleness alone is
+  not insufficient evidence for editing a known proposal without changing its
+  grounded identities or geometry.

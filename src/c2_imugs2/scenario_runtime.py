@@ -28,6 +28,8 @@ from .scenario_launch import _docker_request, launch_scenario
 
 PLANNER_CONTAINER = "c2-imugs2-backend-planner"
 COORDINATION_CONTAINER = "c2-imugs2-backend-centralized-coordination"
+C2_REST_CONTAINER = "c2-imugs2-backend-c2-ros-rest"
+ROSBRIDGE_CONTAINER = "c2-imugs2-backend-rosbridge"
 DEFAULT_EDGE_CONTAINER = "c2-imugs2-backend-edge-agent-sim-1"
 ACTIVE_STATE_FILE = "active_scenario.json"
 PLANNER_CONFIG_FILE = "active_planner.yaml"
@@ -394,6 +396,12 @@ class ScenarioRuntimeManager:
             self._advance_activation(state, "runtime_records_cleared")
             self._restart_container(COORDINATION_CONTAINER, "centralized coordination")
             self._restart_planner()
+            # The REST bridge and rosbridge are ROS participants even while
+            # their HTTP/WebSocket listeners remain healthy. Restarting them
+            # with the runtime prevents a stale DDS socket from silently
+            # acknowledging Init without publishing it to coordination.
+            self._restart_container(C2_REST_CONTAINER, "C2 REST bridge")
+            self._restart_container(ROSBRIDGE_CONTAINER, "rosbridge")
             self._advance_activation(state, "backend_restarted")
             launched = launch_scenario(
                 self.repo_root,
@@ -606,6 +614,10 @@ class ScenarioRuntimeManager:
             )
             planner_ready = logs_status == 200 and marker in str(logs)
             coordination_ready = self._container_running(COORDINATION_CONTAINER)
+            gateways_ready = all(
+                self._container_running(name)
+                for name in (C2_REST_CONTAINER, ROSBRIDGE_CONTAINER)
+            )
             containers_ready = all(self._container_running(str(item.get("container_name") or "")) for item in containers)
             try:
                 if MongoClient is None:
@@ -617,7 +629,13 @@ class ScenarioRuntimeManager:
                     }
             except PyMongoError:
                 last_registered = set()
-            if planner_ready and coordination_ready and containers_ready and expected <= last_registered:
+            if (
+                planner_ready
+                and coordination_ready
+                and gateways_ready
+                and containers_ready
+                and expected <= last_registered
+            ):
                 return
             time.sleep(1)
         missing = sorted(expected - last_registered)
@@ -672,6 +690,10 @@ class ScenarioRuntimeManager:
                 issues.append(f"container {COORDINATION_CONTAINER} is not running")
             if not self._container_running(PLANNER_CONTAINER):
                 issues.append(f"container {PLANNER_CONTAINER} is not running")
+            if not self._container_running(C2_REST_CONTAINER):
+                issues.append(f"container {C2_REST_CONTAINER} is not running")
+            if not self._container_running(ROSBRIDGE_CONTAINER):
+                issues.append(f"container {ROSBRIDGE_CONTAINER} is not running")
             robot_containers = state.get("containers") or []
             if expected_agents and not robot_containers:
                 issues.append("no scenario robot containers are recorded")
@@ -700,7 +722,15 @@ class ScenarioRuntimeManager:
         return issues
 
     def _planner_readiness_issue(self, state: dict[str, Any]) -> str | None:
-        """Require the exact planner collection/token proof for live readiness."""
+        """Require an exact planner proof without depending on an endless log tail.
+
+        Activation records ``verified_at`` only after observing the exact
+        collection/token marker.  Large planner JSON logs can later push that
+        marker beyond Docker's bounded tail, so the proof remains valid while
+        the same planner process (identified by ``StartedAt``) is still
+        running.  A process started after verification must emit the marker
+        again before it is trusted.
+        """
         collection_name = str(state.get("map_collection") or "")
         activation_token = str(state.get("activation_token") or "")
         if not collection_name or not activation_token:
@@ -714,9 +744,31 @@ class ScenarioRuntimeManager:
             )
         except OSError as exc:
             return f"planner readiness check failed: {exc}"
-        if status != 200 or marker not in str(logs):
-            return "planner has not reported the active MapDB collection and activation token"
-        return None
+        if status == 200 and marker in str(logs):
+            return None
+        if self._verified_planner_process_is_unchanged(state):
+            return None
+        return "planner has not reported the active MapDB collection and activation token"
+
+    def _verified_planner_process_is_unchanged(self, state: dict[str, Any]) -> bool:
+        verified_at = _parse_runtime_datetime(state.get("verified_at"))
+        if verified_at is None:
+            return False
+        try:
+            status, payload = _docker_request(
+                self.docker_socket,
+                "GET",
+                f"/containers/{PLANNER_CONTAINER}/json",
+            )
+        except OSError:
+            return False
+        if status != 200 or not isinstance(payload, dict):
+            return False
+        container_state = payload.get("State")
+        if not isinstance(container_state, dict) or not container_state.get("Running"):
+            return False
+        started_at = _parse_runtime_datetime(container_state.get("StartedAt"))
+        return started_at is not None and started_at <= verified_at
 
     def _ready_runtime_issues(self, state: dict[str, Any]) -> list[str]:
         """Apply one readiness proof to both observation and idempotent reuse."""
@@ -827,6 +879,18 @@ def _feature_bbox(features: list[dict[str, Any]]) -> list[float]:
     longitudes = [point[0] for point in points]
     latitudes = [point[1] for point in points]
     return [min(longitudes), min(latitudes), max(longitudes), max(latitudes)]
+
+
+def _parse_runtime_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _normalize_agent_id(value: str) -> str:

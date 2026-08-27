@@ -40,12 +40,16 @@ class RestGateway:
 
 
 class ReadyScenario:
+    def __init__(self, agents: list[dict[str, Any]] | None = None) -> None:
+        self.agents = deepcopy(agents or [])
+
     def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
         return {
             "scenario_id": "scenario-a",
             "version": "version-a",
             "map_collection": "scenario_a_version_a",
             "status": "ready",
+            "agents": deepcopy(self.agents),
         }
 
     def validated_active(self) -> dict[str, Any]:
@@ -58,7 +62,10 @@ class ReadyScenario:
         return {**self.require_ready(), "agents": payload.get("agents") or []}
 
 
-def _service(tmp_path: Path) -> tuple[BackendMissionApplicationService, SimpleNamespace, RestGateway]:
+def _service(
+    tmp_path: Path,
+    scenario: ReadyScenario | None = None,
+) -> tuple[BackendMissionApplicationService, SimpleNamespace, RestGateway]:
     runtime = SimpleNamespace(
         missions={},
         forgotten_missions=set(),
@@ -71,7 +78,7 @@ def _service(tmp_path: Path) -> tuple[BackendMissionApplicationService, SimpleNa
         repo_root=ROOT,
         runtime=runtime,
         rest_client=rest,  # type: ignore[arg-type]
-        scenario_runtime=ReadyScenario(),
+        scenario_runtime=scenario or ReadyScenario(),
         inline_feature_refs=lambda config, root: config,
         normalize_mission_id=lambda value: str(value),
         status_name=lambda value: {0: "NONE", 4: "ACCEPTED", 5: "STARTED"}[int(value)],
@@ -116,6 +123,88 @@ def test_live_mission_application_maps_validation_to_unprocessable(tmp_path: Pat
 
     assert error.value.status_code == 422
     assert rest.initialized == []
+
+
+def test_init_adds_backend_only_speed_from_selected_scenario_vehicles(
+    tmp_path: Path,
+) -> None:
+    scenario = ReadyScenario(
+        [
+            {"agent_id": "robot-a", "constraints": {"max_speed": 4.5}},
+            {"agent_id": "robot_b", "constraints": {"max_speed": 2.5}},
+            {"agent_id": "robot-c", "constraints": {"max_speed": 0.5}},
+        ]
+    )
+    service, runtime, rest = _service(tmp_path, scenario)
+    mission = {
+        "mission_id": "mission-a",
+        "behavior": 0,
+        "vehicles": ["robot-a", "robot-b"],
+        "objective": {
+            "geometries": [
+                {"geometry": {"geometry_type": "Point", "coordinates": [4.0, 50.0]}}
+            ]
+        },
+    }
+    original = deepcopy(mission)
+
+    initialized = service.initialize(mission)
+
+    assert rest.initialized[0]["transit"]["desired_vehicle_constraints"]["max_speed"] == 2.5
+    assert "transit" not in initialized["config"]
+    assert "transit" not in runtime.missions["mission-a"]["config"]
+    assert mission == original
+    assert any(
+        "backend-only max_speed=2.5" in item
+        for item in initialized["adapter_adjustments"]
+    )
+
+
+def test_init_preserves_explicit_transit_speed(tmp_path: Path) -> None:
+    scenario = ReadyScenario(
+        [{"agent_id": "robot-a", "constraints": {"max_speed": 4.5}}]
+    )
+    service, _, rest = _service(tmp_path, scenario)
+    mission = {
+        "mission_id": "mission-a",
+        "behavior": 0,
+        "vehicles": ["robot-a"],
+        "transit": {"desired_vehicle_constraints": {"max_speed": 1.3}},
+        "objective": {
+            "geometries": [
+                {"geometry": {"geometry_type": "Point", "coordinates": [4.0, 50.0]}}
+            ]
+        },
+    }
+
+    initialized = service.initialize(mission)
+
+    assert rest.initialized[0]["transit"]["desired_vehicle_constraints"]["max_speed"] == 1.3
+    assert initialized["config"]["transit"]["desired_vehicle_constraints"]["max_speed"] == 1.3
+    assert not any(
+        "backend-only max_speed" in item
+        for item in initialized["adapter_adjustments"]
+    )
+
+
+def test_init_uses_safe_speed_fallback_when_scenario_profiles_have_none(
+    tmp_path: Path,
+) -> None:
+    service, _, rest = _service(tmp_path, ReadyScenario([{"agent_id": "robot-a"}]))
+    mission = {
+        "mission_id": "mission-a",
+        "behavior": 0,
+        "vehicles": ["robot-a"],
+        "objective": {
+            "geometries": [
+                {"geometry": {"geometry_type": "Point", "coordinates": [4.0, 50.0]}}
+            ]
+        },
+    }
+
+    service.initialize(mission)
+
+    assert rest.initialized[0]["transit"]["desired_vehicle_constraints"]["max_speed"] == 1.0
 
 
 def test_failed_init_is_recorded_as_failure_not_acknowledgement(tmp_path: Path) -> None:
@@ -493,6 +582,34 @@ def test_identical_healthy_scenario_activation_is_idempotent() -> None:
     assert result["map_collection"] == snapshot["map_collection"]
 
 
+def test_planner_readiness_survives_marker_log_rollout_for_same_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
+    state = {
+        "map_collection": "scenario_a_v1",
+        "activation_token": "token-a",
+        "verified_at": "2026-08-27T12:30:56+00:00",
+    }
+    planner_started_at = "2026-08-27T12:30:11Z"
+
+    def docker_request(socket: str, method: str, path: str) -> tuple[int, Any]:
+        if path.endswith("/logs?stdout=1&stderr=1&tail=1000"):
+            return 200, "large plan output pushed the startup marker out of this tail"
+        if path.endswith("/json"):
+            return 200, {
+                "State": {"Running": True, "StartedAt": planner_started_at}
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(scenario_runtime, "_docker_request", docker_request)
+
+    assert manager._planner_readiness_issue(state) is None  # noqa: SLF001
+
+    planner_started_at = "2026-08-27T12:31:11Z"
+    assert "has not reported" in manager._planner_readiness_issue(state)  # type: ignore[operator]  # noqa: SLF001
+
+
 def test_identical_scenario_activation_does_not_reuse_wrong_planner_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -563,14 +680,19 @@ def test_scenario_activation_publishes_durable_phases_before_ready(
     }
     manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
     transitions: list[dict[str, Any]] = []
+    restarted: list[tuple[str, str]] = []
     manager.active = lambda: None  # type: ignore[method-assign]
     manager._publish_transition = lambda state: transitions.append(deepcopy(state))  # type: ignore[method-assign]
     manager._persist_immutable_snapshot = lambda snapshot: None  # type: ignore[method-assign]
     manager._write_planner_config = lambda collection, token: None  # type: ignore[method-assign]
     manager._replace_previous_runtime = lambda previous: None  # type: ignore[method-assign]
     manager._clear_scenario_runtime_records = lambda: None  # type: ignore[method-assign]
-    manager._restart_container = lambda container, label: None  # type: ignore[method-assign]
-    manager._restart_planner = lambda: None  # type: ignore[method-assign]
+    manager._restart_container = lambda container, label: restarted.append(  # type: ignore[method-assign]
+        (container, label)
+    )
+    manager._restart_planner = lambda: restarted.append(  # type: ignore[method-assign]
+        (scenario_runtime.PLANNER_CONTAINER, "planner")
+    )
     manager._wait_until_ready = lambda snapshot, containers, token: None  # type: ignore[method-assign]
     manager._clear_mission_runtime_records = lambda: None  # type: ignore[method-assign]
     monkeypatch.setattr(
@@ -600,3 +722,9 @@ def test_scenario_activation_publishes_durable_phases_before_ready(
     assert all(transition["ready"] is False for transition in transitions[:-1])
     assert ready["ready"] is True
     assert [entry["phase"] for entry in ready["phase_history"]] == phases
+    assert restarted == [
+        (scenario_runtime.COORDINATION_CONTAINER, "centralized coordination"),
+        (scenario_runtime.PLANNER_CONTAINER, "planner"),
+        (scenario_runtime.C2_REST_CONTAINER, "C2 REST bridge"),
+        (scenario_runtime.ROSBRIDGE_CONTAINER, "rosbridge"),
+    ]

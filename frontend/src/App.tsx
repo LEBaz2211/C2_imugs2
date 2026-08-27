@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, Clock, FileJson, GripVertical, ListChecks, MapPinned, MessageSquareText, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, Clock, FileJson, GripVertical, ListChecks, MapPinned, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -50,7 +50,22 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Tabs } from "./components/ui/tabs";
 import { Textarea } from "./components/ui/textarea";
+import { JsonExplorer } from "./components/JsonExplorer";
 import { agents as fallbackAgents, mapFeatures as fallbackFeatures, missionExamples as fallbackMissionExamples } from "./data/demo";
+import {
+  assistantConversationSummaries,
+  assistantTranscriptItems,
+  deleteAssistantConversation,
+  getActiveAssistantConversation,
+  readAssistantConversationStore,
+  selectAssistantConversation,
+  startNewAssistantConversation,
+  updateAssistantConversationMessages,
+  writeAssistantConversationStore,
+  type AssistantConversationStore,
+  type AssistantConversationSummary,
+  type AssistantTranscriptItem,
+} from "./assistantHistory";
 import { editJsonForKey, jsonCursorPosition } from "./jsonEditor";
 import { createTaskPlan, normalizeMission, validateMission } from "./mission";
 import { ContractExplorer } from "./ContractExplorer";
@@ -60,9 +75,7 @@ import type { Agent, MapFeature, MissionConfig } from "./types";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
-const ASSISTANT_SESSION_STORAGE_KEY = "c2_imugs2_assistant_session_v1";
 const ASSISTANT_MISSION_DRAFTS_STORAGE_KEY = "c2_imugs2_assistant_mission_drafts_v1";
-const MAX_ASSISTANT_TRANSCRIPT_ITEMS = 80;
 const RIGHT_PANE_WIDTHS_STORAGE_KEY = "c2_imugs2_right_pane_widths";
 const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, scenario: 860 } as const;
 const MIN_RIGHT_PANE_WIDTHS = { c2: 380, scenario: 520 } as const;
@@ -71,74 +84,9 @@ const RESIZE_HANDLE_WIDTH = 8;
 
 type ResizableWorkspace = keyof typeof DEFAULT_RIGHT_PANE_WIDTHS;
 
-type AssistantTranscriptItem = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  response?: AssistantMessageResponse;
-  debugRequested?: boolean;
-};
-
-type AssistantSession = {
-  conversationId: string;
-  messages: AssistantTranscriptItem[];
-};
-
-function assistantDebugGateEnabled() {
+function advancedUiGateEnabled() {
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("assistantDebug") === "1";
-}
-
-function newAssistantSession(): AssistantSession {
-  return { conversationId: crypto.randomUUID(), messages: [] };
-}
-
-function readAssistantSession(): AssistantSession {
-  if (typeof window === "undefined") return newAssistantSession();
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_SESSION_STORAGE_KEY) ?? "null") as {
-      conversation_id?: unknown;
-      messages?: unknown;
-    } | null;
-    if (!stored || typeof stored.conversation_id !== "string" || !stored.conversation_id.trim() || !Array.isArray(stored.messages)) {
-      return newAssistantSession();
-    }
-    const messages = stored.messages
-      .filter((item): item is AssistantTranscriptItem => {
-        if (!item || typeof item !== "object") return false;
-        const candidate = item as Partial<AssistantTranscriptItem>;
-        return typeof candidate.id === "string"
-          && (candidate.role === "user" || candidate.role === "assistant")
-          && typeof candidate.text === "string";
-      })
-      .slice(-MAX_ASSISTANT_TRANSCRIPT_ITEMS);
-    return { conversationId: stored.conversation_id, messages };
-  } catch {
-    return newAssistantSession();
-  }
-}
-
-function writeAssistantSession(conversationId: string, messages: AssistantTranscriptItem[]) {
-  if (typeof window === "undefined") return;
-  const retained = messages.slice(-MAX_ASSISTANT_TRANSCRIPT_ITEMS);
-  const payload = { conversation_id: conversationId, messages: retained };
-  try {
-    window.localStorage.setItem(ASSISTANT_SESSION_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Debug traces can be large. Keep the visible conversation and proposals
-    // if the browser's local-storage quota cannot retain every trace envelope.
-    const withoutDebug = retained.map((item) => item.response?.debug_trace
-      ? { ...item, response: { ...item.response, debug_trace: undefined } }
-      : item);
-    try {
-      window.localStorage.setItem(ASSISTANT_SESSION_STORAGE_KEY, JSON.stringify({
-        conversation_id: conversationId,
-        messages: withoutDebug,
-      }));
-    } catch {
-      // A disabled or exhausted local-storage implementation must not block chat.
-    }
-  }
 }
 
 function assistantProposalConfig(response?: AssistantMessageResponse): MissionConfig | undefined {
@@ -157,6 +105,23 @@ function assistantProposalConfigs(messages: AssistantTranscriptItem[]) {
     if (config) configs[config.mission_id] = config;
   }
   return configs;
+}
+
+function missionConfigsEquivalent(left?: MissionConfig, right?: MissionConfig) {
+  if (!left || !right) return false;
+  return JSON.stringify(stableJsonValue(normalizeMission(left))) === JSON.stringify(stableJsonValue(normalizeMission(right)));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableJsonValue(item)]),
+    );
+  }
+  return value;
 }
 
 function readAssistantMissionDrafts() {
@@ -293,7 +258,7 @@ function missionGeometryRefFromFeature(feature: MapFeature) {
   return { feature_id: feature.feature_id };
 }
 
-function mergeMissionState(current: Record<string, MissionState>, update: MissionState) {
+function mergeMissionState(current: Record<string, MissionState>, update: MissionState, replace = false) {
   const next = { ...current };
   if (update.command_target === true) {
     for (const [missionId, state] of Object.entries(next)) {
@@ -302,12 +267,14 @@ function mergeMissionState(current: Record<string, MissionState>, update: Missio
       }
     }
   }
-  next[update.mission_id] = { ...next[update.mission_id], ...update };
+  next[update.mission_id] = replace ? update : { ...next[update.mission_id], ...update };
   return next;
 }
 
 export default function App() {
-  const [initialAssistantSession] = useState<AssistantSession>(() => readAssistantSession());
+  const [assistantConversationStore, setAssistantConversationStore] = useState<AssistantConversationStore>(
+    () => readAssistantConversationStore(),
+  );
   const [agents, setAgents] = useState<Agent[]>(fallbackAgents);
   const [agentTelemetry, setAgentTelemetry] = useState<Record<string, AgentUpdateEvent>>({});
   const [mapFeatures, setMapFeatures] = useState<MapFeature[]>(fallbackFeatures);
@@ -319,7 +286,7 @@ export default function App() {
   const [missionText, setMissionText] = useState("");
   const [missionState, setMissionState] = useState<MissionState | undefined>();
   const [missionConfigs, setMissionConfigs] = useState<Record<string, MissionConfig>>(() => ({
-    ...assistantProposalConfigs(initialAssistantSession.messages),
+    ...assistantProposalConfigs(assistantTranscriptItems(assistantConversationStore)),
     // The dedicated draft is the operator's latest working copy; the
     // transcript envelope is only the original model proposal.
     ...readAssistantMissionDrafts(),
@@ -362,30 +329,42 @@ export default function App() {
   const [mapViewFocus, setMapViewFocus] = useState<{ view: ScenarioMapView; nonce: number } | undefined>();
   const [mapDraftResetNonce, setMapDraftResetNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [assistantConversationId, setAssistantConversationId] = useState(initialAssistantSession.conversationId);
   const [assistantPrompt, setAssistantPrompt] = useState("");
-  const [assistantMessages, setAssistantMessages] = useState<AssistantTranscriptItem[]>(initialAssistantSession.messages);
   const [assistantStatus, setAssistantStatus] = useState<AssistantStatus | undefined>();
   const [assistantStatusBusy, setAssistantStatusBusy] = useState(false);
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [assistantDebugEnabled, setAssistantDebugEnabled] = useState(false);
-  const [assistantDebugAvailable] = useState(() => assistantDebugGateEnabled());
+  const [advancedUiAvailable] = useState(() => advancedUiGateEnabled());
   const [rightPaneWidths, setRightPaneWidths] = useState<Record<ResizableWorkspace, number>>(() => readRightPaneWidths());
   const activeMissionIdRef = useRef<string | undefined>();
   const draftMissionIdRef = useRef<string | undefined>();
   const focusedScenarioViewRef = useRef<string | undefined>();
   const missionJsonRef = useRef<HTMLTextAreaElement | null>(null);
   const rightPaneRef = useRef<HTMLElement | null>(null);
+  const paneScrollRef = useRef<HTMLElement | null>(null);
   const [jsonFocus, setJsonFocus] = useState<{ needle: string; label: string; nonce: number } | undefined>();
+  const activeAssistantConversation = getActiveAssistantConversation(assistantConversationStore);
+  const assistantConversationId = activeAssistantConversation.conversationId;
+  const assistantMessages = activeAssistantConversation.messages;
+  const assistantConversationHistory = assistantConversationSummaries(assistantConversationStore);
 
   useEffect(() => {
     window.localStorage.setItem(RIGHT_PANE_WIDTHS_STORAGE_KEY, JSON.stringify(rightPaneWidths));
   }, [rightPaneWidths]);
 
   useEffect(() => {
-    writeAssistantSession(assistantConversationId, assistantMessages);
-  }, [assistantConversationId, assistantMessages]);
+    const result = writeAssistantConversationStore(assistantConversationStore);
+    if (result.persisted && (result.debugTracesStripped || result.evictedConversationIds.length > 0)) {
+      setAssistantConversationStore(result.store);
+    }
+  }, [assistantConversationStore]);
+
+  useEffect(() => {
+    if (advancedUiAvailable) return;
+    if (workspace !== "c2") setWorkspace("c2");
+    if (tab === "diagnostics") setTab("mission");
+  }, [advancedUiAvailable, tab, workspace]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -434,7 +413,7 @@ export default function App() {
       })
       .catch(() => setExamples(fallbackMissionExamples));
     getDiagnostics().then(applyDiagnostics).catch(() => undefined);
-    refreshContracts(false);
+    if (advancedUiAvailable) refreshContracts(false);
 
     const source = createEventSource();
     source.addEventListener("diagnostics.updated", (event) => {
@@ -474,7 +453,7 @@ export default function App() {
     });
     source.onerror = () => setApiError("Live ROS event stream interrupted; reconnecting...");
     return () => source.close();
-  }, []);
+  }, [advancedUiAvailable]);
 
   useEffect(() => {
     let cancelled = false;
@@ -764,7 +743,7 @@ export default function App() {
     setMissionConfigs((current) => {
       const updated = { ...current };
       if (previousDraftId && previousDraftId !== next.mission_id && !missionStates[previousDraftId]) delete updated[previousDraftId];
-      if (!missionStates[next.mission_id]) updated[next.mission_id] = next;
+      updated[next.mission_id] = next;
       return updated;
     });
     if (isAssistantOwned) {
@@ -773,7 +752,7 @@ export default function App() {
       }
       writeAssistantMissionDraft(next);
     }
-    draftMissionIdRef.current = missionStates[next.mission_id] ? undefined : next.mission_id;
+    draftMissionIdRef.current = next.mission_id;
   }
 
   function loadExample(example: MissionExample) {
@@ -825,6 +804,7 @@ export default function App() {
   function closeMissionComposer() {
     clearMission();
     setShowNewMission(false);
+    setTab("mission");
   }
 
   async function forgetMission(missionId: string) {
@@ -1098,7 +1078,7 @@ export default function App() {
     try {
       const result = await action();
       setMissionState(result);
-      setMissionStates((current) => mergeMissionState(current, result));
+      setMissionStates((current) => mergeMissionState(current, result, command === "init"));
       setCommandFeedback({ tone: "ok", message: commandSuccessMessage(command, result) });
       return result;
     } catch (error) {
@@ -1263,53 +1243,79 @@ export default function App() {
     const message = assistantPrompt.trim();
     if (!message || assistantBusy || !assistantStatus?.configured) return;
 
-    const debugRequested = assistantDebugAvailable && assistantDebugEnabled;
+    const targetConversationId = assistantConversationId;
+    const debugRequested = advancedUiAvailable && assistantDebugEnabled;
     const assistantMessageId = crypto.randomUUID();
     setAssistantError("");
     setAssistantPrompt("");
-    setAssistantMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role: "user", text: message },
-      {
-        id: assistantMessageId,
-        role: "assistant",
-        text: "Generating a validated response…",
-        debugRequested,
-      },
-    ]);
+    setAssistantConversationStore((current) => updateAssistantConversationMessages(
+      current,
+      targetConversationId,
+      (messages) => [
+        ...messages,
+        { id: crypto.randomUUID(), role: "user", text: message },
+        {
+          id: assistantMessageId,
+          role: "assistant",
+          text: "Generating a validated response…",
+          debugRequested,
+        },
+      ],
+    ));
     setAssistantBusy(true);
     try {
       const response = await sendAssistantMessage({
-        conversation_id: assistantConversationId,
+        conversation_id: targetConversationId,
         message,
         debug: debugRequested || undefined,
       });
-      registerAssistantProposal(response);
-      setAssistantConversationId(response.conversation_id);
-      setAssistantMessages((current) => current.map((item) => item.id === assistantMessageId
-        ? { ...item, text: response.answer, response }
-        : item));
+      registerAssistantProposal(response, true);
+      setAssistantConversationStore((current) => updateAssistantConversationMessages(
+        current,
+        targetConversationId,
+        (messages) => messages.map((item) => item.id === assistantMessageId
+          ? { ...item, text: response.answer, response }
+          : item),
+      ));
     } catch (error) {
       setAssistantError(error instanceof Error ? error.message : String(error));
-      setAssistantMessages((current) => current.map((item) => item.id === assistantMessageId
-        ? {
-            ...item,
-            text: "Assistant response failed before a validated answer was returned.",
-          }
-        : item));
+      setAssistantConversationStore((current) => updateAssistantConversationMessages(
+        current,
+        targetConversationId,
+        (messages) => messages.map((item) => item.id === assistantMessageId
+          ? {
+              ...item,
+              text: "Assistant response failed before a validated answer was returned.",
+            }
+          : item),
+      ));
     } finally {
       setAssistantBusy(false);
     }
   }
 
-  async function clearAssistantConversation() {
+  function startAssistantConversation() {
     if (assistantBusy) return;
+    setAssistantConversationStore((current) => startNewAssistantConversation(current));
+    setAssistantPrompt("");
+    setAssistantError("");
+  }
+
+  function chooseAssistantConversation(conversationId: string) {
+    if (assistantBusy) return;
+    setAssistantConversationStore((current) => selectAssistantConversation(current, conversationId));
+    setAssistantPrompt("");
+    setAssistantError("");
+  }
+
+  async function deleteCurrentAssistantConversation() {
+    if (assistantBusy) return;
+    const targetConversationId = assistantConversationId;
     setAssistantBusy(true);
     setAssistantError("");
     try {
-      await resetAssistantConversation(assistantConversationId);
-      setAssistantConversationId(crypto.randomUUID());
-      setAssistantMessages([]);
+      await resetAssistantConversation(targetConversationId);
+      setAssistantConversationStore((current) => deleteAssistantConversation(current, targetConversationId));
       setAssistantPrompt("");
     } catch (error) {
       setAssistantError(error instanceof Error ? error.message : String(error));
@@ -1318,18 +1324,36 @@ export default function App() {
     }
   }
 
-  function registerAssistantProposal(response: AssistantMessageResponse) {
+  function registerAssistantProposal(response: AssistantMessageResponse, adoptModelRevision = false) {
     const proposed = assistantProposalConfig(response);
     if (!proposed) return undefined;
     const state = missionStates[proposed.mission_id];
     // Once a proposal is in the ordinary mission editor, that editor owns the
-    // working copy. Reopening or commanding the conversation card must not
-    // silently replace operator edits with the original model envelope.
-    const config = missionConfigs[proposed.mission_id]
-      ?? asMissionConfig(state?.config)
-      ?? proposed;
-    setMissionConfigs((current) => ({ ...current, [config.mission_id]: current[config.mission_id] ?? config }));
+    // working copy. A newly returned model proposal is an intentional revision;
+    // reopening an older conversation card merely reads the latest working copy.
+    const config = adoptModelRevision
+      ? proposed
+      : missionConfigs[proposed.mission_id] ?? asMissionConfig(state?.config) ?? proposed;
+    setMissionConfigs((current) => ({
+      ...current,
+      [config.mission_id]: adoptModelRevision ? config : current[config.mission_id] ?? config,
+    }));
     writeAssistantMissionDraft(config);
+    if (adoptModelRevision && mission?.mission_id === config.mission_id) {
+      activeMissionIdRef.current = undefined;
+      draftMissionIdRef.current = config.mission_id;
+      setMission(config);
+      setMissionText(JSON.stringify(config, null, 2));
+      setMissionState(undefined);
+      setPlannerState(undefined);
+      setInitRequestedAt(undefined);
+      setCommandFeedback({
+        tone: state ? "warn" : "ok",
+        message: state
+          ? "The assistant revised this initialized mission. Re-init it to replace the previous plan."
+          : "The assistant mission working copy was updated.",
+      });
+    }
     setHiddenMissionIds((current) => {
       if (!current.has(config.mission_id)) return current;
       const next = new Set(current);
@@ -1347,12 +1371,14 @@ export default function App() {
       return undefined;
     }
     const state = missionStates[config.mission_id];
-    activeMissionIdRef.current = state ? config.mission_id : undefined;
-    draftMissionIdRef.current = state ? undefined : config.mission_id;
+    const stateConfig = asMissionConfig(state?.config);
+    const revisionPending = Boolean(state && !missionConfigsEquivalent(config, stateConfig));
+    activeMissionIdRef.current = state && !revisionPending ? config.mission_id : undefined;
+    draftMissionIdRef.current = state && !revisionPending ? undefined : config.mission_id;
     setMission(config);
     setMissionText(JSON.stringify(config, null, 2));
     setMissionState(state);
-    setPlannerState(hasPlannedPaths(state?.planned_paths)
+    setPlannerState(!revisionPending && hasPlannedPaths(state?.planned_paths)
       ? { mission_id: config.mission_id, paths: state?.planned_paths, source: "adapter_state", received_at: state?.updated_at }
       : undefined);
     setShowNewMission(true);
@@ -1390,6 +1416,11 @@ export default function App() {
       return;
     }
     const state = missionStates[config.mission_id];
+    const stateConfig = asMissionConfig(state?.config);
+    if (state && !missionConfigsEquivalent(config, stateConfig)) {
+      setCommandFeedback({ tone: "warn", message: "This mission definition changed after its last Init. Re-init it before Approve or Start." });
+      return;
+    }
     const status = state ? missionStatusLabel(state) : "DRAFT";
     if (state?.command_target !== true) {
       setCommandFeedback({ tone: "warn", message: "Another mission is the legacy command target. Re-init this mission before Approve or Start." });
@@ -1410,6 +1441,7 @@ export default function App() {
 
   const hasMission = Boolean(missionText.trim());
   const hasSelectedMission = hasMission || Boolean(missionState);
+  const missionPaneOpen = showNewMission || hasSelectedMission;
   const canSendMission = hasMission && validation.length === 0 && Boolean(activeScenarioRuntime?.ready);
   const scenarioReadinessMessage = activeScenarioRuntime?.ready
     ? ""
@@ -1423,9 +1455,10 @@ export default function App() {
       : scenarioReadinessMessage;
   const currentStatus = missionState ? missionStatusLabel(missionState) : "";
   const missionMatchesState = Boolean(mission && missionState?.mission_id === mission.mission_id);
+  const missionMatchesInitializedConfig = missionMatchesState && missionConfigsEquivalent(mission, asMissionConfig(missionState?.config));
   const missionIsCommandTarget = missionState?.command_target === true;
-  const canApproveMission = missionMatchesState && missionIsCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
-  const canStartMission = missionMatchesState && missionIsCommandTarget && currentStatus === "ACCEPTED";
+  const canApproveMission = missionMatchesInitializedConfig && missionIsCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
+  const canStartMission = missionMatchesInitializedConfig && missionIsCommandTarget && currentStatus === "ACCEPTED";
   const missionList = useMemo(() => {
     const ids = new Set([...Object.keys(missionConfigs), ...Object.keys(missionStates)]);
     return [...ids].filter((missionId) => !hiddenMissionIds.has(missionId)).map((missionId) => ({
@@ -1443,6 +1476,37 @@ export default function App() {
   const rightPaneMinWidth = MIN_RIGHT_PANE_WIDTHS[resizableWorkspace];
   const assistantActive = workspace === "c2" && assistantOpen;
   const assistantPaneWidth = 48;
+  const workspaceItems = advancedUiAvailable
+    ? [
+        { value: "c2", label: "C2" },
+        { value: "scenario", label: "Scenario" },
+        { value: "contracts", label: "Contracts" },
+      ]
+    : [{ value: "c2", label: "C2" }];
+  const c2TabItems = advancedUiAvailable
+    ? [
+        { value: "mission", label: "Mission" },
+        { value: "plan", label: "Plan" },
+        { value: "assets", label: "Assets" },
+        { value: "diagnostics", label: "Diagnostics" },
+      ]
+    : [
+        { value: "mission", label: "Mission" },
+        { value: "plan", label: "Plan" },
+        { value: "assets", label: "Assets" },
+      ];
+  const c2PaneTitle = tab === "plan" ? "Plan" : tab === "assets" ? "Assets" : tab === "diagnostics" ? "Diagnostics" : "Missions";
+  const c2PaneIcon = tab === "plan"
+    ? <Route className="h-4 w-4 text-primary" />
+    : tab === "assets"
+      ? <MapPinned className="h-4 w-4 text-primary" />
+      : tab === "diagnostics"
+        ? <Bug className="h-4 w-4 text-primary" />
+        : <ListChecks className="h-4 w-4 text-primary" />;
+
+  useEffect(() => {
+    paneScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [assistantActive, mission?.mission_id, showNewMission, tab, workspace]);
 
   function toggleAssistant() {
     if (assistantActive) {
@@ -1462,7 +1526,7 @@ export default function App() {
     return Math.max(rightPaneMinWidth, window.innerWidth - assistantPaneWidth - MIN_MAP_WIDTH - RESIZE_HANDLE_WIDTH);
   }
 
-  if (workspace === "contracts") {
+  if (advancedUiAvailable && workspace === "contracts") {
     return (
       <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#07111f] text-slate-100">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-800 bg-[#091522] px-4">
@@ -1470,18 +1534,13 @@ export default function App() {
             <Workflow className="h-5 w-5 shrink-0 text-cyan-400" />
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-slate-100">System Contract Atlas</h2>
-              <p className="truncate text-xs text-slate-400">Evidence-backed map of the legacy mission, planning, execution, and feedback contracts.</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Tabs
               value={workspace}
               onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
-              items={[
-                { value: "c2", label: "C2" },
-                { value: "scenario", label: "Scenario" },
-                { value: "contracts", label: "Contracts" },
-              ]}
+              items={workspaceItems}
             />
             <Badge tone={contractsError ? "error" : "ok"}>
               {contractGraph?.atlas ? `${contractGraph.atlas.components.length} systems · ${contractGraph.atlas.interactions.length} contracts` : "atlas"}
@@ -1550,23 +1609,20 @@ export default function App() {
             {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : assistantActive ? <Bot className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
             <div>
               <h2 className="text-sm font-semibold">{workspace === "scenario" ? "Scenario Lab" : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
-              <p className="text-xs text-muted-foreground">{workspace === "scenario" ? "Situation, vehicles, and map assets." : assistantActive ? "Natural-language drafting connected to the manual editor." : "UI to adapter to old REST/ROS."}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Tabs
-              value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
-              items={[
-                { value: "c2", label: "C2" },
-                { value: "scenario", label: "Scenario" },
-                { value: "contracts", label: "Contracts" },
-              ]}
-            />
+            {advancedUiAvailable && (
+              <Tabs
+                value={workspace}
+                onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+                items={workspaceItems}
+              />
+            )}
             {assistantActive ? (
               <Badge tone={assistantStatus?.configured ? "ok" : "default"}>assistant</Badge>
             ) : workspace === "c2" ? (
-              !hasSelectedMission ? <Badge>empty</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
+              !missionPaneOpen ? <Badge>empty</Badge> : showNewMission && !hasMission ? <Badge>new</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
             ) : (
               <Badge tone="ok">builder</Badge>
             )}
@@ -1574,17 +1630,31 @@ export default function App() {
         </header>
 
         {workspace === "c2" && !assistantActive && (
+          <PaneNavigation
+            title={missionPaneOpen ? mission?.name ?? missionState?.mission_id ?? "New mission" : c2PaneTitle}
+            icon={missionPaneOpen ? undefined : c2PaneIcon}
+            backLabel={missionPaneOpen ? "Missions" : undefined}
+            onBack={missionPaneOpen ? closeMissionComposer : undefined}
+            actions={missionPaneOpen
+              ? missionState
+                ? <Badge tone={missionStateTone(missionState)}>{missionStatusLabel(missionState)}</Badge>
+                : <Badge tone={missionText.trim() && validation.length === 0 ? "ok" : "default"}>{missionText.trim() ? "draft" : "new"}</Badge>
+              : tab === "mission" ? (
+                <Button size="sm" variant="outline" onClick={startNewMission}>
+                  <Plus className="h-4 w-4" />
+                  New Mission
+                </Button>
+              ) : undefined}
+          />
+        )}
+
+        {workspace === "c2" && !assistantActive && (
           <div className="space-y-3 border-b border-border px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Tabs
                 value={tab}
                 onValueChange={setTab}
-                items={[
-                  { value: "mission", label: "Mission" },
-                  { value: "plan", label: "Plan" },
-                  { value: "assets", label: "Assets" },
-                  { value: "diagnostics", label: "Diagnostics" },
-                ]}
+                items={c2TabItems}
               />
               <span title={activeScenarioRuntime?.error}>
                 <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
@@ -1599,9 +1669,11 @@ export default function App() {
             {!activeScenarioRuntime?.ready && (
               <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                 <span>{scenarioReadinessMessage}</span>
-                <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
-                  Open Scenario
-                </Button>
+                {advancedUiAvailable && (
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
+                    Open Scenario
+                  </Button>
+                )}
               </div>
             )}
             {hasSelectedMission && (
@@ -1639,13 +1711,15 @@ export default function App() {
           </div>
         )}
 
-        <section className={assistantActive ? "flex min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto overflow-x-hidden p-4"}>
+        <section ref={paneScrollRef} className={assistantActive ? "flex min-h-0 flex-1 overflow-hidden" : "min-h-0 flex-1 overflow-auto overflow-x-hidden p-4"}>
           {assistantActive ? (
             <AssistantPanel
               status={assistantStatus}
               statusBusy={assistantStatusBusy}
               busy={assistantBusy}
               error={assistantError}
+              conversationId={assistantConversationId}
+              conversationHistory={assistantConversationHistory}
               messages={assistantMessages}
               prompt={assistantPrompt}
               missionConfigs={missionConfigs}
@@ -1659,14 +1733,15 @@ export default function App() {
               nowMs={nowMs}
               activeScenarioReady={activeScenarioRuntime?.ready === true}
               commandFeedback={commandFeedback}
-              debugAvailable={assistantDebugAvailable}
+              debugAvailable={advancedUiAvailable}
               debugEnabled={assistantDebugEnabled}
               onPromptChange={setAssistantPrompt}
               onDebugEnabledChange={setAssistantDebugEnabled}
               onSend={() => submitAssistantMessage().catch(() => undefined)}
-              onReset={() => clearAssistantConversation().catch(() => undefined)}
+              onNewConversation={startAssistantConversation}
+              onSelectConversation={chooseAssistantConversation}
+              onDeleteConversation={() => deleteCurrentAssistantConversation().catch(() => undefined)}
               onRefreshStatus={() => refreshAssistantStatus().catch(() => undefined)}
-              onBack={() => setAssistantOpen(false)}
               onOpenMission={(response) => {
                 const config = selectAssistantProposal(response, true);
                 if (config) setCommandFeedback({ tone: "ok", message: "Assistant mission opened in the manual editor and shown on the map." });
@@ -1687,8 +1762,6 @@ export default function App() {
                   validation={validation}
                   onLoadExample={loadExample}
                   onSelectMission={selectMission}
-                  onNewMission={startNewMission}
-                  onCloseComposer={closeMissionComposer}
                   onForgetMission={(missionId) => forgetMission(missionId).catch((error) => setApiError(String(error)))}
                   onMissionTextChange={updateMissionText}
                   missionJsonRef={missionJsonRef}
@@ -1763,6 +1836,8 @@ function AssistantPanel({
   statusBusy,
   busy,
   error,
+  conversationId,
+  conversationHistory,
   messages,
   prompt,
   missionConfigs,
@@ -1781,9 +1856,10 @@ function AssistantPanel({
   onPromptChange,
   onDebugEnabledChange,
   onSend,
-  onReset,
+  onNewConversation,
+  onSelectConversation,
+  onDeleteConversation,
   onRefreshStatus,
-  onBack,
   onOpenMission,
   onValidateMission,
   onMissionCommand,
@@ -1792,6 +1868,8 @@ function AssistantPanel({
   statusBusy: boolean;
   busy: boolean;
   error: string;
+  conversationId: string;
+  conversationHistory: AssistantConversationSummary[];
   messages: AssistantTranscriptItem[];
   prompt: string;
   missionConfigs: Record<string, MissionConfig>;
@@ -1810,9 +1888,10 @@ function AssistantPanel({
   onPromptChange: (value: string) => void;
   onDebugEnabledChange: (value: boolean) => void;
   onSend: () => void;
-  onReset: () => void;
+  onNewConversation: () => void;
+  onSelectConversation: (conversationId: string) => void;
+  onDeleteConversation: () => void;
   onRefreshStatus: () => void;
-  onBack: () => void;
   onOpenMission: (response: AssistantMessageResponse) => void;
   onValidateMission: (response: AssistantMessageResponse) => void;
   onMissionCommand: (response: AssistantMessageResponse, command: "init" | "approve" | "start") => void;
@@ -1821,7 +1900,7 @@ function AssistantPanel({
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: busy ? "auto" : "smooth", block: "end" });
-  }, [busy, messages.length, messages[messages.length - 1]?.text]);
+  }, [busy, conversationId, messages.length, messages[messages.length - 1]?.text]);
 
   const configured = status?.configured === true;
   const statusTone = statusBusy ? "default" : configured ? "ok" : "warn";
@@ -1830,40 +1909,50 @@ function AssistantPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 space-y-2 border-b border-border p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <MessageSquareText className="h-4 w-4 shrink-0 text-primary" />
-              <h2 className="text-sm font-semibold">Mission Assistant</h2>
-            </div>
-            <p
-              className="mt-1 truncate text-xs text-muted-foreground"
-              title={status ? `${status.base_url} · max output ${status.max_output_tokens} tokens · thinking ${status.thinking_enabled ? "enabled" : "disabled"}${status.preserve_thinking ? " and preserved" : ""}` : undefined}
-            >
-              {status ? `${status.model} · ${status.thinking_enabled ? `${status.reasoning_effort || "max"} thinking` : "thinking off"} · prompts ${status.prompt_version}` : "Backend-grounded mission drafting"}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button type="button" size="sm" variant="outline" onClick={onBack}>
-              <ArrowLeft className="h-4 w-4" />
-              Manual UI
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8"
-              disabled={busy || messages.length === 0}
-              onClick={onReset}
-              title="Reset conversation"
-              aria-label="Reset assistant conversation"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="flex items-center gap-1.5">
+          <select
+            className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+            value={conversationId}
+            disabled={busy}
+            onChange={(event) => onSelectConversation(event.target.value)}
+            aria-label="Assistant conversation history"
+            title="Conversation history is stored in this browser; model continuity is best-effort after a backend restart"
+          >
+            {conversationHistory.map((conversation) => (
+              <option key={conversation.conversationId} value={conversation.conversationId}>
+                {assistantHistoryOptionLabel(conversation)}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={onNewConversation}
+            title="New conversation"
+            aria-label="Start a new assistant conversation"
+          >
+            <Plus className="h-4 w-4" />
+            New
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            disabled={busy || (messages.length === 0 && conversationHistory.length === 1)}
+            onClick={onDeleteConversation}
+            title="Delete this conversation"
+            aria-label="Delete this assistant conversation"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <Badge tone={statusTone}>{statusLabel}</Badge>
+          <span title={status ? `${status.model} · ${status.base_url} · ${status.reasoning_effort || "default"} thinking · prompts ${status.prompt_version}` : undefined}>
+            <Badge tone={statusTone}>{statusLabel}</Badge>
+          </span>
           <div className="flex items-center gap-1">
             {debugAvailable && (
               <Button
@@ -1889,17 +1978,12 @@ function AssistantPanel({
             )}
           </div>
         </div>
-        {debugEnabled && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-950">
-            Diagnostic capture is enabled for new messages. Backend context reads and validation events are separate from LLM tool calls; this assistant currently exposes no callable tools to the model.
-          </div>
-        )}
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" aria-live="polite">
         {messages.length === 0 && (
           <div className="rounded-md border border-dashed border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
-            Ask about the current map, fleet, missions, or request a mission draft. Each answer is grounded in a fresh operational-picture revision.
+            Ask about operations or request a mission draft.
           </div>
         )}
 
@@ -1924,13 +2008,15 @@ function AssistantPanel({
 
                 {response && (
                   <>
-                    <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-                      <span>picture r{response.picture_revision}</span>
-                      <span aria-hidden="true">·</span>
-                      <span title={response.picture_observed_at}>{formatAssistantObservedAt(response.picture_observed_at)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>prompt {response.prompt_version}</span>
-                    </div>
+                    {debugEnabled && (
+                      <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                        <span>picture r{response.picture_revision}</span>
+                        <span aria-hidden="true">·</span>
+                        <span title={response.picture_observed_at}>{formatAssistantObservedAt(response.picture_observed_at)}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>prompt {response.prompt_version}</span>
+                      </div>
+                    )}
 
                     {response.warnings.length > 0 && (
                       <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-950">
@@ -2018,7 +2104,6 @@ function AssistantPanel({
           <Send className="h-4 w-4" />
           {busy ? "Working…" : "Send"}
         </Button>
-        <p className="text-[11px] leading-4 text-muted-foreground">Validated proposals are saved in Missions. Runtime commands remain explicit operator actions.</p>
       </form>
     </div>
   );
@@ -2059,8 +2144,10 @@ function AssistantMissionCard({
   const valid = validation?.valid === true && Boolean(config);
   const status = state ? missionStatusLabel(state) : "DRAFT";
   const isCommandTarget = state?.command_target === true;
-  const canApprove = valid && isCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status) && !busyCommand;
-  const canStart = valid && isCommandTarget && status === "ACCEPTED" && !busyCommand;
+  const initializedConfig = asMissionConfig(state?.config);
+  const revisionPending = Boolean(state && config && !missionConfigsEquivalent(config, initializedConfig));
+  const canApprove = valid && !revisionPending && isCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status) && !busyCommand;
+  const canStart = valid && !revisionPending && isCommandTarget && status === "ACCEPTED" && !busyCommand;
   const canInit = valid && activeScenarioReady && !busyCommand;
 
   return (
@@ -2076,8 +2163,8 @@ function AssistantMissionCard({
           <div className="truncate font-semibold">{config?.name ?? "Mission proposal"}</div>
           <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{config?.mission_id ?? "No valid mission ID"}</div>
         </button>
-        <Badge tone={valid ? state ? missionStateTone(state) : "ok" : "error"}>
-          {valid ? state ? humanizeEnum(status) : "Validated draft" : "Invalid"}
+        <Badge tone={valid ? revisionPending ? "warn" : state ? missionStateTone(state) : "ok" : "error"}>
+          {valid ? revisionPending ? "Changes pending" : state ? humanizeEnum(status) : "Validated draft" : "Invalid"}
         </Badge>
       </div>
 
@@ -2100,6 +2187,14 @@ function AssistantMissionCard({
         </ul>
       )}
 
+      {validation?.valid === true && !activeScenarioReady && validation.command_ready === false && validation.command_issues && validation.command_issues.length > 0 && (
+        <ul className="list-disc space-y-1 pl-4 text-amber-900">
+          {validation.command_issues.map((issue, index) => (
+            <li key={`${config?.mission_id ?? "proposal"}-command-issue-${index}`}>{issue.message}</li>
+          ))}
+        </ul>
+      )}
+
       {valid && (
         <>
           <MissionRuntimeStatus
@@ -2111,9 +2206,11 @@ function AssistantMissionCard({
             initRequestedAt={initRequestedAt}
             nowMs={nowMs}
           />
-          <p className="text-[10px] leading-4 text-muted-foreground">
-            Draft validation is deterministic. Init requests planning; Approve and Start unlock only for the latest initialized mission after confirmed runtime transitions.
-          </p>
+          {revisionPending && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-950">
+              The working copy changed after the last Init. The status and route above belong to the previous definition; Re-init to request a replacement plan.
+            </div>
+          )}
           {state && !isCommandTarget && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-950">
               Another mission is the legacy command target. Re-init this mission before Approve or Start.
@@ -2223,9 +2320,7 @@ function AssistantDebugDisclosure({
             <p className="mb-1.5 leading-4 text-muted-foreground">
               Provider request and result events are diagnostics, not tool calls.
             </p>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-foreground">
-              {safeDebugJson(modelEvents)}
-            </pre>
+            <JsonExplorer value={safeDebugValue(modelEvents)} maxHeightClassName="max-h-64" />
           </div>
         </details>
       )}
@@ -2249,9 +2344,9 @@ function AssistantDebugDisclosure({
       {trace && (
         <details className="rounded-md border border-border bg-panel">
           <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">Raw safe trace envelope</summary>
-          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-t border-border p-2 font-mono text-[10px] leading-4 text-muted-foreground">
-            {safeDebugJson(trace)}
-          </pre>
+          <div className="border-t border-border p-2">
+            <JsonExplorer value={safeDebugValue(trace)} />
+          </div>
         </details>
       )}
     </div>
@@ -2268,9 +2363,7 @@ function DebugTraceCard({ value, fallbackLabel }: { value: unknown; fallbackLabe
         <span className="min-w-0 truncate font-medium text-foreground" title={label}>{label}</span>
         {status && <Badge tone={status.toLowerCase().includes("error") ? "error" : "default"}>{status}</Badge>}
       </div>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-foreground">
-        {safeDebugJson(value)}
-      </pre>
+      <JsonExplorer value={safeDebugValue(value)} maxHeightClassName="max-h-64" />
     </div>
   );
 }
@@ -2328,10 +2421,31 @@ function safeDebugJson(value: unknown) {
   }
 }
 
+function safeDebugValue(value: unknown): unknown {
+  const serialized = safeDebugJson(value);
+  try {
+    return JSON.parse(serialized) as unknown;
+  } catch {
+    return serialized;
+  }
+}
+
 function formatAssistantObservedAt(value: string) {
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) return value;
   return timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function assistantHistoryOptionLabel(conversation: AssistantConversationSummary) {
+  const timestamp = new Date(conversation.updatedAt);
+  if (Number.isNaN(timestamp.getTime())) return conversation.title;
+  const updated = timestamp.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${conversation.title} · ${updated}`;
 }
 
 function VerticalResizeHandle({
@@ -2697,8 +2811,6 @@ function MissionPanel({
   validation,
   onLoadExample,
   onSelectMission,
-  onNewMission,
-  onCloseComposer,
   onForgetMission,
   onMissionTextChange,
   missionJsonRef,
@@ -2714,8 +2826,6 @@ function MissionPanel({
   validation: string[];
   onLoadExample: (example: MissionExample) => void;
   onSelectMission: (missionId: string) => void;
-  onNewMission: () => void;
-  onCloseComposer: () => void;
   onForgetMission: (missionId: string) => void;
   onMissionTextChange: (value: string) => void;
   missionJsonRef: RefObject<HTMLTextAreaElement>;
@@ -2725,14 +2835,6 @@ function MissionPanel({
   if (showNewMission) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Button size="sm" variant="ghost" onClick={onCloseComposer}>
-            <ArrowLeft className="h-4 w-4" />
-            Missions
-          </Button>
-          <Badge tone={missionText.trim() && validation.length === 0 ? "ok" : "default"}>{missionText.trim() ? "draft" : "new"}</Badge>
-        </div>
-
         {!missionText.trim() && (
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">
@@ -2772,14 +2874,6 @@ function MissionPanel({
   if (missionText.trim() || missionState) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Button size="sm" variant="ghost" onClick={onClear}>
-            <ArrowLeft className="h-4 w-4" />
-            Missions
-          </Button>
-          {missionState ? <Badge tone={missionStateTone(missionState)}>{missionStatusLabel(missionState)}</Badge> : <Badge>draft</Badge>}
-        </div>
-
         {missionText.trim() ? (
           <MissionEditor
             mission={mission}
@@ -2800,14 +2894,6 @@ function MissionPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <SectionTitle icon={<ListChecks className="h-4 w-4" />} label="Missions" />
-        <Button size="sm" variant={showNewMission ? "secondary" : "outline"} onClick={onNewMission}>
-          <Plus className="h-4 w-4" />
-          New Mission
-        </Button>
-      </div>
-
       {missionList.length > 0 ? (
         <div className="space-y-2">
           {missionList.map((item) => (
@@ -2853,8 +2939,41 @@ function MissionPanel({
         <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">No missions yet. Create one from an example or by selecting an objective point on the map.</div>
       )}
 
-      <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">Select an existing mission, create one from an example, or choose an objective point on the map.</div>
     </div>
+  );
+}
+
+function PaneNavigation({
+  title,
+  icon,
+  backLabel,
+  onBack,
+  actions,
+}: {
+  title: string;
+  icon?: ReactNode;
+  backLabel?: string;
+  onBack?: () => void;
+  actions?: ReactNode;
+}) {
+  return (
+    <nav className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 py-2" aria-label="Pane navigation">
+      <div className="flex min-w-0 items-center gap-2">
+        {onBack ? (
+          <Button size="sm" variant="ghost" onClick={onBack} title={`Back to ${backLabel ?? "previous pane"}`}>
+            <ArrowLeft className="h-4 w-4" />
+            {backLabel ?? "Back"}
+          </Button>
+        ) : (
+          <>
+            {icon}
+            <span className="truncate text-sm font-semibold">{title}</span>
+          </>
+        )}
+        {onBack && <span className="truncate text-xs font-medium text-muted-foreground">{title}</span>}
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </nav>
   );
 }
 
@@ -2963,14 +3082,7 @@ function PlanPanel({ taskPlan }: { taskPlan?: ReturnType<typeof createTaskPlan> 
 }
 
 function ValidationList({ errors }: { errors: string[] }) {
-  if (errors.length === 0) {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-        <CheckCircle2 className="h-4 w-4" />
-        Mission conforms to the active contract.
-      </div>
-    );
-  }
+  if (errors.length === 0) return null;
   return (
     <div className="space-y-2">
       {errors.map((error) => (

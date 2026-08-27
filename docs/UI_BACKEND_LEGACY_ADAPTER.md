@@ -64,9 +64,13 @@ roads are not added to mission JSON.
 `/api/scenarios/activate` content-addresses the complete scenario, records
 durable activation phases in MongoDB, writes its selected assets and downloaded
 OSM LineStrings to an immutable MapDB collection, clears prior mission runtime,
-restarts centralized coordination and the planner, replaces the prior scenario
-robot containers, and returns success only after the exact collection and all
-robot IDs are verified. Repeating the same healthy content is idempotent.
+restarts centralized coordination, the planner, the C2 REST bridge, and
+rosbridge, replaces the prior scenario robot containers, and returns success
+only after the exact collection and all robot IDs are verified. The local
+host-network simulation uses loopback-only ROS discovery with an expanded
+CycloneDDS participant-index range, so host interface changes cannot strand a
+still-listening gateway outside the ROS graph or cap the local multi-process fleet.
+Repeating the same healthy content is idempotent.
 
 `/api/assistant/messages` performs one non-streaming LangChain request to the
 configured LM Studio server, with maximum Qwen reasoning enabled and provider
@@ -85,16 +89,20 @@ displayed as a draft, and never initialized automatically.
 diff protocol for inspection. A supplied `since_checksum` is verified; the
 assistant's internal conversation path always supplies it.
 
-The UI hides assistant diagnostics unless the URL contains
-`?assistantDebug=1`. Enabling **Debug** before a message requests the exact
+The UI hides all advanced inspection surfaces unless the URL contains
+`?assistantDebug=1`: Scenario Lab, Contracts, C2 Diagnostics, and the assistant
+Debug control share that one discoverability gate. Enabling **Debug** before a
+message requests the exact
 redacted model input, final provider event, and any actual tool calls for that
 turn. Backend context and validation events are identified separately. No
-model-callable tools are currently configured. The browser stores a bounded
-message transcript and conversation ID locally. Every deterministically valid
-proposal is also registered immediately as a draft mission, so leaving the
-assistant does not make it disappear from the mission list. Its latest manual
-edits are persisted separately from the original transcript envelope, and a
-conversation reset does not delete that saved draft.
+model-callable tools are currently configured. The browser stores up to 20
+locally navigable conversations with 80 visible transcript items each and
+migrates the former single-conversation record. New, history-select, and delete
+controls do not alter separately persisted mission drafts. Every
+deterministically valid proposal is registered immediately as a draft mission,
+so leaving the assistant does not make it disappear from the mission list.
+Backend dialogue state remains process-local, making model continuity after an
+API restart best-effort even though the browser transcript is retained.
 
 `/api/missions/{id}/approve` and `/start` post `action=change_status` to the old REST bridge using the legacy numeric mission request values.
 

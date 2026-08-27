@@ -469,6 +469,8 @@ export type AssistantMissionProposalValidation = {
   scope: string;
   scenario_binding?: AssistantScenarioBinding;
   issues: AssistantMissionProposalIssue[];
+  command_ready?: boolean;
+  command_issues?: AssistantMissionProposalIssue[];
 };
 
 export type AssistantMessageRequest = {

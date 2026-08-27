@@ -1,7 +1,7 @@
 # Assistant prompts
 
 Each directory is an immutable prompt version selected with
-`C2_IMUGS2_LLM_PROMPT_VERSION` (default: `v2`). To make a material prompt
+`C2_IMUGS2_LLM_PROMPT_VERSION` (default: `v3`). To make a material prompt
 change, copy the current directory to a new version and edit the copy so an
 assistant response can always report the prompt version it used.
 

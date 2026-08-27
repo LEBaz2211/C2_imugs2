@@ -468,9 +468,25 @@ class MultiRobotPathPlanning:
         :return: Max speed or None if the mission is not found.
         """
         mission = self.missions.get(mission_id)
-        if mission:
-            return mission["transit"]["desired_vehicle_constraints"]["max_speed"]
-        return None
+        if not mission:
+            return None
+
+        # ``transit`` is optional in the canonical mission contract.  The
+        # adapter normally supplies a backend-only value derived from the
+        # selected agents, but direct ROS clients must not crash the planner
+        # when they omit it.
+        transit = mission.get("transit")
+        constraints = (
+            transit.get("desired_vehicle_constraints")
+            if isinstance(transit, dict)
+            else None
+        )
+        configured = constraints.get("max_speed") if isinstance(constraints, dict) else None
+        try:
+            speed = float(configured)
+        except (TypeError, ValueError):
+            return 1.0
+        return speed if math.isfinite(speed) and speed > 0 else 1.0
 
     @staticmethod
     def read_features_from_db(feature_collection, feature_id=None, crs="epsg:4326"):

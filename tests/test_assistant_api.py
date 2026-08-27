@@ -205,6 +205,8 @@ def test_assistant_api_returns_validated_draft_without_initializing_it() -> None
             "status": "ready",
             "ready": True,
         },
+        "command_ready": True,
+        "command_issues": [],
     }
     assert payload["mission_proposal"]["mission_id"] == proposal["mission_id"]
     assert "debug_trace" not in payload
@@ -276,7 +278,7 @@ def test_assistant_api_marks_an_invalid_model_draft_unusable() -> None:
     assert "JSON Schema" in validation["issues"][0]["message"]
 
 
-def test_assistant_api_rejects_proposal_without_ready_picture_binding() -> None:
+def test_assistant_api_rejects_absent_binding_but_allows_stale_bound_draft_edit() -> None:
     proposal = json.loads(
         (ROOT / "fixtures" / "mission_examples" / "simple_navigation_themis.json").read_text(
             encoding="utf-8"
@@ -291,17 +293,47 @@ def test_assistant_api_rejects_proposal_without_ready_picture_binding() -> None:
     not_ready_binding = AssistantScenarioBinding.from_mapping(
         {**ACTIVE_SCENARIO, "status": "stale", "ready": False}
     )
-    not_ready = _client(FakeAssistant(proposal, not_ready_binding), context).post(
+    not_ready = _client(
+        FakeAssistant(proposal, not_ready_binding),
+        context,
+        scenario_manager=ReadyScenarioManager(
+            status="stale",
+            ready=False,
+            agents=[{"agent_id": proposal["vehicles"][0]}],
+        ),
+    ).post(
         "/api/assistant/messages",
-        json={"conversation_id": "stale-binding", "message": "Draft a mission"},
+        json={"conversation_id": "stale-binding", "message": "Change the width"},
     )
 
     assert absent.status_code == 200
     assert absent.json()["mission_proposal_validation"]["valid"] is False
     assert "binding is absent" in absent.json()["mission_proposal_validation"]["issues"][0]["message"]
     assert not_ready.status_code == 200
-    assert not_ready.json()["mission_proposal_validation"]["valid"] is False
-    assert "binding is not ready" in not_ready.json()["mission_proposal_validation"]["issues"][0]["message"]
+    stale_validation = not_ready.json()["mission_proposal_validation"]
+    assert stale_validation["valid"] is True
+    assert stale_validation["command_ready"] is False
+    assert "Init/Re-init remains disabled" in stale_validation["command_issues"][0]["message"]
+
+
+def test_assistant_api_assigns_new_mission_id_programmatically() -> None:
+    proposal = json.loads(
+        (ROOT / "fixtures" / "mission_examples" / "simple_navigation_themis.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    proposal["mission_id"] = ""
+    context = OperationalContextService(ChangingOperationalProvider(), runtime_id="api-test")
+
+    response = _client(FakeAssistant(proposal), context).post(
+        "/api/assistant/messages",
+        json={"conversation_id": "new-id", "message": "Draft a new mission"},
+    )
+
+    assert response.status_code == 200
+    assigned = response.json()["mission_proposal"]["mission_id"]
+    assert assigned
+    assert assigned != proposal["mission_id"]
 
 
 def test_assistant_api_rejects_proposal_if_active_scenario_changed_during_generation() -> None:

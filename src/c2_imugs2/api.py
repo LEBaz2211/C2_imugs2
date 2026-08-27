@@ -159,7 +159,7 @@ def create_app(
             get_assistant=get_assistant,
             status=assistant_status,
             repo_root=repo_root,
-            validate_proposal=app.state.mission_application.validate_draft,
+            validate_proposal=app.state.mission_application.validate_assistant_proposal,
         )
     )
 

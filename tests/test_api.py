@@ -568,6 +568,8 @@ def test_launch_scenario_generates_backend_edge_configs_without_docker(tmp_path:
     assert "c2-imugs2/backend-edge-agent-sim:local" in compose
     assert "/backend/config/config_agent-tasks-supervisor.yaml:/app/config.yaml:ro" in compose
     assert "AUTONOMY_TOPIC_PREFIX: Scout_1" in compose
+    assert 'ROS_LOCALHOST_ONLY: "1"' in compose
+    assert "<MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>" in compose
 
 
 def test_delete_map_feature_removes_only_user_geojson(tmp_path: Path) -> None:
@@ -906,7 +908,8 @@ def test_init_inlines_user_created_feature_ids_before_legacy_rest(tmp_path: Path
         {"feature_id": "runtime-road"},
     ]
     assert response.json()["adapter_adjustments"] == [
-        "translated feature references or polygon geometry for editable-backend ROS compatibility"
+        "translated feature references or polygon geometry for editable-backend ROS compatibility",
+        "added backend-only max_speed=1 m/s because canonical transit speed is optional",
     ]
 
 
@@ -1133,7 +1136,8 @@ def test_init_flattens_canonical_inline_polygon_only_at_backend_ros_boundary(
         "coordinates": [ring],
     }
     assert response.json()["adapter_adjustments"] == [
-        "translated feature references or polygon geometry for editable-backend ROS compatibility"
+        "translated feature references or polygon geometry for editable-backend ROS compatibility",
+        "added backend-only max_speed=1 m/s because canonical transit speed is optional",
     ]
 
 
@@ -1217,7 +1221,9 @@ def test_init_preserves_full_road_usage_point_objective_coordinates(tmp_path: Pa
 
     assert rest.initialized[0]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.0009, 50.0]
     assert response["config"]["objective"]["geometries"][0]["geometry"]["coordinates"] == [4.0009, 50.0]
-    assert response["adapter_adjustments"] == []
+    assert response["adapter_adjustments"] == [
+        "added backend-only max_speed=1 m/s because canonical transit speed is optional"
+    ]
 
 
 def test_planning_diagnostics_includes_scenario_matrix(tmp_path: Path) -> None:

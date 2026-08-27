@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -72,9 +74,19 @@ class BackendMissionApplicationService:
     def initialize(self, mission_config: dict[str, Any]) -> dict[str, Any]:
         canonical, active_scenario = self.validate_draft(mission_config)
         try:
-            compatibility_config = self.inline_feature_refs(canonical, self.repo_root)
+            # Compatibility shaping must never mutate the canonical mission
+            # retained by the adapter or returned to the browser.
+            compatibility_config = self.inline_feature_refs(
+                deepcopy(canonical), self.repo_root
+            )
         except MissionValidationError as exc:
             raise ApplicationServiceError(422, str(exc)) from exc
+        geometry_adjusted = compatibility_config != canonical
+        injected_speed = _ensure_backend_mission_speed(
+            compatibility_config,
+            active_scenario,
+            canonical.get("vehicles") or [],
+        )
 
         mission_id = canonical["mission_id"]
         self.runtime.forgotten_missions.discard(mission_id)
@@ -82,9 +94,13 @@ class BackendMissionApplicationService:
         previous_target = getattr(self.runtime, "command_target_mission_id", None)
         response = self.rest_client.initialize_mission(compatibility_config)
         adjustments: list[str] = []
-        if compatibility_config != canonical:
+        if geometry_adjusted:
             adjustments.append(
                 "translated feature references or polygon geometry for editable-backend ROS compatibility"
+            )
+        if injected_speed is not None:
+            adjustments.append(
+                f"added backend-only max_speed={injected_speed:g} m/s because canonical transit speed is optional"
             )
 
         state = {
@@ -144,17 +160,64 @@ class BackendMissionApplicationService:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Canonicalize a draft and bind it to the currently ready scenario."""
 
-        try:
-            canonical = load_and_validate_mission(mission_config, repo_root=self.repo_root)
-            canonical["mission_id"] = self.normalize_mission_id(canonical.get("mission_id"))
-        except MissionValidationError as exc:
-            raise ApplicationServiceError(422, str(exc)) from exc
+        canonical = self._canonicalize_mission(mission_config)
 
         try:
             active_scenario = self.scenario_runtime.require_ready(canonical.get("vehicles") or [])
         except ScenarioNotReadyError as exc:
             raise ApplicationServiceError(409, str(exc)) from exc
         return canonical, active_scenario
+
+    def validate_assistant_proposal(
+        self, mission_config: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Validate an editable proposal without pretending it can be initialized.
+
+        Proposal editing is useful while an otherwise-identical runtime is
+        temporarily stale.  Keep the environment identity and vehicle
+        membership checks here, but leave the strict READY gate in
+        :meth:`validate_draft`, which is called again by Init.
+        """
+
+        canonical = self._canonicalize_mission(mission_config)
+        active_scenario = self.scenario_runtime.validated_active()
+        if not active_scenario:
+            raise ApplicationServiceError(
+                409, "no active environment is available to ground the mission proposal"
+            )
+
+        if (
+            active_scenario.get("ready") is True
+            and str(active_scenario.get("status") or "").lower() == "ready"
+        ):
+            try:
+                return canonical, self.scenario_runtime.require_ready(
+                    canonical.get("vehicles") or []
+                )
+            except ScenarioNotReadyError as exc:
+                raise ApplicationServiceError(409, str(exc)) from exc
+
+        available = {
+            str(agent.get("agent_id") or "")
+            for agent in active_scenario.get("agents") or []
+            if isinstance(agent, dict)
+        }
+        missing = sorted(set(canonical.get("vehicles") or []) - available)
+        if missing:
+            raise ApplicationServiceError(
+                409,
+                "mission vehicles are not part of the active environment: "
+                + ", ".join(missing),
+            )
+        return canonical, active_scenario
+
+    def _canonicalize_mission(self, mission_config: dict[str, Any]) -> dict[str, Any]:
+        try:
+            canonical = load_and_validate_mission(mission_config, repo_root=self.repo_root)
+            canonical["mission_id"] = self.normalize_mission_id(canonical.get("mission_id"))
+        except MissionValidationError as exc:
+            raise ApplicationServiceError(422, str(exc)) from exc
+        return canonical
 
     def get(self, mission_id: str) -> dict[str, Any]:
         mission = self.runtime.missions.get(mission_id)
@@ -248,6 +311,56 @@ class BackendMissionApplicationService:
             "removed": bool(removed),
             "message": "Removed mission from adapter runtime only. Backend ROS and MongoDB are unchanged.",
         }
+
+
+def _ensure_backend_mission_speed(
+    compatibility_config: dict[str, Any],
+    active_scenario: dict[str, Any],
+    vehicle_ids: list[str],
+) -> float | None:
+    """Supply a speed required by the inherited planner without changing the contract.
+
+    ``transit`` is optional in the canonical mission schema, while the ROS
+    planner inherited from the compatibility runtime reads its nested
+    ``max_speed`` unconditionally.  Derive a conservative speed from only the
+    selected scenario vehicles and keep the addition in the backend-bound copy.
+    """
+
+    transit = compatibility_config.get("transit")
+    if not isinstance(transit, dict):
+        transit = {}
+        compatibility_config["transit"] = transit
+    constraints = transit.get("desired_vehicle_constraints")
+    if not isinstance(constraints, dict):
+        constraints = {}
+        transit["desired_vehicle_constraints"] = constraints
+    if "max_speed" in constraints:
+        return None
+
+    selected = {_normalized_vehicle_id(vehicle_id) for vehicle_id in vehicle_ids}
+    speeds: list[float] = []
+    for agent in active_scenario.get("agents") or []:
+        if not isinstance(agent, dict):
+            continue
+        if _normalized_vehicle_id(agent.get("agent_id")) not in selected:
+            continue
+        profile = agent.get("constraints")
+        speed = profile.get("max_speed") if isinstance(profile, dict) else None
+        if (
+            isinstance(speed, int | float)
+            and not isinstance(speed, bool)
+            and math.isfinite(speed)
+            and speed > 0
+        ):
+            speeds.append(float(speed))
+
+    derived_speed = min(speeds) if speeds else 1.0
+    constraints["max_speed"] = derived_speed
+    return derived_speed
+
+
+def _normalized_vehicle_id(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", "-")
 
 
 class ScenarioApplicationService:

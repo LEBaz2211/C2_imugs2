@@ -606,7 +606,8 @@ class AssistantOrchestrator:
             details.append("Warnings: " + "; ".join(response.warnings))
         if response.mission_proposal is not None:
             details.append(
-                "Unexecuted mission proposal draft: "
+                "Mission working-copy proposal; runtime commands and status are "
+                "reported separately by the current environment: "
                 + json.dumps(
                     response.mission_proposal,
                     sort_keys=True,

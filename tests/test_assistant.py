@@ -194,7 +194,7 @@ def test_default_settings_target_requested_lm_studio_model_without_a_secret() ->
 
     assert settings.base_url == DEFAULT_LM_STUDIO_BASE_URL
     assert settings.model == DEFAULT_LM_STUDIO_MODEL
-    assert settings.prompt_version == "v2"
+    assert settings.prompt_version == "v3"
     assert settings.reasoning_effort == "xhigh"
     assert settings.enable_thinking is True
     assert settings.preserve_thinking is True
@@ -697,3 +697,12 @@ def test_prompt_catalog_rejects_path_traversal_and_missing_fields(tmp_path: Path
 
     with pytest.raises(PromptConfigurationError, match="missing required fields"):
         catalog.load("broken")
+
+
+def test_v3_prompt_preserves_identity_and_allows_stale_working_copy_edits() -> None:
+    bundle = PromptCatalog().load("v3")
+
+    assert "set `mission_id` to the empty string" in bundle.mission_contract
+    assert "mission's exact non-empty `mission_id`" in bundle.mission_contract
+    assert "explicitly Re-initialized" in bundle.mission_contract
+    assert "Do not refuse or return a null proposal solely" in bundle.system

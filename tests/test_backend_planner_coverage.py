@@ -69,6 +69,19 @@ def test_database_polygon_resolution_preserves_interior_holes() -> None:
     assert "geometry.interiors" in source
 
 
+def test_optional_transit_speed_cannot_crash_the_backend_planner() -> None:
+    methods = _class_methods(
+        PATH_LIBRARY / "multi_robot_path_planning.py",
+        "MultiRobotPathPlanning",
+    )
+    source = ast.unparse(methods["get_max_speed"])
+
+    assert "mission['transit']" not in source
+    assert "mission.get('transit')" in source
+    assert "math.isfinite(speed)" in source
+    assert "return 1.0" in source
+
+
 def test_lawnmower_algorithm_projects_metres_and_stays_inside_polygon() -> None:
     module = ast.parse((PATH_LIBRARY / "max_coverage.py").read_text(encoding="utf-8"))
     functions = {
@@ -185,3 +198,12 @@ def test_planner_injects_scenario_risk_polygons_into_mission_planner() -> None:
 
     assert "self.risk_poly_gdfs" in source
     assert "risk_polygons=risk_polygons" in source
+
+
+def test_diagnostic_graph_rendering_never_blocks_planner_callbacks() -> None:
+    methods = _class_methods(PLANNER_SOURCE, "PlannerNode")
+
+    assert "plot_graph_service" not in ast.unparse(methods["initialize_map"])
+    assert "plot_graph_service" not in ast.unparse(
+        methods["planning_timer_callback"]
+    )

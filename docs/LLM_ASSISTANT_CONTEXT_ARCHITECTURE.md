@@ -266,7 +266,7 @@ sequenceDiagram
 
     Note over API,LLM: API process setup (no model request)
     API->>Context: Create bounded revision service
-    API->>Chat: Register prompt v2, xhigh thinking, and one-in-flight guard
+    API->>Chat: Register prompt v3, xhigh thinking, and one-in-flight guard
     Note over API,Chat: Model provider remains lazy until first use
     UI->>Store: Restore bounded transcript and conversation ID
     Store-->>UI: Prior messages and valid proposal envelopes
@@ -334,8 +334,17 @@ sequenceDiagram
         API->>Live: Validate schema/semantics and read current internal binding
         Live-->>API: Post-generation runtime binding
         API->>API: Require exact R2/current identity match
+        API->>API: Report proposal validity separately from command readiness
     end
     API-->>UI: Complete response
+    opt Existing mission was revised
+        UI->>UI: Replace working copy and preserve exact mission ID
+        UI->>UI: Mark prior plan/status as previous-definition evidence
+        UI-->>Operator: Show Changes pending and require Re-init
+        Operator->>UI: Click Re-init after environment is READY
+        UI->>API: POST /api/missions/init with complete revised config
+        API->>ROS: Update same mission ID and request a replacement plan
+    end
     UI->>Store: Replace bounded saved transcript
     UI-->>Operator: Render answer and picture revision
 ```
@@ -356,7 +365,7 @@ defaults:
 C2_IMUGS2_LLM_BASE_URL=http://10.67.80.81:1234/v1
 C2_IMUGS2_LLM_MODEL=qwen/qwen3.8-27b
 C2_IMUGS2_LLM_API_KEY=<server-side environment only>
-C2_IMUGS2_LLM_PROMPT_VERSION=v2
+C2_IMUGS2_LLM_PROMPT_VERSION=v3
 C2_IMUGS2_LLM_REASONING_EFFORT=xhigh
 C2_IMUGS2_LLM_MAX_OUTPUT_TOKENS=65536
 ```
@@ -397,15 +406,20 @@ Current HTTP endpoints are:
 | `DELETE /api/assistant/conversations/{id}` | Clear bounded in-process dialogue and picture state |
 
 Model conversation state is in process and bounded to six retained turns per
-conversation. The browser separately saves at most 80 visible transcript items
-and the conversation ID in local storage, so ordinary tab and workspace
-navigation preserves message history. Valid proposal envelopes in that history
-are re-registered as local drafts when the UI reloads. A second local store owns
-the latest operator-edited working copies and takes precedence over the original
-model envelope; clearing the conversation therefore does not delete saved
-missions. An API process restart still starts a new operational revision scope
-and loses model-side history; the browser transcript is display history, not
-backend operational truth. Nothing writes conversation summaries into backend
+conversation. The browser separately saves at most 20 conversations with 80
+visible transcript items each in local storage and exposes New,
+history-selection, and delete controls. It migrates the former
+single-conversation record, so ordinary tab and workspace navigation preserves
+message history. Valid proposal envelopes in all retained histories are
+re-registered as local drafts when the UI reloads. A second local store owns the
+latest operator- or assistant-edited working copies and takes precedence over
+the original model envelope. A follow-up revision with the same mission ID
+replaces that working copy even after Init; the prior runtime state is retained
+only as explicitly labelled previous-definition evidence until Re-init.
+Deleting a conversation therefore does not delete saved missions. An API
+process restart still starts a new operational revision scope
+and loses model-side history; browser transcripts remain visible but model
+continuity is best-effort. Nothing writes conversation summaries into backend
 operational databases.
 
 The compatibility API still has wildcard CORS and no authentication. Until
@@ -415,17 +429,20 @@ an unauthenticated sequence of requests.
 
 ### Hidden Diagnostic View
 
-Append `?assistantDebug=1` to the UI URL to reveal a non-persistent **Debug**
-switch. Enable it before sending a message to request that turn's bounded safe
-trace. The trace displays the exact redacted LangChain messages sent to the
-model, the final provider event, and any tool calls actually returned by the
+Append `?assistantDebug=1` to the UI URL to reveal Scenario Lab, Contracts, C2
+Diagnostics, and a non-persistent assistant **Debug** switch. This shared gate
+is a discoverability mechanism, not authorization. Enable Debug before sending
+a message to request that turn's bounded safe trace. The trace displays the
+exact redacted LangChain messages sent to the model, the final provider event,
+and any tool calls actually returned by the
 provider. Deterministic context reads and proposal validation are displayed
-separately because they are backend operations, not LLM tools.
+separately because they are backend operations, not LLM tools. Debug payloads
+use a collapsible JSON tree with readable multiline strings, parsed fenced JSON,
+bounded scrolling, and copyable redacted JSON instead of escaped raw blocks.
 
 No callable tools are currently bound to the model, so the normal tool-call
 count is zero. Tool calls are never fabricated from backend work. The server
-and browser both defensively redact credential-shaped values, but the hidden
-query parameter is only a discoverability gate, not authorization. Run this
+and browser both defensively redact credential-shaped values. Run this
 diagnostic surface only on the trusted operator network and do not add secrets
 to prompts or operational data.
 
@@ -446,7 +463,7 @@ activation mechanics to the model.
 | `get_fleet_context()` | Declared agents, advertised profiles, current registrations, locations, capabilities, and mismatches |
 | `search_current_map_features(query)` | Matches only within the active environment, with bounded exact Point/Polygon facts or omission summaries |
 | `retrieve_contracts(query)` | Relevant schema, ICD, `CURRENT` backend documentation, and source references with authority labels |
-| `validate_mission_definition(json)` | **Partly implemented.** Canonical schema, inline geometry shape/range semantics, current-environment readiness and vehicle membership run now; the backend also enforces its exact hidden runtime binding. Map resolution/containment, behavior compatibility, capability/connectivity, and planner preflight remain |
+| `validate_mission_definition(json)` | **Partly implemented.** Canonical schema, inline geometry shape/range semantics, environment identity and vehicle membership run now; command readiness is reported separately and checked again by Init/Re-init. The backend also enforces its exact hidden runtime binding. Map resolution/containment, behavior compatibility, capability/connectivity, and planner preflight remain |
 | `preflight_mission(json)` | A side-effect-free feasibility result tied internally to the immutable active runtime identity |
 | `propose_mission(json)` | **Implemented as UI draft staging.** Never an automatic ROS command |
 
@@ -465,12 +482,13 @@ natural language
   -> candidate canonical mission JSON
   -> complete JSON Schema validation
   -> local semantic and inline geometry validation
-  -> exact-picture ready-scenario and vehicle-membership binding
-  -> post-generation comparison with the current scenario binding
+  -> exact-picture environment identity and vehicle-membership binding
+  -> post-generation comparison with the current environment binding
+  -> proposal-valid versus Init/Re-init-ready result
   -> operator review of proposal, assumptions, warnings, and operational revision
   -> editable normal mission composer
-  -> explicit Init
-  -> repeat validation against current scenario + compatibility translation
+  -> explicit Init or Re-init
+  -> strict READY validation against current environment + compatibility translation
   -> authoritative feedback
   -> explicit Approve / Start
 ```
@@ -478,8 +496,9 @@ natural language
 The assistant has no command tools and the API never initializes a generated
 proposal. The response's `mission_proposal_validation.valid=true` means only
 that canonical schema, local semantic, supported single-ring inline geometry,
-current ready-scenario, vehicle-membership, and exact generation-to-validation
-scenario-binding checks passed. The response records that binding. It is not a
+environment vehicle-membership, and exact generation-to-validation binding
+checks passed. The response records that binding and separately reports
+whether Init/Re-init is currently allowed. It is not a
 map-containment, behavior-compatibility, planner-feasibility, capability, or
 safety certificate.
 
@@ -499,8 +518,9 @@ remaining deterministic checks must cover:
 Current checks already cover schema version and enums, required structure,
 finite `[lon, lat]` coordinates and ranges for Point, LineString, and closed
 non-degenerate single-ring Polygon literals, coverage width semantics,
-ready-scenario membership, and an exact scenario/version/map/hash/activation
-binding comparison across model generation and proposal validation.
+environment membership, and an exact scenario/version/map/hash/activation
+binding comparison across model generation and proposal validation. Strict
+READY enforcement remains at the Init/Re-init command boundary.
 
 The current mission endpoint normalizes legacy aliases, executes the complete
 canonical draft-2020-12 mission schema, then executes semantic and active

@@ -45,9 +45,9 @@ The API implementation may include experimental map/scenario helpers. They are n
 The assistant endpoint completes one non-streaming model request. The optional
 request field `debug=true` adds a bounded, redacted trace of the exact model
 messages, final provider event, and any actual tool calls to the response. The
-UI exposes that option only when opened with `?assistantDebug=1`; this is a
-diagnostic discoverability gate, not access control. No tools are currently
-bound to the LLM.
+UI exposes that option only when opened with `?assistantDebug=1`. The same
+discoverability gate reveals Scenario Lab, Contracts, and C2 Diagnostics; it is
+not access control. No tools are currently bound to the LLM.
 
 `GET /api/contracts` contains a curated `atlas` for the verified active mission path and a broader source-discovery catalog. The atlas is authoritative for the visualization; raw scanner discoveries are evidence candidates, not proof of an active runtime contract.
 
@@ -74,7 +74,12 @@ Init additionally requires a ready active scenario and verifies that every missi
 
 ## Scenario Activation
 
-The scenario selector exists only in Scenario Lab. Selecting a draft does not change C2 reality; pressing **Activate** freezes the map, restarts the planner on that version, replaces the robot simulation containers, and waits for matching ROS registrations. The C2 tab displays the active readiness state but cannot switch it.
+The scenario selector exists only in the gated Scenario Lab. Selecting a draft
+does not change C2 reality; pressing **Activate** freezes the map, restarts
+coordination, the planner, the REST bridge, and rosbridge on that version,
+replaces the robot simulation containers, and waits for matching ROS
+registrations. The C2 tab displays the active readiness state but cannot switch
+it.
 
 The Roads panel downloads OSM highways only through an explicit polygon action.
 Those roads remain draft data until activation. Once active, that frozen
