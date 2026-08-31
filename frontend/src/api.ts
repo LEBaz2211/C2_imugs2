@@ -508,10 +508,21 @@ export type AssistantDebugToolCall = {
   [key: string]: unknown;
 };
 
+export type AssistantDebugContextUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  context_limit?: number;
+  context_used_percent?: number;
+  remaining_tokens?: number;
+  [key: string]: unknown;
+};
+
 export type AssistantDebugTrace = {
   model_messages?: AssistantDebugModelMessage[];
   events?: AssistantDebugEvent[];
   tool_calls?: AssistantDebugToolCall[];
+  context_usage?: AssistantDebugContextUsage | null;
   [key: string]: unknown;
 };
 

@@ -133,7 +133,7 @@ working-copy edit after Init -> Changes pending -> operator Re-init
                              -> replacement plan for the same mission ID
 ```
 
-Identity rules are explicit in prompt version `mission/v4` and enforced in code:
+Identity rules are explicit in prompt version `mission/v1` and enforced in code:
 
 - For a new mission the model returns `mission_id: ""`. Backend
   canonicalization assigns a UUID programmatically; the UI then uses that
@@ -183,24 +183,25 @@ from stateful I/O makes diff logic testable without MongoDB or FastAPI.
 The default prompt release is:
 
 ```text
-src/c2_imugs2/assistant/prompt_templates/mission/v4/prompt.json
+src/c2_imugs2/assistant/prompt_templates/mission/v1/prompt.json
 ```
 
 Its manifest composes ordered behavioral sections, the canonical mission
 contract, representative examples, dynamic user-message context, and the
 structured output contract. Family-qualified IDs leave room for parallel
 task- or model-specific releases while every response records the exact ID.
-Historical flat `v1` through `v3` releases remain loadable but are not edited.
 
 ## Runtime Defaults
 
 ```text
-base URL                 http://10.67.80.81:1234/v1
-model                    qwen/qwen3.8-27b
-prompt version           mission/v4
+base URL                 http://10.67.80.81:8000/v1
+model                    Inferact/Qwen3.8-Flash-Next-NVFP4
+prompt version           mission/v1
 reasoning effort         xhigh
 thinking                 enabled and preserved
-maximum output tokens    65536
+maximum output tokens    32768
+context window limit     262144
+debug context counter    exact prompt/completion tokens vs context limit
 model retries            0
 token streaming          disabled
 model tools              none

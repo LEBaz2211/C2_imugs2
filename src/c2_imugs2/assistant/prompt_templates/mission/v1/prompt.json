@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "mission/v4",
+  "version": "mission/v1",
   "system": [
     "system/01_objective.txt",
     "system/02_instruction_priority.txt",

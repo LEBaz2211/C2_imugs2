@@ -552,9 +552,16 @@ export default function App() {
     [activeScenarioRuntime?.scenario_id, scenarioState.library.scenarios],
   );
   const runtimeFeatureIdSet = useMemo(() => new Set(runtimeScenarioContext?.feature_ids ?? []), [runtimeScenarioContext?.feature_ids]);
+  const c2FeatureIdSet = useMemo(() => {
+    const featureIds = new Set(runtimeFeatureIdSet);
+    for (const feature of mapFeatures) {
+      if (isUserMapFeature(feature)) featureIds.add(feature.feature_id);
+    }
+    return featureIds;
+  }, [mapFeatures, runtimeFeatureIdSet]);
   const runtimeMapFeatures = useMemo(
-    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, runtimeFeatureIdSet)),
-    [mapFeatures, runtimeFeatureIdSet],
+    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, c2FeatureIdSet)),
+    [c2FeatureIdSet, mapFeatures],
   );
   const hasRuntimeScenario = Boolean(activeScenarioRuntime?.scenario_id);
   const c2Agents = useMemo(() => {
@@ -629,9 +636,9 @@ export default function App() {
     () => workspace === "scenario"
       ? filterGeojsonForScenario(geojson, scenarioFeatureIdSet)
       : hasRuntimeScenario
-        ? filterGeojsonForScenario(geojson, runtimeFeatureIdSet)
+        ? filterGeojsonForScenario(geojson, c2FeatureIdSet)
         : filterGeojsonForScenario(geojson, new Set()),
-    [geojson, hasRuntimeScenario, runtimeFeatureIdSet, scenarioFeatureIdSet, workspace],
+    [c2FeatureIdSet, geojson, hasRuntimeScenario, scenarioFeatureIdSet, workspace],
   );
 
   useEffect(() => {
@@ -854,7 +861,6 @@ export default function App() {
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
       setMapFeaturesReady(true);
-      setSelectedFeatureId(featureId);
       setMapFocus({ featureIds: [featureId], nonce: Date.now() });
       setMapFocusPoints(undefined);
       if (targetScenarioId) setPendingScenarioFeatureToAdd({ featureId, scenarioId: targetScenarioId, nonce: Date.now() });
@@ -864,10 +870,6 @@ export default function App() {
       setApiError(message);
       setCommandFeedback({ tone: "error", message: `Feature creation failed: ${message}` });
       return;
-    }
-
-    if (draft.use_as_objective) {
-      setInlineObjective(name, draft.geometry_type, draft.coordinates, false);
     }
   }
 
@@ -2275,6 +2277,8 @@ function AssistantDebugDisclosure({
   const traceEvents = firstDebugArray(trace, ["events", "backend_events", "execution_events"]);
   const modelEvents = traceEvents.filter(isModelProviderDebugEvent);
   const backendEvents = traceEvents.filter((event) => !isModelProviderDebugEvent(event) && debugEventType(event) !== "tool_call");
+  const modelFinalEvent = traceEvents.find((event) => debugEventType(event) === "model_final");
+  const contextUsage = asDebugRecord(trace?.context_usage) ?? asDebugRecord(asDebugRecord(modelFinalEvent)?.context_usage);
 
   return (
     <div className="mt-2 space-y-2 border-t border-dashed border-border pt-2 text-[11px]">
@@ -2282,6 +2286,8 @@ function AssistantDebugDisclosure({
         <span className="font-medium text-foreground">Diagnostic trace</span>
         <Badge tone={trace ? "ok" : "warn"}>{trace ? "captured" : "unavailable"}</Badge>
       </div>
+
+      <AssistantContextUsageBar usage={contextUsage} />
 
       <div className="rounded-md border border-border bg-panel p-2">
         <div className="flex items-center justify-between gap-2">
@@ -2354,6 +2360,48 @@ function AssistantDebugDisclosure({
       )}
     </div>
   );
+}
+
+function AssistantContextUsageBar({ usage }: { usage: Record<string, unknown> | undefined }) {
+  const limit = asFiniteNumber(usage?.context_limit);
+  if (!usage || !limit || limit <= 0) return null;
+  const promptTokens = asFiniteNumber(usage.prompt_tokens);
+  const completionTokens = asFiniteNumber(usage.completion_tokens);
+  const totalTokens = asFiniteNumber(usage.total_tokens) ?? (promptTokens ?? 0) + (completionTokens ?? 0);
+  const usedPercent = asFiniteNumber(usage.context_used_percent) ?? (totalTokens / limit) * 100;
+  const barPercent = Math.max(0, Math.min(100, usedPercent));
+  const remainingTokens = asFiniteNumber(usage.remaining_tokens) ?? Math.max(limit - totalTokens, 0);
+  const formatTokens = (value: number | undefined) => (value === undefined ? "?" : value.toLocaleString());
+  return (
+    <div className="rounded-md border border-border bg-panel p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">Context tokens</span>
+        <span
+          className={`tabular-nums ${usedPercent >= 90 ? "text-red-700" : "text-muted-foreground"}`}
+          title={`${totalTokens.toLocaleString()} of ${limit.toLocaleString()} context tokens used`}
+        >
+          {usedPercent.toFixed(1)}% of {limit.toLocaleString()}
+        </span>
+      </div>
+      <div
+        className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label="Context window usage"
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-valuenow={totalTokens}
+      >
+        <div className={`h-full ${usedPercent >= 90 ? "bg-red-500" : "bg-primary"}`} style={{ width: `${barPercent}%` }} />
+      </div>
+      <p className="mt-1 leading-4 text-muted-foreground tabular-nums">
+        prompt {formatTokens(promptTokens)} + completion {formatTokens(completionTokens)} · {formatTokens(remainingTokens)} remaining
+      </p>
+    </div>
+  );
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function DebugTraceCard({ value, fallbackLabel }: { value: unknown; fallbackLabel: string }) {

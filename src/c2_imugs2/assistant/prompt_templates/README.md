@@ -1,7 +1,7 @@
 # Assistant prompts
 
 Each directory is an immutable prompt release selected with
-`C2_IMUGS2_LLM_PROMPT_VERSION` (default: `mission/v4`). A response records that
+`C2_IMUGS2_LLM_PROMPT_VERSION` (default: `mission/v1`). A response records that
 exact ID.
 
 New releases use a family-qualified layout:
@@ -14,8 +14,7 @@ The manifest declares ordered `system` and optional `examples` file lists plus
 one `mission_contract`, `user_message`, and `structured_output` file. Component
 paths are relative to the release directory. This permits parallel families
 and model-specific experiments without changing the loader or crowding one
-system file. Historical flat `v1` through `v3` directories use the original
-four-file layout and remain loadable for reproducibility.
+system file.
 
 To make a material change, copy an entire release to a new immutable release
 ID, update the manifest's `version`, edit only the copy, and select the new ID

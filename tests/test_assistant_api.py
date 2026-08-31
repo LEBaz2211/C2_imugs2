@@ -181,7 +181,7 @@ def test_assistant_api_returns_validated_draft_without_initializing_it() -> None
     assert status["reasoning_effort"] == "xhigh"
     assert status["thinking_enabled"] is True
     assert status["preserve_thinking"] is True
-    assert status["max_output_tokens"] == 65_536
+    assert status["max_output_tokens"] == 32_768
     response = client.post(
         "/api/assistant/messages",
         json={"conversation_id": "operator-1", "message": "Draft a point mission"},

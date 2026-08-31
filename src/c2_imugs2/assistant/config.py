@@ -12,8 +12,9 @@ import os
 from typing import Literal
 
 
-DEFAULT_LM_STUDIO_BASE_URL = "http://10.67.80.81:1234/v1"
-DEFAULT_LM_STUDIO_MODEL = "qwen/qwen3.8-27b"
+DEFAULT_LM_STUDIO_BASE_URL = "http://10.67.80.81:8000/v1"
+DEFAULT_LM_STUDIO_MODEL = "Inferact/Qwen3.8-Flash-Next-NVFP4"
+DEFAULT_CONTEXT_LIMIT = 262_144
 DEFAULT_API_KEY_ENV_VAR = "C2_IMUGS2_LLM_API_KEY"
 
 
@@ -81,8 +82,12 @@ class AssistantSettings:
     # therefore produces a successful HTTP response with empty message
     # content.  Keep the defaults large enough for xhigh, while retaining an
     # explicit environment override for operators with a smaller context.
+    # The vLLM endpoint serves the Flash model with a 32768-token output cap.
     request_timeout_seconds: float = 900.0
-    max_output_tokens: int = 65_536
+    max_output_tokens: int = 32_768
+    # Total context window of the served model.  Debug traces compare the
+    # server-reported prompt/completion usage against this limit.
+    context_limit: int = DEFAULT_CONTEXT_LIMIT
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 20
@@ -92,7 +97,7 @@ class AssistantSettings:
     reasoning_effort: Literal["low", "medium", "xhigh"] = "xhigh"
     enable_thinking: bool = True
     preserve_thinking: bool = True
-    prompt_version: str = "mission/v4"
+    prompt_version: str = "mission/v1"
     max_history_turns: int = 6
     max_conversations: int = 128
     max_user_message_chars: int = 12_000
@@ -131,7 +136,10 @@ class AssistantSettings:
                 "C2_IMUGS2_LLM_TIMEOUT_SECONDS", 900.0, minimum=1.0
             ),
             max_output_tokens=_env_int(
-                "C2_IMUGS2_LLM_MAX_OUTPUT_TOKENS", 65_536, minimum=1
+                "C2_IMUGS2_LLM_MAX_OUTPUT_TOKENS", 32_768, minimum=1
+            ),
+            context_limit=_env_int(
+                "C2_IMUGS2_LLM_CONTEXT_LIMIT", DEFAULT_CONTEXT_LIMIT, minimum=1
             ),
             temperature=_env_float(
                 "C2_IMUGS2_LLM_TEMPERATURE", 1.0, minimum=0.0
@@ -156,7 +164,7 @@ class AssistantSettings:
             preserve_thinking=_env_bool(
                 "C2_IMUGS2_LLM_PRESERVE_THINKING", True
             ),
-            prompt_version=os.getenv("C2_IMUGS2_LLM_PROMPT_VERSION", "mission/v4"),
+            prompt_version=os.getenv("C2_IMUGS2_LLM_PROMPT_VERSION", "mission/v1"),
             max_history_turns=_env_int(
                 "C2_IMUGS2_LLM_MAX_HISTORY_TURNS", 6, minimum=0
             ),
@@ -188,6 +196,8 @@ class AssistantSettings:
             raise AssistantConfigurationError("LLM request timeout must be positive")
         if self.max_output_tokens <= 0:
             raise AssistantConfigurationError("LLM max output tokens must be positive")
+        if self.context_limit <= 0:
+            raise AssistantConfigurationError("LLM context limit must be positive")
         if self.temperature < 0:
             raise AssistantConfigurationError("LLM temperature cannot be negative")
         if not 0 <= self.top_p <= 1:

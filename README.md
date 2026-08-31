@@ -67,13 +67,13 @@ export C2_IMUGS2_LLM_API_KEY='<LM Studio API key>'
 docker compose up -d --build c2-imugs2-api c2-imugs2-ui
 ```
 
-The API defaults to LM Studio at `http://10.67.80.81:1234/v1` with model
-`qwen/qwen3.8-27b`. Override `C2_IMUGS2_LLM_BASE_URL` or
+The API defaults to the vLLM endpoint at `http://10.67.80.81:8000/v1` with model
+`Inferact/Qwen3.8-Flash-Next-NVFP4`. Override `C2_IMUGS2_LLM_BASE_URL` or
 `C2_IMUGS2_LLM_MODEL` in the shell when needed. Keep
 `C2_IMUGS2_LLM_API_KEY` in the process environment; do not commit it to the
 repository. Versioned prompts are in
 `src/c2_imugs2/assistant/prompt_templates/`; the current default is
-`mission/v4`. Prompt IDs may be grouped as `<family>/<release>`, and manifest
+`mission/v1`. Prompt IDs may be grouped as `<family>/<release>`, and manifest
 releases can compose ordered system sections and examples. Set
 `C2_IMUGS2_LLM_PROMPT_VERSION` to select an exact release reproducibly.
 

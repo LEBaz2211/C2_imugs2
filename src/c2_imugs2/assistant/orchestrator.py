@@ -119,6 +119,13 @@ _SENSITIVE_DEBUG_KEY = re.compile(
     r"(?:authorization|api[-_]?key|token|secret|password|cookie)",
     re.IGNORECASE,
 )
+# Exact numeric token counters emitted by the provider are diagnostics, not
+# credentials, so the redactor keeps them visible in debug traces.
+_TOKEN_COUNTER_DEBUG_KEY = re.compile(
+    r"^(?:prompt|completion|total|input|output|remaining)_tokens$"
+    r"|^context_(?:limit|used_percent)$|^max_tokens$",
+    re.IGNORECASE,
+)
 _BEARER_SECRET = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _LABELLED_SECRET = re.compile(
     r"(?i)\b(?:authorization|api[-_ ]?key|token|secret|password)\s*[:=]\s*\S+"
@@ -451,6 +458,7 @@ class AssistantOrchestrator:
                 "stream": False,
                 "temperature": self.settings.temperature,
                 "max_tokens": self.settings.max_output_tokens,
+                "context_limit": self.settings.context_limit,
                 "top_p": self.settings.top_p,
                 "top_k": self.settings.top_k,
                 "min_p": self.settings.min_p,
@@ -502,6 +510,8 @@ class AssistantOrchestrator:
         for call in safe_calls:
             if call not in trace["tool_calls"]:
                 self._append_debug_tool_call(trace, call)
+        context_usage = self._context_usage(result.usage_metadata)
+        trace["context_usage"] = context_usage
         self._append_debug_event(
             trace,
             {
@@ -509,9 +519,30 @@ class AssistantOrchestrator:
                 "raw_response": result.raw_text,
                 "parsed_answer": result.text,
                 "usage": result.usage_metadata,
+                "context_usage": context_usage,
                 "tool_calls": safe_calls,
             },
         )
+
+    def _context_usage(self, usage: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Project exact server-reported token usage onto the context window."""
+
+        values = dict(usage or {})
+        prompt_tokens = int(values.get("input_tokens") or values.get("prompt_tokens") or 0)
+        completion_tokens = int(
+            values.get("output_tokens") or values.get("completion_tokens") or 0
+        )
+        raw_total = values.get("total_tokens")
+        total_tokens = int(raw_total) if raw_total else prompt_tokens + completion_tokens
+        limit = self.settings.context_limit
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "context_limit": limit,
+            "context_used_percent": round(total_tokens / limit * 100, 2) if limit > 0 else None,
+            "remaining_tokens": max(limit - total_tokens, 0),
+        }
 
     def _append_debug_event(
         self, trace: dict[str, Any], event: Mapping[str, Any]
@@ -559,6 +590,7 @@ class AssistantOrchestrator:
                 str(key): (
                     "[REDACTED]"
                     if _SENSITIVE_DEBUG_KEY.search(str(key))
+                    and not _TOKEN_COUNTER_DEBUG_KEY.match(str(key))
                     else self._redact_sensitive_value(item)
                 )
                 for key, item in value.items()

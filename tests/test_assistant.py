@@ -35,9 +35,16 @@ from c2_imugs2.operations.models import (
 
 
 class FakeChatModel:
-    def __init__(self, responses: list[str], *, structured_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        responses: list[str],
+        *,
+        structured_error: Exception | None = None,
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self.responses = iter(responses)
         self.structured_error = structured_error
+        self.usage = usage
         self.invocations: list[list[BaseMessage]] = []
         self.structured_builds = 0
 
@@ -49,6 +56,8 @@ class FakeChatModel:
 
     def invoke(self, messages: list[BaseMessage]) -> AIMessage:
         self.invocations.append(messages)
+        if self.usage is not None:
+            return AIMessage(content=next(self.responses), usage_metadata=self.usage)
         return AIMessage(content=next(self.responses))
 
 
@@ -215,11 +224,12 @@ def test_default_settings_target_requested_lm_studio_model_without_a_secret() ->
 
     assert settings.base_url == DEFAULT_LM_STUDIO_BASE_URL
     assert settings.model == DEFAULT_LM_STUDIO_MODEL
-    assert settings.prompt_version == "mission/v4"
+    assert settings.prompt_version == "mission/v1"
     assert settings.reasoning_effort == "xhigh"
     assert settings.enable_thinking is True
     assert settings.preserve_thinking is True
-    assert settings.max_output_tokens == 65_536
+    assert settings.max_output_tokens == 32_768
+    assert settings.context_limit == 262_144
     assert "api_key=" not in repr(settings)
 
 
@@ -302,7 +312,7 @@ def test_provider_reads_key_from_environment_and_disables_retries(monkeypatch: p
     assert captured["streaming"] is False
     assert captured["disable_streaming"] is True
     assert captured["extra_body"] == {
-        "max_tokens": 65_536,
+        "max_tokens": 32_768,
         "top_k": 20,
         "min_p": 0.0,
         # LM Studio's Chat Completions compatibility parameter is named
@@ -783,19 +793,20 @@ def test_prompt_catalog_rejects_manifest_component_traversal(tmp_path: Path) -> 
         PromptCatalog(tmp_path).load("mission/unsafe")
 
 
-def test_v3_prompt_preserves_identity_and_allows_stale_working_copy_edits() -> None:
-    bundle = PromptCatalog().load("v3")
+def test_default_prompt_preserves_identity_and_allows_stale_working_copy_edits() -> None:
+    bundle = PromptCatalog().load("mission/v1")
+    normalized_system = " ".join(bundle.system.split())
 
     assert "set `mission_id` to the empty string" in bundle.mission_contract
-    assert "mission's exact non-empty `mission_id`" in bundle.mission_contract
+    assert "preserve the exact non-empty `mission_id`" in bundle.mission_contract
     assert "explicitly Re-initialized" in bundle.mission_contract
-    assert "Do not refuse or return a null proposal solely" in bundle.system
+    assert "Do not reject the revision solely" in normalized_system
 
 
-def test_v4_prompt_is_capability_accurate_and_structured() -> None:
-    bundle = PromptCatalog().load("mission/v4")
+def test_v1_prompt_is_capability_accurate_and_structured() -> None:
+    bundle = PromptCatalog().load("mission/v1")
 
-    assert bundle.version == "mission/v4"
+    assert bundle.version == "mission/v1"
     assert "# Objective" in bundle.system
     assert "# Instruction Priority" in bundle.system
     assert "# Capabilities And Boundaries" in bundle.system
@@ -807,3 +818,44 @@ def test_v4_prompt_is_capability_accurate_and_structured() -> None:
     assert "current_environment.operator_objectives" in bundle.system
     assert "never put its `feature_id`" in bundle.mission_contract
     assert "<example>" in bundle.examples
+
+
+def test_debug_trace_reports_exact_context_usage_from_model_usage() -> None:
+    settings = AssistantSettings()
+    context = RevisionContext()
+    model = FakeChatModel(
+        ['{"answer":"done"}'],
+        usage={
+            "input_tokens": 150_000,
+            "output_tokens": 3_000,
+            "total_tokens": 153_000,
+        },
+    )
+    assistant = AssistantOrchestrator(
+        context=context,
+        model=LangChainOpenAIProvider(settings, model=model),
+        settings=settings,
+        picture_materializer=picture_materializer,
+    )
+
+    response = assistant.chat(conversation_id="ctx", user_message="status", debug=True)
+
+    assert response.debug_trace is not None
+    usage = response.debug_trace["context_usage"]
+    assert usage["prompt_tokens"] == 150_000
+    assert usage["completion_tokens"] == 3_000
+    assert usage["total_tokens"] == 153_000
+    assert usage["context_limit"] == 262_144
+    assert usage["context_used_percent"] == 58.36
+    assert usage["remaining_tokens"] == 262_144 - 153_000
+    final_event = next(
+        event
+        for event in response.debug_trace["events"]
+        if event["type"] == "model_final"
+    )
+    assert final_event["context_usage"] == usage
+    assert response.model_usage == {
+        "input_tokens": 150_000,
+        "output_tokens": 3_000,
+        "total_tokens": 153_000,
+    }

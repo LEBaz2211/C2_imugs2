@@ -44,7 +44,6 @@ export type DraftMapFeature = {
   feature_type: string;
   geometry_type: "Point" | "LineString" | "Polygon";
   coordinates: LonLat | LonLat[] | LonLat[][];
-  use_as_objective: boolean;
 };
 
 type MapViewport = {
@@ -193,7 +192,6 @@ export function MapView({
       feature_type: featureType,
       geometry_type: geometryType,
       coordinates,
-      use_as_objective: featureType === "objective",
     };
     if (redrawFeatureId) onUpdateFeature(redrawFeatureId, feature);
     else onCreateFeature(feature);
@@ -878,7 +876,6 @@ function draftFromFeature(feature: MapFeature, name: string): DraftMapFeature {
     feature_type: feature.feature_type,
     geometry_type: geometryType,
     coordinates: feature.geometry.coordinates as DraftMapFeature["coordinates"],
-    use_as_objective: false,
   };
 }
 
