@@ -30,42 +30,56 @@ The LLM and benchmark must build on a working multi-robot system; they should no
 
 Preserve message and service structures, topic and service names, numeric enums, mission and task-plan shapes, and coordinate conventions. Keep legacy normalization and ROS behavior in the editable backend. Any necessary contract migration requires documentation, compatibility handling, tests, and user approval. Verify compatibility against the frozen Dockerized legacy stack without changing its source.
 
-## Scenario Model And Invariants
+## World Model And Invariants
 
-A scenario is the complete input that defines one simulated reality: its
-selected map assets, frozen OSM road imports, robot definitions and starting
-locations. A mission is an operation performed inside that reality. Roads and
-other scenario assets therefore belong to the scenario snapshot, not to the
-mission description.
+A **world definition** is the saved input that can create one simulated
+reality: its selected map assets, frozen OSM road imports, robot definitions,
+and starting locations. It is an authoring/launch recipe. A mission is an
+operation performed inside the launched **active world**. Roads and other
+world assets therefore belong to active-world state, not to the mission
+description.
+
+The existing implementation and compatibility API use `scenario`,
+`scenario_id`, and `/api/scenarios/*`. Keep those stable until an explicit
+contract migration; use **Worlds**, **World Builder**, **world definition**,
+and **active world** in operator-facing language.
+
+Launch is a one-way materialization boundary. After it succeeds, runtime code
+must not consult the mutable source definition. The planner, C2 display,
+mission validation, and robot processes read the frozen launched snapshot and
+subsequent live-world revisions. Editing or selecting a definition affects
+only a future launch. Definition identity may remain on runtime records as
+provenance, but not as a runtime data dependency.
 
 There are three related concepts which must not be conflated:
 
 | Concept | Purpose | Source of truth |
 | --- | --- | --- |
-| Scenario catalog | All saved scenarios and immutable versions available for later selection | `MapDB._scenario_versions` and the versioned MapDB collections |
-| Selected draft scenario | The one scenario currently being edited or previewed in Scenario Lab | Browser scenario-library state, reconciled with `GET /api/scenarios` |
-| Active runtime scenario | The only scenario currently controlling the planner, ROS coordination, robot containers and C2 mission validation | Durable `MapDB._active_scenario` plus activation record, reconciled with planner config and live Docker/ROS/Mongo checks; `active_scenario.json` is a generated cache |
+| World-definition catalog | Saved launch definitions and immutable launched versions available for reuse | `MapDB._scenario_versions` and the versioned MapDB collections |
+| Selected world definition | The definition currently being edited or previewed in World Builder | Browser definition-library state, reconciled with `GET /api/scenarios` |
+| Active world | The launched reality controlling the planner, ROS coordination, robot containers and C2 mission validation | Durable legacy-named `MapDB._active_scenario` record plus its frozen collection, reconciled with planner config and live Docker/ROS/Mongo checks; `active_scenario.json` is a generated cache |
 
-Selecting a scenario in the Scenario Lab dropdown changes only the draft being
-edited. It does **not** change simulated reality. Only a successful Activate
-operation changes the active runtime scenario.
+Selecting a definition in World Builder changes only the definition being
+edited. It does **not** change simulated reality. Only a successful **Launch**
+(implemented by the compatibility `activate` endpoint) replaces the active
+world.
 
 ```mermaid
 flowchart LR
-    Library[Global map authoring library] --> Draft[One selected scenario draft]
+    Library[Global map authoring library] --> Draft[One selected world definition]
     Roads[Polygon-bounded OSM download] --> Draft
     Robots[Robot definitions and starts] --> Draft
     Draft -->|Activate| Freeze[Content-addressed immutable MapDB collection]
     Freeze --> Planner[Planner configured for exact collection and token]
-    Freeze --> Runtime[Replace coordination and scenario robot runtime]
+    Freeze --> Runtime[Create independent active-world runtime]
     Planner --> Verify{Exact graph loaded?}
     Runtime --> Verify2{Containers running and every robot registered?}
-    Verify --> Ready[One active scenario ready]
+    Verify --> Ready[One active world ready]
     Verify2 --> Ready
     Ready --> Mission[Mission Init allowed]
 ```
 
-Activation is a transaction boundary:
+Launch is a transaction boundary (the compatibility API calls it activation):
 
 1. Validate the draft and resolve only its referenced map features.
 2. Normalize its downloaded OSM LineStrings as scenario `road` features.
@@ -81,9 +95,9 @@ Activation is a transaction boundary:
    and token, required containers are running, and every configured canonical
    robot ID is registered.
 
-The following rules are non-negotiable for scenario work:
+The following rules are non-negotiable for world-definition and active-world work:
 
-- Exactly one runtime scenario may be active. Retained immutable collections
+- Exactly one world may be active. Retained immutable collections
   are history/catalog entries and must never be merged into the active graph.
 - MongoDB is the durable activation authority. The runtime JSON file is a
   generated/degraded cache, and a cached `ready` value never overrides failed
@@ -92,35 +106,37 @@ The following rules are non-negotiable for scenario work:
   still healthy is idempotent and must not restart or clear the backend.
 - `MapDB.rma` and the full `map_features`/GeoJSON response are authoring
   libraries, not a fallback runtime reality.
-- Scenario Lab must render only the selected draft's feature IDs, road imports
-  and robots. C2 must render only the active runtime scenario's snapshot. A
+- World Builder may show unattached objective points as available authoring
+  references, but must distinguish them from assets included in the selected
+  definition. C2 must render the launched active-world snapshot plus explicit
+  live-world changes, never the mutable source definition. A
   failed, activating or stale runtime may disable missions and show an error,
   but it must never reveal all global map features or combine scenarios.
 - OSM road imports remain owned by one scenario. Do not put roads in mission
   JSON, append them to another scenario during selection, or use the general
   OSM reference overlay as planner input.
-- Changing any scenario content creates a new immutable version on activation.
+- Changing any world-definition content creates a new immutable version on launch.
   Never edit an existing versioned collection in place.
 - A running robot container is not proof of readiness. Docker state, ROS/Mongo
   registration and the planner's exact collection/token marker must all agree.
 - A previously verified `stale` runtime may recover automatically only after
   those checks all agree again, including the exact planner collection/token
   marker. `activating` and `failed` states never auto-promote to ready.
-- Browser-local selection, the catalog's `runtime_active` label and backend
+- Browser-local definition selection, the catalog's `runtime_active` label and backend
   readiness are different facts. Use stable scenario IDs when reconciling
   them; do not synchronize them by unioning arrays or by copying the previous
   scenario's non-empty state.
-- Scenario switching must replace state atomically from the consumer's point
+- Active-world replacement must be atomic from the consumer's point
   of view. Clear or key cached Leaflet layers, selected features, pending edits,
   roads and robot overlays by scenario ID so the previous scenario cannot
   survive a switch or appear during an intermediate render.
 
-Before changing Scenario Lab, map filtering, scenario persistence, activation,
+Before changing World Builder, map filtering, definition persistence, launch,
 planner loading or robot launching, trace and test both directions:
 
 ```text
-select A -> only A is previewed -> activate A -> only A is runtime-visible
-select B -> only B is previewed, A stays runtime-active -> activate B -> only B is runtime-visible
+select definition A -> preview A -> launch A -> active world is materialized from A
+select definition B -> preview B while the active world remains unchanged -> launch B -> active world is replaced from B
 ```
 
 Also test the same sequence when activation is `activating`, `failed` or
@@ -148,6 +164,10 @@ This is the subtasks of task 3 of ZE Plan
 
 - [x] Create an editable ROS runtime derived from the frozen compatibility reference so it can evolve without modifying `legacy_ros/`.
 - [ ] We select and think of different behaviour of different elements to our needs. Maybe architectural changes.
+- [ ] Derive separate navigation and coverage graph views from one revisioned
+  active-world graph: ordinary point navigation must not route through the
+  current geofence/workspace coverage lattice, while coverage retains a
+  task-local sweep graph and uses the navigation view for transit.
 - [ ] We implement the changes one by one and test them, with unit tests where possible.
 - [ ] Test with the UI.
 

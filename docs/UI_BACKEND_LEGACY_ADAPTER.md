@@ -55,13 +55,14 @@ DELETE /api/missions/{mission_id}
 GET    /api/events
 ```
 
-`/api/missions/init` requires a ready active scenario, normalizes old mission
+`/api/missions/init` requires a ready active world, normalizes old mission
 config aliases, executes the canonical draft-2020-12 JSON Schema and semantic
 checks, verifies scenario vehicle membership, ensures the legacy mission ID is
 UUID-shaped, then posts `action=initialize` to the old REST bridge. Scenario
 roads are not added to mission JSON.
 
-`/api/scenarios/activate` content-addresses the complete scenario, records
+The operator-facing **Launch world** action uses the compatibility endpoint
+`/api/scenarios/activate`. It content-addresses the complete world definition, records
 durable activation phases in MongoDB, writes its selected assets and downloaded
 OSM LineStrings to an immutable MapDB collection, clears prior mission runtime,
 restarts centralized coordination, the planner, the C2 REST bridge, and
@@ -71,6 +72,11 @@ host-network simulation uses loopback-only ROS discovery with an expanded
 CycloneDDS participant-index range, so host interface changes cannot strand a
 still-listening gateway outside the ROS graph or cap the local multi-process fleet.
 Repeating the same healthy content is idempotent.
+
+The definition is no longer a runtime input after launch. Runtime consumers
+use the exact frozen MapDB collection, durable active-world record, and live
+ROS state. The `scenario` naming in URLs, IDs, implementation symbols, and
+Mongo collections is retained as a compatibility detail.
 
 `/api/assistant/messages` performs one non-streaming LangChain request to the
 configured LM Studio server, with maximum Qwen reasoning enabled and provider
@@ -89,9 +95,9 @@ displayed as a draft, and never initialized automatically.
 diff protocol for inspection. A supplied `since_checksum` is verified; the
 assistant's internal conversation path always supplies it.
 
-The UI hides all advanced inspection surfaces unless the URL contains
-`?assistantDebug=1`: Scenario Lab, Contracts, C2 Diagnostics, and the assistant
-Debug control share that one discoverability gate. Enabling **Debug** before a
+World Builder and its launch selector are available in the ordinary operator
+UI. The UI hides Contracts, C2 Diagnostics, and the assistant Debug control
+unless the URL contains `?assistantDebug=1`. Enabling **Debug** before a
 message requests the exact
 redacted model input, final provider event, and any actual tool calls for that
 turn. Backend context and validation events are identified separately. No

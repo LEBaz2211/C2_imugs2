@@ -14,9 +14,9 @@ Everything is available on this page. Select a tab, then expand only the contrac
 
 | HTTP | ROS topics | ROS services | ROS types | States | Enums | Schemas |
 |---:|---:|---:|---:|---:|---:|---:|
-| 29 | 29 | 18 | 49 | 2 | 20 (1 conflict) | 4 |
+| 30 | 29 | 18 | 49 | 2 | 20 (1 conflict) | 4 |
 
-Source digest: `b2348e201d039e2d`
+Source digest: `27eb96b0901cc31c`
 
 === "Verified run (24)"
 
@@ -939,7 +939,7 @@ Source digest: `b2348e201d039e2d`
         Evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`](https://github.com/LEBaz2211/C2_imugs2/blob/main/fixtures/verified_runs/single_robot_point_navigation.json#L1), [`docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md:918`](https://github.com/LEBaz2211/C2_imugs2/blob/main/docs/LEGACY_SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md#L918)
 
 
-=== "Data flow (49)"
+=== "Data flow (50)"
 
     ## Module data flow extracted from code
 
@@ -969,7 +969,7 @@ Source digest: `b2348e201d039e2d`
       N_component_fleet -->|services 3 · topics 1| N_component_edge
       N_component_fleet -->|topics 1| N_component_planner
       N_component_planner -->|topics 1| N_component_centralized
-      N_component_ui -->|HTTP 23| N_component_api
+      N_component_ui -->|HTTP 24| N_component_api
     ```
 
     The counts represent distinct exact interface contracts, not message volume.
@@ -1143,8 +1143,8 @@ Source digest: `b2348e201d039e2d`
 
         #### Source evidence
 
-        - [`src/c2_imugs2/api/routers.py:180`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L180)
-        - [`frontend/src/api.ts:599`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L599)
+        - [`src/c2_imugs2/api/routers.py:193`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L193)
+        - [`frontend/src/api.ts:621`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L621)
 
     ??? abstract "POST /api/missions/{mission_id}/approve · http_endpoint"
         **Flow:** `Browser UI` → `FastAPI Adapter`
@@ -1172,8 +1172,8 @@ Source digest: `b2348e201d039e2d`
 
         #### Source evidence
 
-        - [`src/c2_imugs2/api/routers.py:195`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L195)
-        - [`frontend/src/api.ts:607`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L607)
+        - [`src/c2_imugs2/api/routers.py:208`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L208)
+        - [`frontend/src/api.ts:629`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L629)
 
     ??? abstract "POST /api/missions/{mission_id}/start · http_endpoint"
         **Flow:** `Browser UI` → `FastAPI Adapter`
@@ -1201,8 +1201,8 @@ Source digest: `b2348e201d039e2d`
 
         #### Source evidence
 
-        - [`src/c2_imugs2/api/routers.py:202`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L202)
-        - [`frontend/src/api.ts:611`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L611)
+        - [`src/c2_imugs2/api/routers.py:215`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L215)
+        - [`frontend/src/api.ts:633`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L633)
 
     ??? abstract "/multi_robot/planner/create · centralized_msgs/srv/CreatePlanner"
         **Flow:** `Centralized Coordination` → `Legacy Planner`
@@ -2070,7 +2070,7 @@ Source digest: `b2348e201d039e2d`
         - [`backend/fog/planner/ros2ws/src/planner/planner/planner_node.py:132`](https://github.com/LEBaz2211/C2_imugs2/blob/main/backend/fog/planner/ros2ws/src/planner/planner/planner_node.py#L132)
 
 
-=== "HTTP (29)"
+=== "HTTP (30)"
 
     ## DELETE
 
@@ -2092,12 +2092,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by reset_conversation | `—` | [`src/c2_imugs2/api/routers.py:313`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L313) |
-        | resetAssistantConversation | `—` | [`frontend/src/api.ts:627`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L627) |
+        | handled by reset_conversation | `—` | [`src/c2_imugs2/api/routers.py:353`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L353) |
+        | resetAssistantConversation | `—` | [`frontend/src/api.ts:655`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L655) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:313`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L313)
+        - [`src/c2_imugs2/api/routers.py:353`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L353)
 
     ??? abstract "DELETE /api/map/features/{feature_id} · delete_map_feature"
         FastAPI handler `delete_map_feature`
@@ -2115,7 +2115,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | deleteMapFeature | `—` | [`frontend/src/api.ts:566`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L566) |
+        | deleteMapFeature | `—` | [`frontend/src/api.ts:588`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L588) |
         | handled by delete_map_feature | `—` | [`src/c2_imugs2/api/app.py:288`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L288) |
 
         #### Definition evidence
@@ -2138,12 +2138,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | forgetMission | `—` | [`frontend/src/api.ts:615`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L615) |
-        | handled by forget | `—` | [`src/c2_imugs2/api/routers.py:209`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L209) |
+        | forgetMission | `—` | [`frontend/src/api.ts:637`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L637) |
+        | handled by forget | `—` | [`src/c2_imugs2/api/routers.py:222`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L222) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:209`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L209)
+        - [`src/c2_imugs2/api/routers.py:222`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L222)
 
     ## GET
 
@@ -2220,11 +2220,11 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by operational_picture | `—` | [`src/c2_imugs2/api/routers.py:260`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L260) |
+        | handled by operational_picture | `—` | [`src/c2_imugs2/api/routers.py:273`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L273) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:260`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L260)
+        - [`src/c2_imugs2/api/routers.py:273`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L273)
 
     ??? abstract "GET /api/assistant/status · assistant_status"
         FastAPI handler `assistant_status`
@@ -2242,12 +2242,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getAssistantStatus | `—` | [`frontend/src/api.ts:619`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L619) |
-        | handled by assistant_status | `—` | [`src/c2_imugs2/api/routers.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L256) |
+        | getAssistantStatus | `—` | [`frontend/src/api.ts:641`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L641) |
+        | handled by assistant_status | `—` | [`src/c2_imugs2/api/routers.py:269`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L269) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L256)
+        - [`src/c2_imugs2/api/routers.py:269`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L269)
 
     ??? abstract "GET /api/contracts · contracts"
         FastAPI handler `contracts`
@@ -2265,7 +2265,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getContracts | `—` | [`frontend/src/api.ts:583`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L583) |
+        | getContracts | `—` | [`frontend/src/api.ts:605`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L605) |
         | handled by contracts | `—` | [`src/c2_imugs2/api/app.py:212`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L212) |
 
         #### Definition evidence
@@ -2288,7 +2288,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getDiagnostics | `—` | [`frontend/src/api.ts:574`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L574) |
+        | getDiagnostics | `—` | [`frontend/src/api.ts:596`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L596) |
         | handled by diagnostics | `—` | [`src/c2_imugs2/api/app.py:186`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L186) |
 
         #### Definition evidence
@@ -2355,7 +2355,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getLegacyTrace | `—` | [`frontend/src/api.ts:591`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L591) |
+        | getLegacyTrace | `—` | [`frontend/src/api.ts:613`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L613) |
         | handled by legacy_trace | `—` | [`src/c2_imugs2/api/app.py:225`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L225) |
 
         #### Definition evidence
@@ -2400,7 +2400,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getOsmRoads | `—` | [`frontend/src/api.ts:542`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L542) |
+        | getOsmRoads | `—` | [`frontend/src/api.ts:564`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L564) |
         | handled by osm_roads | `—` | [`src/c2_imugs2/api/app.py:316`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L316) |
 
         #### Definition evidence
@@ -2423,7 +2423,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getMissionExamples | `—` | [`frontend/src/api.ts:587`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L587) |
+        | getMissionExamples | `—` | [`frontend/src/api.ts:609`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L609) |
         | handled by mission_examples | `—` | [`src/c2_imugs2/api/app.py:382`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L382) |
 
         #### Definition evidence
@@ -2446,12 +2446,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getMissionState | `—` | [`frontend/src/api.ts:603`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L603) |
-        | handled by get_mission | `—` | [`src/c2_imugs2/api/routers.py:187`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L187) |
+        | getMissionState | `—` | [`frontend/src/api.ts:625`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L625) |
+        | handled by get_mission | `—` | [`src/c2_imugs2/api/routers.py:200`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L200) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:187`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L187)
+        - [`src/c2_imugs2/api/routers.py:200`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L200)
 
     ??? abstract "GET /api/planning/diagnostics · planning_diagnostics"
         FastAPI handler `planning_diagnostics`
@@ -2469,7 +2469,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getPlanningDiagnostics | `—` | [`frontend/src/api.ts:578`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L578) |
+        | getPlanningDiagnostics | `—` | [`frontend/src/api.ts:600`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L600) |
         | handled by planning_diagnostics | `—` | [`src/c2_imugs2/api/app.py:205`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L205) |
 
         #### Definition evidence
@@ -2492,7 +2492,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getRuntimeBootstrap | `—` | [`frontend/src/api.ts:538`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L538) |
+        | getRuntimeBootstrap | `—` | [`frontend/src/api.ts:560`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L560) |
         | handled by runtime_bootstrap | `—` | [`src/c2_imugs2/api/app.py:466`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L466) |
 
         #### Definition evidence
@@ -2515,12 +2515,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getScenarios | `—` | [`frontend/src/api.ts:558`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L558) |
-        | handled by catalog | `—` | [`src/c2_imugs2/api/routers.py:219`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L219) |
+        | getScenarios | `—` | [`frontend/src/api.ts:580`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L580) |
+        | handled by catalog | `—` | [`src/c2_imugs2/api/routers.py:232`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L232) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:219`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L219)
+        - [`src/c2_imugs2/api/routers.py:232`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L232)
 
     ??? abstract "GET /api/scenarios/active · active"
         FastAPI handler `active`
@@ -2538,16 +2538,16 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | getActiveScenario | `—` | [`frontend/src/api.ts:554`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L554) |
-        | handled by active | `—` | [`src/c2_imugs2/api/routers.py:226`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L226) |
+        | getActiveScenario | `—` | [`frontend/src/api.ts:576`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L576) |
+        | handled by active | `—` | [`src/c2_imugs2/api/routers.py:239`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L239) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:226`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L226)
+        - [`src/c2_imugs2/api/routers.py:239`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L239)
 
     ## POST
 
-    9 extracted contracts.
+    10 extracted contracts.
 
     ??? abstract "POST /api/assistant/messages · send_message"
         FastAPI handler `send_message`
@@ -2565,12 +2565,35 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by send_message | `—` | [`src/c2_imugs2/api/routers.py:278`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L278) |
-        | sendAssistantMessage | `—` | [`frontend/src/api.ts:623`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L623) |
+        | handled by send_message | `—` | [`src/c2_imugs2/api/routers.py:314`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L314) |
+        | sendAssistantMessage | `—` | [`frontend/src/api.ts:645`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L645) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:278`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L278)
+        - [`src/c2_imugs2/api/routers.py:314`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L314)
+
+    ??? abstract "POST /api/assistant/operational-picture/preview · operational_picture_preview"
+        FastAPI handler `operational_picture_preview`
+
+        [Open standalone page](http/post-api-assistant-operational-picture-preview.md)
+
+        | Property | Extracted value |
+        |---|---|
+        | Kind | `http_endpoint` |
+        | Method | `POST` |
+        | Path | `/api/assistant/operational-picture/preview` |
+        | Handler | `operational_picture_preview` |
+
+        #### Source usages
+
+        | Relationship | Contract | Evidence |
+        |---|---|---|
+        | handled by operational_picture_preview | `—` | [`src/c2_imugs2/api/routers.py:291`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L291) |
+        | previewAssistantOperationalPicture | `—` | [`frontend/src/api.ts:649`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L649) |
+
+        #### Definition evidence
+
+        - [`src/c2_imugs2/api/routers.py:291`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L291)
 
     ??? abstract "POST /api/map/features · create_map_feature"
         FastAPI handler `create_map_feature`
@@ -2588,7 +2611,7 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | createMapFeature | `—` | [`frontend/src/api.ts:562`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L562) |
+        | createMapFeature | `—` | [`frontend/src/api.ts:584`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L584) |
         | handled by create_map_feature | `—` | [`src/c2_imugs2/api/app.py:274`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L274) |
 
         #### Definition evidence
@@ -2612,7 +2635,7 @@ Source digest: `b2348e201d039e2d`
         | Relationship | Contract | Evidence |
         |---|---|---|
         | handled by query_osm_roads | `—` | [`src/c2_imugs2/api/app.py:320`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L320) |
-        | queryOsmRoads | `—` | [`frontend/src/api.ts:546`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L546) |
+        | queryOsmRoads | `—` | [`frontend/src/api.ts:568`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L568) |
 
         #### Definition evidence
 
@@ -2634,8 +2657,8 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by init_mission | `—` | [`src/c2_imugs2/api/routers.py:180`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L180) |
-        | initMission | `—` | [`frontend/src/api.ts:599`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L599) |
+        | handled by init_mission | `—` | [`src/c2_imugs2/api/routers.py:193`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L193) |
+        | initMission | `—` | [`frontend/src/api.ts:621`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L621) |
 
         #### Verified navigation data
 
@@ -2680,7 +2703,7 @@ Source digest: `b2348e201d039e2d`
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:180`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L180)
+        - [`src/c2_imugs2/api/routers.py:193`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L193)
 
     ??? abstract "POST /api/missions/{mission_id}/approve · approve"
         FastAPI handler `approve`
@@ -2698,8 +2721,8 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | approveMission | `—` | [`frontend/src/api.ts:607`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L607) |
-        | handled by approve | `—` | [`src/c2_imugs2/api/routers.py:195`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L195) |
+        | approveMission | `—` | [`frontend/src/api.ts:629`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L629) |
+        | handled by approve | `—` | [`src/c2_imugs2/api/routers.py:208`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L208) |
 
         #### Verified navigation data
 
@@ -2720,7 +2743,7 @@ Source digest: `b2348e201d039e2d`
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:195`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L195)
+        - [`src/c2_imugs2/api/routers.py:208`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L208)
 
     ??? abstract "POST /api/missions/{mission_id}/start · start"
         FastAPI handler `start`
@@ -2738,8 +2761,8 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by start | `—` | [`src/c2_imugs2/api/routers.py:202`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L202) |
-        | startMission | `—` | [`frontend/src/api.ts:611`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L611) |
+        | handled by start | `—` | [`src/c2_imugs2/api/routers.py:215`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L215) |
+        | startMission | `—` | [`frontend/src/api.ts:633`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L633) |
 
         #### Verified navigation data
 
@@ -2760,7 +2783,7 @@ Source digest: `b2348e201d039e2d`
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:202`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L202)
+        - [`src/c2_imugs2/api/routers.py:215`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L215)
 
     ??? abstract "POST /api/scenarios/activate · activate"
         FastAPI handler `activate`
@@ -2778,12 +2801,12 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by activate | `—` | [`src/c2_imugs2/api/routers.py:231`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L231) |
-        | launchScenario | `—` | [`frontend/src/api.ts:550`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L550) |
+        | handled by activate | `—` | [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244) |
+        | launchScenario | `—` | [`frontend/src/api.ts:572`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L572) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:231`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L231)
+        - [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244)
 
     ??? abstract "POST /api/scenarios/launch · activate"
         FastAPI handler `activate`
@@ -2801,11 +2824,11 @@ Source digest: `b2348e201d039e2d`
 
         | Relationship | Contract | Evidence |
         |---|---|---|
-        | handled by activate | `—` | [`src/c2_imugs2/api/routers.py:231`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L231) |
+        | handled by activate | `—` | [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244) |
 
         #### Definition evidence
 
-        - [`src/c2_imugs2/api/routers.py:231`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L231)
+        - [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244)
 
     ??? abstract "POST /api/testing/reset-legacy-runtime · reset_legacy_runtime"
         FastAPI handler `reset_legacy_runtime`
@@ -2824,7 +2847,7 @@ Source digest: `b2348e201d039e2d`
         | Relationship | Contract | Evidence |
         |---|---|---|
         | handled by reset_legacy_runtime | `—` | [`src/c2_imugs2/api/app.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L256) |
-        | resetLegacyRuntime | `—` | [`frontend/src/api.ts:595`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L595) |
+        | resetLegacyRuntime | `—` | [`frontend/src/api.ts:617`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L617) |
 
         #### Definition evidence
 
@@ -2851,7 +2874,7 @@ Source digest: `b2348e201d039e2d`
         | Relationship | Contract | Evidence |
         |---|---|---|
         | handled by update_map_feature | `—` | [`src/c2_imugs2/api/app.py:300`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L300) |
-        | updateMapFeature | `—` | [`frontend/src/api.ts:570`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L570) |
+        | updateMapFeature | `—` | [`frontend/src/api.ts:592`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L592) |
 
         #### Definition evidence
 

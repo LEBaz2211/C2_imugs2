@@ -18,7 +18,7 @@ FastAPI handler `runtime_bootstrap`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getRuntimeBootstrap | `—` | [`frontend/src/api.ts:538`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L538) |
+| getRuntimeBootstrap | `—` | [`frontend/src/api.ts:560`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L560) |
 | handled by runtime_bootstrap | `—` | [`src/c2_imugs2/api/app.py:466`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L466) |
 
 ## Definition evidence

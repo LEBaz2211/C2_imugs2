@@ -841,7 +841,7 @@ function onEachOsmRoad(feature: Feature, layer: L.Layer) {
 
 function onEachScenarioRoad(feature: Feature, layer: L.Layer) {
   const name = feature.properties?.name ?? feature.properties?.highway ?? "road";
-  layer.bindTooltip(`${name} (scenario road section)`);
+  layer.bindTooltip(`${name} (world road section)`);
 }
 
 function canUseAsNavigationObjective(feature: MapFeature) {

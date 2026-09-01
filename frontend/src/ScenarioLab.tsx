@@ -206,9 +206,9 @@ export function ScenarioLab({
     [activeRoadImports, scenarioFeatures],
   );
   const activationIssue = activeScenario.agents.length === 0
-    ? "Add at least one vehicle before activation."
+    ? "Add at least one vehicle before launch."
     : !hasRoutingRoads
-      ? "Add a road LineString or download an OSM road section inside a polygon before activation."
+      ? "Add a road LineString or download an OSM road section inside a polygon before launch."
       : "";
   const selectedAgent = activeScenario.agents.find((agent) => agent.agent_id === activeScenario.selected_agent_id) ?? activeScenario.agents[0];
 
@@ -452,7 +452,7 @@ export function ScenarioLab({
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-4 rounded-md border border-border bg-panel p-4">
         <div className="min-w-0">
-          <LabTitle icon={<SlidersHorizontal className="h-4 w-4" />} label="Scenario Lab" />
+          <LabTitle icon={<SlidersHorizontal className="h-4 w-4" />} label="World Builder" />
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{activeScenario.name}</span>
             <span>{activeScenario.agents.length} vehicles</span>
@@ -476,17 +476,17 @@ export function ScenarioLab({
               </option>
             ))}
           </select>
-          <Button size="icon" variant="outline" onClick={createScenario} title="New scenario">
+          <Button size="icon" variant="outline" onClick={createScenario} title="New world definition">
             <Plus className="h-4 w-4" />
           </Button>
-          <Button size="sm" disabled={launchBusy || Boolean(activationIssue)} onClick={launchActiveScenario} title={activationIssue || "Freeze the scenario map, switch the planner, and verify its ROS vehicles"}>
+          <Button size="sm" disabled={launchBusy || Boolean(activationIssue)} onClick={launchActiveScenario} title={activationIssue || "Launch this definition as the active world and verify its ROS vehicles"}>
             <Play className="h-4 w-4" />
-            {launchBusy ? "Activating" : "Activate"}
+            {launchBusy ? "Launching" : "Launch"}
           </Button>
-          <Button size="icon" variant="outline" onClick={duplicateScenario} title="Duplicate scenario">
+          <Button size="icon" variant="outline" onClick={duplicateScenario} title="Duplicate world definition">
             <Copy className="h-4 w-4" />
           </Button>
-          <Button size="icon" variant="ghost" disabled={library.scenarios.length <= 1} onClick={deleteScenario} title="Delete scenario">
+          <Button size="icon" variant="ghost" disabled={library.scenarios.length <= 1} onClick={deleteScenario} title="Delete world definition">
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
@@ -494,7 +494,7 @@ export function ScenarioLab({
 
       {activationIssue && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-          <span className="font-semibold">Scenario is not activatable yet.</span>{" "}
+          <span className="font-semibold">World definition cannot launch yet.</span>{" "}
           {activationIssue} Streets visible in the base map are display tiles and are not frozen planner roads.
         </div>
       )}
@@ -602,8 +602,8 @@ function SituationPanel({
     <div className="space-y-4">
       <div className="rounded-md border border-border bg-panel p-4">
         <div className="flex items-center justify-between gap-3">
-          <LabTitle icon={<Save className="h-4 w-4" />} label="Scenario" />
-          <Button size="sm" variant="outline" disabled={!hasContents} onClick={onClearScenarioContents} title="Remove all vehicles, assets, and road sections from this scenario">
+          <LabTitle icon={<Save className="h-4 w-4" />} label="World Definition" />
+          <Button size="sm" variant="outline" disabled={!hasContents} onClick={onClearScenarioContents} title="Remove all vehicles, assets, and road sections from this world definition">
             <Trash2 className="h-4 w-4" />
             Clear
           </Button>
@@ -630,7 +630,7 @@ function SituationPanel({
                   : "No saved opening view"}
               </div>
             </div>
-            <Button size="sm" variant="outline" disabled={!currentMapView} onClick={onSaveCurrentMapView} title="Use the current map center and zoom when this scenario opens">
+            <Button size="sm" variant="outline" disabled={!currentMapView} onClick={onSaveCurrentMapView} title="Use the current map center and zoom when this world definition opens">
               <MapPinned className="h-4 w-4" />
               Set View
             </Button>
@@ -671,6 +671,9 @@ function SituationPanel({
             </option>
           ))}
         </select>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Objective points are shown on the map as available authoring references. Add one here to include it in this world definition.
+        </p>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -691,7 +694,7 @@ function SituationPanel({
 
       <div className="rounded-md border border-border bg-panel p-4">
         <div className="flex items-center justify-between">
-          <LabTitle icon={<MapPinned className="h-4 w-4" />} label="Scenario Assets" />
+          <LabTitle icon={<MapPinned className="h-4 w-4" />} label="World Assets" />
           <Badge>{scenarioFeatures.length}</Badge>
         </div>
         <div className="mt-3 space-y-2">
@@ -700,7 +703,7 @@ function SituationPanel({
               <ScenarioFeatureRow key={feature.feature_id} feature={feature} onSelectFeature={onSelectFeature} onRemoveFeature={onRemoveFeature} />
             ))
           ) : (
-            <div className="rounded-sm border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No scenario assets selected.</div>
+            <div className="rounded-sm border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No world assets selected.</div>
           )}
         </div>
       </div>
@@ -732,7 +735,7 @@ function ScenarioFeatureRow({
             event.stopPropagation();
             onRemoveFeature(feature.feature_id);
           }}
-          title="Remove from scenario"
+          title="Remove from world definition"
         >
           <Trash2 className="h-4 w-4" />
         </Button>
@@ -981,7 +984,7 @@ function RoadImportPanel({
 
   async function submit() {
     if (!polygon) {
-      setError("Select a geofence/workspace polygon or add one to the scenario first.");
+      setError("Select a geofence/workspace polygon or add one to the world definition first.");
       return;
     }
     setBusy(true);
@@ -1021,7 +1024,7 @@ function RoadImportPanel({
           </Button>
           <Button size="sm" variant="outline" disabled={!scenarioPolygon} onClick={useScenarioBbox}>
             <MapPinned className="h-4 w-4" />
-            From Scenario Geofence
+            From World Geofence
           </Button>
           <Button size="sm" onClick={submit} disabled={busy || !polygon}>
             <Check className="h-4 w-4" />
@@ -1038,7 +1041,7 @@ function RoadImportPanel({
             <Badge tone={result.feature_count > 0 ? "ok" : "warn"}>{result.feature_count} ways</Badge>
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-            <InfoBlock label="Section" value="Scenario local" />
+            <InfoBlock label="Section" value="World-local" />
             <InfoBlock label="Ways" value={String(result.feature_count)} />
             <InfoBlock label="BBox" value={result.bbox.map((value) => value.toFixed(5)).join(", ")} />
           </div>
@@ -1058,7 +1061,7 @@ function RoadImportPanel({
                   <div className="truncate font-medium">{roadImport.name}</div>
                   <div className="truncate text-muted-foreground">{roadImport.feature_count} OSM ways</div>
                 </div>
-                <Button size="icon" variant="ghost" onClick={() => onRemoveRoadImport(roadImport.import_id)} title="Remove road section from scenario">
+                <Button size="icon" variant="ghost" onClick={() => onRemoveRoadImport(roadImport.import_id)} title="Remove road section from world definition">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
@@ -1072,7 +1075,7 @@ function RoadImportPanel({
   );
 }
 
-function defaultScenario(name = "Blank scenario"): ScenarioRecord {
+function defaultScenario(name = "Blank world"): ScenarioRecord {
   const now = new Date().toISOString();
   return {
     scenario_id: randomId("scenario"),
@@ -1200,7 +1203,7 @@ function scenarioContextFromRecord(scenario: ScenarioRecord): ScenarioContext {
 }
 
 function nextBlankScenarioName(scenarios: ScenarioRecord[]) {
-  const base = "Blank scenario";
+  const base = "Blank world";
   const used = new Set(scenarios.map((scenario) => scenario.name));
   if (!used.has(base)) return base;
   for (let index = 2; index < 10_000; index += 1) {

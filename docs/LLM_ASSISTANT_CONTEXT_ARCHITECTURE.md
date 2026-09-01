@@ -68,7 +68,8 @@ valid sequence arrows.
 ## What Happens On Every Message
 
 1. `submitAssistantMessage()` adds the user message and a temporary response to
-   the selected browser conversation, then calls `POST /api/assistant/messages`.
+   the selected browser conversation, then calls `POST /api/assistant/messages`
+   with the operator's persisted operational-picture section and mission scope.
 2. `assistant_router.send_message()` runs `AssistantOrchestrator.chat()` in a
    worker thread. The model provider is created lazily on first use.
 3. `_prepare_turn()` locks the conversation and the single LM Studio request
@@ -102,9 +103,26 @@ The model-facing picture contains:
   are marked mutable, non-active, and inline-only;
 - `agents`: declared, registered, connected, and profile facts without silently
   treating those categories as equivalent;
-- `missions` and `plans`: bounded configuration, feedback, status, task, and
-  waypoint-count summaries;
+- `missions`: bounded runtime configuration, feedback, and status summaries,
+  augmented by the selected browser mission working copies. Browser copies are
+  labelled as operator context and never imply Init or runtime state;
+- `plans`: live planner-state and `RuntimeDB.Planning` task/waypoint-count
+  summaries. A plan is keyed by its mission ID; the current backend does not
+  issue a second, independent plan ID;
 - `health` and `warnings`: source failures, freshness, and adapter diagnostics.
+
+The assistant header exposes an **Operational picture** selector. The active
+world is always included for safe grounding; the operator can include or omit
+vehicles, missions, runtime plans, health, and warnings, and can scope mission
+and plan context to all or selected mission IDs. This selection changes only
+the model-facing projection for a turn. It does not mutate the revisioned
+backend read model or any runtime record.
+
+The former C2 **Plan** tab displayed `createTaskPlan()` output generated in the
+browser from the current mission definition. That preview is not planner
+output, so it now lives as an explicitly labelled disclosure on the selected
+mission instead of a top-level tab. Actual plan evidence remains in runtime
+status, diagnostics, and the assistant's optional `plans` section.
 
 Current database inputs are bounded reads from
 `RuntimeDB.ConnectedVehicles`, `VehicleDB.Vehicles`,
@@ -157,7 +175,7 @@ Mission feedback with non-empty task waypoints proves a usable path. Planner
 
 | File | Main responsibility in the loop |
 | --- | --- |
-| `frontend/src/App.tsx` | Sends messages, registers/revises proposals, renders mission cards and map state, and gates Init, Re-init, Approve, and Start. |
+| `frontend/src/App.tsx` | Sends messages and operational-picture choices, adds selected browser mission working copies, renders mission IDs/cards/map state, and gates Init, Re-init, Approve, and Start. |
 | `frontend/src/assistantHistory.ts` | Persists and bounds browser conversations; strips debug traces or evicts old conversations if storage is full. |
 | `frontend/src/api.ts` | Typed HTTP client for assistant and mission endpoints plus the ROS-derived SSE event stream. |
 | `src/c2_imugs2/api/app.py` | `create_app()` composes runtime services, lazy assistant construction, status reporting, mission state, and event normalization. |
@@ -165,7 +183,7 @@ Mission feedback with non-empty task waypoints proves a usable path. Planner
 | `src/c2_imugs2/assistant/config.py` | Loads validated non-secret LM Studio and context limits from environment variables. |
 | `src/c2_imugs2/assistant/factory.py` | Wires the context service, LangChain provider, prompts, and orchestrator without contacting the model. |
 | `src/c2_imugs2/assistant/prompts.py` | Loads editable versioned prompt files and constructs `ChatPromptTemplate`. |
-| `src/c2_imugs2/assistant/orchestrator.py` | Owns the one-request turn, context diff materialization, model-safe projection, bounded memory, locks, and debug trace. |
+| `src/c2_imugs2/assistant/orchestrator.py` | Owns the one-request turn, context diff materialization, selected model-safe projection, browser-working-copy overlay, bounded memory, locks, and debug trace. |
 | `src/c2_imugs2/assistant/provider.py` | Configures `ChatOpenAI` for LM Studio and normalizes structured output, usage, and any returned tool-call metadata. |
 | `src/c2_imugs2/operations/live.py` | Joins current runtime, adapter state, bounded Mongo reads, and operator Point objectives into the typed read model. |
 | `src/c2_imugs2/operations/models.py` | Defines immutable operational read-model, item, section, source, and picture value objects. |
@@ -221,7 +239,10 @@ mission and planner events to the UI, but assistant tokens are not streamed.
 Append `?assistantDebug=1` to the UI URL to reveal the debug switch. Enable it
 before sending a turn to capture the exact redacted LangChain messages, provider
 result metadata, actual returned tool calls, and deterministic backend events.
-No tools are currently bound to the LLM, so the normal tool-call count is zero.
+The trace also carries the model-safe `operational_picture` JSON sent with the
+turn, which the debug panel renders in its own expandable section instead of
+only inside the user prompt. No tools are currently bound to the LLM, so the
+normal tool-call count is zero.
 
 The browser stores up to 20 conversations with 80 transcript items each. The
 backend stores only the last six turns and last materialized picture for up to

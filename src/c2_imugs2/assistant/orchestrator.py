@@ -133,6 +133,9 @@ _LABELLED_SECRET = re.compile(
 _OPENAI_STYLE_SECRET = re.compile(r"\bsk-[A-Za-z0-9_:+./=-]{8,}\b")
 _MAX_DEBUG_EVENTS = 512
 _MAX_DEBUG_TOOL_CALLS = 128
+_MODEL_OPERATIONAL_SECTIONS = ("agents", "missions", "plans", "health", "warnings")
+_MAX_OPERATOR_MISSIONS = 64
+_MAX_OPERATOR_MISSION_CHARS = 32_000
 
 
 class AssistantOrchestrator:
@@ -175,6 +178,7 @@ class AssistantOrchestrator:
         conversation_id: str,
         user_message: str,
         debug: bool = False,
+        operational_picture_options: Mapping[str, Any] | None = None,
     ) -> AssistantResponse:
         """Answer one user message using one and only one LLM request."""
 
@@ -182,6 +186,7 @@ class AssistantOrchestrator:
             conversation_id=conversation_id,
             user_message=user_message,
             debug=debug,
+            operational_picture_options=operational_picture_options,
         )
         try:
             result = self._model.invoke(
@@ -193,12 +198,28 @@ class AssistantOrchestrator:
         finally:
             self._release_turn(turn)
 
+    def preview_operational_picture(
+        self,
+        operational_picture_options: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the current model-safe projection without invoking the model."""
+
+        picture = self._next_picture(None)
+        projected = self._model_operational_picture(
+            picture, operational_picture_options
+        )
+        redacted = self._redact_sensitive_value(projected)
+        if not isinstance(redacted, dict):
+            raise AssistantInputError("operational picture projection is invalid")
+        return redacted
+
     def _prepare_turn(
         self,
         *,
         conversation_id: str,
         user_message: str,
         debug: bool,
+        operational_picture_options: Mapping[str, Any] | None,
     ) -> _PreparedTurn:
         conversation_id = self._validate_conversation_id(conversation_id)
         # Preserve operator wording; only credentials are removed. Runtime
@@ -217,7 +238,9 @@ class AssistantOrchestrator:
         try:
             picture = self._next_picture(session.picture)
             picture_dict = picture.to_dict()
-            model_picture = self._model_operational_picture(picture)
+            model_picture = self._model_operational_picture(
+                picture, operational_picture_options
+            )
             picture_json = json.dumps(
                 model_picture,
                 sort_keys=True,
@@ -255,7 +278,7 @@ class AssistantOrchestrator:
                 )
             model_lock_acquired = True
             debug_trace = (
-                self._build_debug_trace(prompt_messages)
+                self._build_debug_trace(prompt_messages, model_picture)
                 if debug
                 else None
             )
@@ -331,9 +354,15 @@ class AssistantOrchestrator:
             return self._materialize(None, full_update)
 
     def _model_operational_picture(
-        self, picture: OperationalPicture
+        self,
+        picture: OperationalPicture,
+        options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Project internal runtime state into the model-facing environment view."""
+
+        selected_sections, selected_mission_ids, operator_missions = (
+            self._operational_picture_selection(options)
+        )
 
         environment_section = picture.sections["scenario"]
         environment_item = (
@@ -398,20 +427,171 @@ class AssistantOrchestrator:
             )
 
         picture_dict = picture.to_dict()
-        return {
+        projected: dict[str, Any] = {
             "context_schema": "1.0",
             # This opaque revision is required for per-message grounding and
             # does not disclose the separately held environment binding.
             "picture_revision": picture.picture_revision,
             "observed_at": picture_dict["observed_at"],
             "current_environment": current_environment,
-            "agents": self._project_model_section(picture.sections["agents"]),
-            "missions": self._project_model_section(picture.sections["missions"]),
-            "plans": self._project_model_section(picture.sections["plans"]),
-            "health": self._project_model_section(
+        }
+        if "agents" in selected_sections:
+            projected["agents"] = self._project_model_section(
+                picture.sections["agents"]
+            )
+        if "missions" in selected_sections:
+            missions = self._project_model_section(picture.sections["missions"])
+            projected["missions"] = self._merge_operator_missions(
+                missions,
+                operator_missions,
+                selected_mission_ids,
+                observed_at=picture_dict["observed_at"],
+            )
+        if "plans" in selected_sections:
+            plans = self._project_model_section(picture.sections["plans"])
+            projected["plans"] = self._filter_projected_missions(
+                plans, selected_mission_ids
+            )
+        if "health" in selected_sections:
+            projected["health"] = self._project_model_section(
                 picture.sections["health"], excluded_item_ids={"storage-indexes"}
-            ),
-            "warnings": self._project_model_section(picture.sections["warnings"]),
+            )
+        if "warnings" in selected_sections:
+            projected["warnings"] = self._project_model_section(
+                picture.sections["warnings"]
+            )
+        if options is not None:
+            projected["context_selection"] = {
+                "always_included": ["current_environment"],
+                "included_sections": [
+                    section
+                    for section in _MODEL_OPERATIONAL_SECTIONS
+                    if section in selected_sections
+                ],
+                "mission_filter": (
+                    "all"
+                    if selected_mission_ids is None
+                    else sorted(selected_mission_ids)
+                ),
+            }
+        return projected
+
+    def _operational_picture_selection(
+        self, options: Mapping[str, Any] | None
+    ) -> tuple[set[str], set[str] | None, list[dict[str, Any]]]:
+        if options is None:
+            return set(_MODEL_OPERATIONAL_SECTIONS), None, []
+
+        raw_sections = options.get("sections")
+        if not isinstance(raw_sections, list):
+            raise AssistantInputError("operational picture sections must be a list")
+        selected_sections = {
+            section
+            for section in raw_sections
+            if isinstance(section, str) and section in _MODEL_OPERATIONAL_SECTIONS
+        }
+        if not selected_sections:
+            raise AssistantInputError(
+                "operational picture must include at least one selectable section"
+            )
+
+        raw_mission_ids = options.get("mission_ids")
+        selected_mission_ids: set[str] | None = None
+        if raw_mission_ids is not None:
+            if not isinstance(raw_mission_ids, list):
+                raise AssistantInputError("operational picture mission_ids must be a list")
+            selected_mission_ids = {
+                self._model_safe_text(mission_id.strip())
+                for mission_id in raw_mission_ids[:_MAX_OPERATOR_MISSIONS]
+                if isinstance(mission_id, str) and mission_id.strip()
+            }
+
+        raw_operator_missions = options.get("operator_missions", [])
+        if not isinstance(raw_operator_missions, list):
+            raise AssistantInputError(
+                "operational picture operator_missions must be a list"
+            )
+        operator_missions: list[dict[str, Any]] = []
+        for mission in raw_operator_missions[:_MAX_OPERATOR_MISSIONS]:
+            if not isinstance(mission, Mapping):
+                continue
+            mission_id = mission.get("mission_id")
+            if not isinstance(mission_id, str) or not mission_id.strip():
+                continue
+            try:
+                encoded = json.dumps(
+                    mission,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                )
+            except (TypeError, ValueError):
+                continue
+            if len(encoded) > _MAX_OPERATOR_MISSION_CHARS:
+                raise AssistantInputError(
+                    f"operator mission {mission_id!r} exceeds the context limit"
+                )
+            operator_missions.append(dict(mission))
+        return selected_sections, selected_mission_ids, operator_missions
+
+    def _merge_operator_missions(
+        self,
+        section: dict[str, Any],
+        operator_missions: list[dict[str, Any]],
+        selected_mission_ids: set[str] | None,
+        *,
+        observed_at: str,
+    ) -> dict[str, Any]:
+        items = {
+            str(item.get("id")): dict(item)
+            for item in section.get("items", [])
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        }
+        for mission in operator_missions:
+            raw_mission_id = mission.get("mission_id")
+            if not isinstance(raw_mission_id, str):
+                continue
+            mission_id = self._model_safe_text(raw_mission_id.strip())
+            if selected_mission_ids is not None and mission_id not in selected_mission_ids:
+                continue
+            safe_mission = self._environment_safe_value(mission)
+            existing = items.get(mission_id)
+            if existing is not None:
+                existing_data = existing.get("data")
+                data = dict(existing_data) if isinstance(existing_data, Mapping) else {}
+                data["operator_working_copy"] = safe_mission
+                data["operator_context"] = "browser mission working copy"
+                existing["data"] = data
+                continue
+            items[mission_id] = {
+                "id": mission_id,
+                "kind": "operator_mission",
+                "observed_at": observed_at,
+                "freshness": "fresh",
+                "data": {
+                    "mission_id": mission_id,
+                    "operator_working_copy": safe_mission,
+                    "operator_context": "browser-only mission working copy; no runtime state implied",
+                },
+            }
+        merged = {**section, "items": [items[item_id] for item_id in sorted(items)]}
+        return self._filter_projected_missions(merged, selected_mission_ids)
+
+    @staticmethod
+    def _filter_projected_missions(
+        section: dict[str, Any], selected_mission_ids: set[str] | None
+    ) -> dict[str, Any]:
+        if selected_mission_ids is None:
+            return section
+        return {
+            **section,
+            "items": [
+                item
+                for item in section.get("items", [])
+                if isinstance(item, Mapping)
+                and item.get("id") in selected_mission_ids
+            ],
         }
 
     def _project_model_section(
@@ -442,6 +622,7 @@ class AssistantOrchestrator:
     def _build_debug_trace(
         self,
         messages: list[BaseMessage],
+        operational_picture: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         model_messages = [
             {
@@ -453,6 +634,11 @@ class AssistantOrchestrator:
         trace: dict[str, Any] = {
             "redacted": True,
             "model_messages": model_messages,
+            "operational_picture": (
+                self._redact_sensitive_value(operational_picture)
+                if operational_picture is not None
+                else None
+            ),
             "request_options": {
                 "model": self.settings.model,
                 "stream": False,

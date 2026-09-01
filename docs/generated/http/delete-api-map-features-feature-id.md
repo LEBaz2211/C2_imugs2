@@ -18,7 +18,7 @@ FastAPI handler `delete_map_feature`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| deleteMapFeature | `—` | [`frontend/src/api.ts:566`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L566) |
+| deleteMapFeature | `—` | [`frontend/src/api.ts:588`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L588) |
 | handled by delete_map_feature | `—` | [`src/c2_imugs2/api/app.py:288`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L288) |
 
 ## Definition evidence

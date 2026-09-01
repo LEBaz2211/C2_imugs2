@@ -80,6 +80,7 @@ class FakeAssistant:
         self.picture_scenario_binding = picture_scenario_binding
         self.calls: list[tuple[str, str]] = []
         self.debug_calls: list[bool] = []
+        self.operational_picture_calls: list[dict[str, Any] | None] = []
         self.resets: list[str] = []
 
     def _response(
@@ -126,9 +127,11 @@ class FakeAssistant:
         conversation_id: str,
         user_message: str,
         debug: bool = False,
+        operational_picture_options: dict[str, Any] | None = None,
     ) -> AssistantResponse:
         self.calls.append((conversation_id, user_message))
         self.debug_calls.append(debug)
+        self.operational_picture_calls.append(operational_picture_options)
         return self._response(conversation_id=conversation_id, debug=debug)
 
     def reset_conversation(self, conversation_id: str) -> bool:
@@ -260,6 +263,38 @@ def test_operational_picture_endpoint_returns_full_then_checksum_bound_delta() -
     assert delta["mode"] == "delta"
     assert delta["base_revision"] == "api-test:1"
     assert delta["picture_revision"] == "api-test:2"
+
+
+def test_assistant_api_forwards_bounded_operational_picture_selection() -> None:
+    assistant = FakeAssistant({"not": "used"})
+    context = OperationalContextService(ChangingOperationalProvider(), runtime_id="api-test")
+    client = _client(assistant, context)
+
+    response = client.post(
+        "/api/assistant/messages",
+        json={
+            "conversation_id": "operator-context",
+            "message": "What is selected?",
+            "operational_picture": {
+                "sections": ["missions", "plans"],
+                "mission_ids": ["mission-a"],
+                "operator_missions": [
+                    {"mission_id": "mission-a", "name": "Browser draft"}
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert assistant.operational_picture_calls == [
+        {
+            "sections": ["missions", "plans"],
+            "mission_ids": ["mission-a"],
+            "operator_missions": [
+                {"mission_id": "mission-a", "name": "Browser draft"}
+            ],
+        }
+    ]
 
 
 def test_assistant_api_marks_an_invalid_model_draft_unusable() -> None:

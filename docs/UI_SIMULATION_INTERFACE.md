@@ -35,7 +35,7 @@ The backend:
 | Contracts | `GET /api/contracts` |
 | Bootstrap | `GET /api/runtime/bootstrap`, `/api/agents`, `/api/mission-examples` |
 | Missions | `POST /api/missions/init`, `GET /api/missions/{id}`, `POST /approve`, `POST /start`, `DELETE /api/missions/{id}` |
-| Scenario | `GET /api/scenarios`, `GET /api/scenarios/active`, `POST /api/scenarios/activate` |
+| Worlds (legacy API name: scenarios) | `GET /api/scenarios`, `GET /api/scenarios/active`, `POST /api/scenarios/activate` |
 | Assistant | `GET /api/assistant/status`, `GET /api/assistant/operational-picture`, `POST /api/assistant/messages`, `DELETE /api/assistant/conversations/{id}` |
 | Map | `GET/POST /api/map/features`, `PUT/DELETE /api/map/features/{id}`, `POST /api/map/osm-roads/query` |
 | Live state | `GET /api/events` |
@@ -46,8 +46,9 @@ The assistant endpoint completes one non-streaming model request. The optional
 request field `debug=true` adds a bounded, redacted trace of the exact model
 messages, final provider event, and any actual tool calls to the response. The
 UI exposes that option only when opened with `?assistantDebug=1`. The same
-discoverability gate reveals Scenario Lab, Contracts, and C2 Diagnostics; it is
-not access control. No tools are currently bound to the LLM.
+discoverability gate reveals Contracts and C2 Diagnostics; it is not access
+control. World Builder remains available in the ordinary UI so operators can
+select and launch a world. No tools are currently bound to the LLM.
 
 `GET /api/contracts` contains a curated `atlas` for the verified active mission path and a broader source-discovery catalog. The atlas is authoritative for the visualization; raw scanner discoveries are evidence candidates, not proof of an active runtime contract.
 
@@ -70,16 +71,22 @@ Approve before PLANNED/PLANNED_ALTERNATIVE and Start before ACCEPTED. Its
 immediate accepted response remains an adapter acknowledgement until ROS
 feedback confirms the state.
 
-Init additionally requires a ready active scenario and verifies that every mission vehicle belongs to it. Roads are never appended to `objective.geometries`; the planner reads them from the active scenario's immutable MapDB collection.
+Init additionally requires a ready active world and verifies that every mission vehicle belongs to it. Roads are never appended to `objective.geometries`; the planner reads them from the active world's immutable MapDB collection.
 
-## Scenario Activation
+## World Definitions And Launch
 
-The scenario selector exists only in the gated Scenario Lab. Selecting a draft
-does not change C2 reality; pressing **Activate** freezes the map, restarts
+The world-definition selector and Launch action are available in the ordinary
+World Builder UI. A world definition is stored authoring state, not runtime state. Selecting or editing
+a definition does not change C2 reality; pressing **Launch** freezes the map, restarts
 coordination, the planner, the REST bridge, and rosbridge on that version,
 replaces the robot simulation containers, and waits for matching ROS
 registrations. The C2 tab displays the active readiness state but cannot switch
 it.
+
+After launch, C2 and the backend use the launched active-world snapshot and
+live runtime revisions. They must not read mutable values from the selected
+browser definition. Existing endpoint and field names retain `scenario` only
+for compatibility.
 
 The Roads panel downloads OSM highways only through an explicit polygon action.
 Those roads remain draft data until activation. Once active, that frozen

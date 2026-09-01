@@ -120,17 +120,36 @@ wins, and the canonical mission stored by the adapter remains unchanged. The
 editable planner also defaults safely for direct ROS clients that bypass the
 adapter.
 
-Scenario roads are not mission geometry. The mission carries objectives and constraints; the active scenario's roads live in its MapDB snapshot.
+World roads are not mission geometry. The mission carries objectives and constraints; the active world's roads live in its launched MapDB snapshot.
 
-## One Active Scenario
+## World Definitions And The Active World
 
-Scenario activation is the transaction boundary that changes simulated reality:
+The user-facing term is **world definition**. Existing API paths, JSON fields,
+MongoDB collections, and Python/TypeScript symbols still use `scenario` for
+compatibility; that internal name does not give the stored definition runtime
+authority.
+
+| Concept | Meaning |
+| --- | --- |
+| World definition | A saved authoring object containing the features, imported roads, vehicles, starting positions, and map view needed to create a world. It is a launch recipe, not live state. |
+| Launch | The boundary that validates and freezes one definition, creates the runtime snapshot, starts its robots, and installs the planner graph. The existing endpoint remains `POST /api/scenarios/activate`. |
+| Active world | The launched snapshot plus live robot, feature, risk, graph, mission, and telemetry state. |
+| Mission | An operation executed by vehicles inside the active world. It does not own the world. |
+
+After launch, runtime consumers must not read the mutable browser world
+definition. C2, mission validation, the planner, and robot processes use only
+the launched snapshot and subsequent live-world revisions. Editing, selecting,
+renaming, or deleting a stored definition cannot change the running world.
+`scenario_id` and the content hash remain attached to runtime state only as
+provenance and as inputs for an explicit later relaunch.
+
+Launching a world definition is the transaction boundary that changes simulated reality:
 
 ```mermaid
 flowchart LR
-    UI[Scenario Lab] -->|polygon OSM download| Draft[Browser scenario draft]
-    Draft -->|POST /api/scenarios/activate| API[Scenario runtime manager]
-    API --> Hash[Hash complete scenario version]
+    UI[World Builder] -->|polygon OSM download| Draft[Browser world definition]
+    Draft -->|POST /api/scenarios/activate| API[World launcher]
+    API --> Hash[Hash complete definition]
     Hash --> Authority[(Activation record + active singleton)]
     Authority -->|ACTIVATING + phase updates| Map[(MapDB.scenario_id_version)]
     Authority --> Config[Write active planner config]
@@ -142,18 +161,19 @@ flowchart LR
     Verify2 --> Ready
     Ready --> Authority
     Authority --> Cache[Generated active_scenario.json cache]
-    Ready --> Init[Mission Init allowed]
+    Ready --> World[Active world independent of definition]
+    World --> Init[Mission Init allowed]
 ```
 
-Only one scenario may be active. MongoDB's `MapDB._active_scenario` singleton
+Only one world may be active. MongoDB's legacy-named `MapDB._active_scenario` singleton
 is the durable authority; `data/runtime/active_scenario.json` is a generated
 cache. Each activation has an idempotency/content hash, durable activation ID
 and phase record in `MapDB._scenario_activations`, and creates or reuses a
 content-addressed, immutable collection named
 `MapDB.scenario_<id>_<version>`. Re-activating the same verified content is a
 no-op. Old version collections are retained for reproducibility; they are not
-merged into the active graph. `MapDB.rma` remains the legacy seed and Scenario
-Lab authoring library, not the planner's source after activation. Central
+merged into the active graph. `MapDB.rma` remains the legacy seed and World
+Builder authoring library, not the planner's source after launch. Central
 coordination and both ROS gateways are restarted during a real switch so
 mission nodes or DDS participants from the previous reality cannot survive
 into the new one. Because the editable simulation runs every ROS participant
@@ -174,9 +194,37 @@ not a MongoDB transaction, distributed lock, or automatic restart-resume
 protocol. Multi-worker deployment therefore requires database-backed fencing
 and explicit resume/rollback recovery before it is safe.
 
-OSM has one operational path: the operator explicitly downloads roads inside a Scenario Lab polygon, the browser keeps those GeoJSON LineStrings in the scenario draft, and activation freezes them as `road` features in the versioned MapDB collection. The deployed planner has `load_osm_from_network: false`; it does not make a second live OSMnx download.
+OSM has one operational path: the operator explicitly downloads roads inside a World Builder polygon, the browser keeps those GeoJSON LineStrings in the world definition, and launch freezes them as `road` features in the versioned MapDB collection. The deployed planner has `load_osm_from_network: false`; it does not make a second live OSMnx download.
 
-Mission endpoints may fall between graph junctions. The planner projects those endpoints onto risk-safe edges and splits the selected edges only in a request-local graph copy. These virtual endpoint nodes must never be written to, or reused to mutate, the active scenario's immutable MapDB snapshot or its base routing graph.
+Mission endpoints may fall between graph junctions. The planner projects those endpoints onto risk-safe edges and splits the selected edges only in a request-local graph copy. These virtual endpoint nodes must never be written to, or reused to mutate, the active world's immutable MapDB snapshot or its base routing graph.
+
+### Navigation And Coverage Graph Views
+
+Every active-world feature must be available to every vehicle planner, but a
+feature does not have to produce the same traversable edges for every behavior.
+The world graph is the authoritative feature/topology model; behavior- and
+vehicle-specific graph views are derived from the same world revision.
+
+The current planner always samples `geofence` and `workspace` polygons on a
+`5 m` lattice, Delaunay-triangulates them, and connects that mesh to the road
+graph. Ordinary `NAVIGATE` A* therefore enters the polygon mesh and can emit
+the angular lattice route visible in the UI. This is current behavior, not the
+target navigation policy.
+
+The target projections are:
+
+- **Navigation view:** roads plus a navigation-quality free-space/navmesh
+  representation where needed. Geofences and workspaces constrain permitted
+  space; a coverage sweep lattice must not leak into ordinary point routing.
+- **Coverage view:** a task-local lawnmower/coverage subgraph generated from
+  the objective polygon and vehicle swath. Transit to its entry uses the
+  navigation view.
+- **Risk overlay:** the same active risk features annotate or block affected
+  edges in both views according to the vehicle policy.
+
+This is not two independently stored worlds or two full recomputations. Both
+views share stable feature IDs, source fragments, spatial indexes, and world
+revision; only the behavior-specific derived edges differ.
 
 Diagnostic graph-image rendering is not run synchronously during map
 initialization or mission planning. Both are ROS executor callbacks, so a large
@@ -235,6 +283,14 @@ LLM sees a `current_environment` abstraction containing readiness, map
 summary, bounded active features, fleet, missions, plans, health, and warnings;
 it does not know the scenario-management mechanism.
 
+The UI may narrow the model-facing fleet, mission, runtime-plan, health, and
+warning sections for each turn; active-world grounding is always retained.
+Selected browser mission working copies are overlaid as explicitly
+operator-authored mission context so drafts absent from backend runtime and
+MongoDB remain addressable by their full mission IDs. This request-scoped
+projection does not mutate the revisioned operational read model. Runtime plans
+remain summaries keyed by mission ID, not separately identified C2 entities.
+
 The model boundary uses LangChain's OpenAI chat adapter against the configured
 LM Studio server. It performs exactly one non-streaming model invocation per
 operator message, disables provider retries, permits only one in-flight
@@ -249,8 +305,9 @@ small ordered behavior, contract, example, dynamic-context, and output
 components. Historical flat versions remain loadable for reproducibility.
 
 `POST /api/assistant/messages` returns the canonical response envelope after
-that request completes. A hidden UI gate, `?assistantDebug=1`, reveals all
-advanced inspection surfaces: Scenario Lab, Contracts, C2 Diagnostics, and the
+that request completes. World Builder is available in the ordinary UI so an
+operator can select and launch a definition. A hidden UI gate,
+`?assistantDebug=1`, additionally reveals Contracts, C2 Diagnostics, and the
 assistant's per-turn Debug switch. When requested, the safe trace contains the exact
 redacted messages sent to the model, the final provider event, and any actual
 provider tool calls; deterministic context and validation events are shown

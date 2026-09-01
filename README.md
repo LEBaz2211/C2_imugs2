@@ -80,10 +80,10 @@ releases can compose ordered system sections and examples. Set
 Open `http://localhost:5173`.
 
 Assistant replies use one non-streaming LM Studio request with Qwen thinking
-enabled at maximum `xhigh` effort. The ordinary UI keeps advanced inspection
-out of the operator flow. Open `http://localhost:5173/?assistantDebug=1` to
-reveal Scenario Lab, Contracts, C2 Diagnostics, and the assistant's **Debug**
-control. Enabling Debug before a message shows the exact redacted model input,
+enabled at maximum `xhigh` effort. The ordinary UI includes **Worlds** so an
+operator can select and launch a world definition. Open
+`http://localhost:5173/?assistantDebug=1` to additionally reveal Contracts,
+C2 Diagnostics, and the assistant's **Debug** control. Enabling Debug before a message shows the exact redacted model input,
 final provider event, and any actual tool calls. The current model has no
 callable tools; backend context reads and validation are labelled separately.
 

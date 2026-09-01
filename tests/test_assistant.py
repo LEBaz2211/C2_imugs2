@@ -502,6 +502,47 @@ def test_model_messages_include_exact_active_map_feature_without_internal_bindin
         assert f'"{internal_key}"' not in serialized_picture
 
 
+def test_model_operational_picture_applies_section_and_browser_mission_selection() -> None:
+    settings = AssistantSettings()
+    assistant = AssistantOrchestrator(
+        context=RevisionContext(),
+        model=LangChainOpenAIProvider(settings, model=FakeChatModel(['{"answer":"ok"}'])),
+        settings=settings,
+        picture_materializer=picture_materializer,
+    )
+    picture = picture_materializer(None, 1)
+
+    projected = assistant._model_operational_picture(  # noqa: SLF001
+        picture,
+        {
+            "sections": ["missions", "plans"],
+            "mission_ids": ["mission-visible"],
+            "operator_missions": [
+                {"mission_id": "mission-hidden", "name": "Hidden"},
+                {"mission_id": "mission-visible", "name": "Visible"},
+            ],
+        },
+    )
+
+    assert set(projected) == {
+        "context_schema",
+        "picture_revision",
+        "observed_at",
+        "current_environment",
+        "missions",
+        "plans",
+        "context_selection",
+    }
+    assert [item["id"] for item in projected["missions"]["items"]] == [
+        "mission-visible"
+    ]
+    mission = projected["missions"]["items"][0]
+    assert mission["kind"] == "operator_mission"
+    assert mission["data"]["operator_working_copy"]["name"] == "Visible"
+    assert projected["plans"]["items"] == []
+    assert projected["context_selection"]["mission_filter"] == ["mission-visible"]
+
+
 def test_debug_messages_match_the_request_and_never_include_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

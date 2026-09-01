@@ -91,6 +91,7 @@ export type ScenarioLaunchResult = {
   map_collection?: string;
   feature_count?: number;
   road_count?: number;
+  feature_ids?: string[];
   agents?: Agent[];
   containers?: {
     agent_id: string;
@@ -477,6 +478,15 @@ export type AssistantMessageRequest = {
   conversation_id: string;
   message: string;
   debug?: boolean;
+  operational_picture?: AssistantOperationalPictureOptions;
+};
+
+export type AssistantOperationalPictureSection = "agents" | "missions" | "plans" | "health" | "warnings";
+
+export type AssistantOperationalPictureOptions = {
+  sections: AssistantOperationalPictureSection[];
+  mission_ids?: string[] | null;
+  operator_missions?: MissionConfig[];
 };
 
 export type AssistantDebugModelMessage = {
@@ -520,6 +530,7 @@ export type AssistantDebugContextUsage = {
 
 export type AssistantDebugTrace = {
   model_messages?: AssistantDebugModelMessage[];
+  operational_picture?: Record<string, unknown> | null;
   events?: AssistantDebugEvent[];
   tool_calls?: AssistantDebugToolCall[];
   context_usage?: AssistantDebugContextUsage | null;
@@ -633,6 +644,12 @@ export async function getAssistantStatus(): Promise<AssistantStatus> {
 
 export async function sendAssistantMessage(request: AssistantMessageRequest): Promise<AssistantMessageResponse> {
   return postJson("/api/assistant/messages", request);
+}
+
+export async function previewAssistantOperationalPicture(
+  options: AssistantOperationalPictureOptions,
+): Promise<Record<string, unknown>> {
+  return postJson("/api/assistant/operational-picture/preview", options);
 }
 
 export async function resetAssistantConversation(conversationId: string): Promise<AssistantConversationReset> {

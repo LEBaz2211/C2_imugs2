@@ -22,6 +22,7 @@ import {
   initMission,
   launchScenario,
   queryOsmRoads,
+  previewAssistantOperationalPicture,
   resetLegacyRuntime,
   resetAssistantConversation,
   sendAssistantMessage,
@@ -30,6 +31,8 @@ import {
   type AgentUpdateEvent,
   type AssistantDebugTrace,
   type AssistantMessageResponse,
+  type AssistantOperationalPictureOptions,
+  type AssistantOperationalPictureSection,
   type AssistantStatus,
   type ContractGraph,
   type DiagnosticsState,
@@ -76,6 +79,7 @@ import type { Agent, MapFeature, MissionConfig } from "./types";
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
 const ASSISTANT_MISSION_DRAFTS_STORAGE_KEY = "c2_imugs2_assistant_mission_drafts_v1";
+const ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY = "c2_imugs2_assistant_operational_picture_v1";
 const RIGHT_PANE_WIDTHS_STORAGE_KEY = "c2_imugs2_right_pane_widths";
 const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, scenario: 860 } as const;
 const MIN_RIGHT_PANE_WIDTHS = { c2: 380, scenario: 520 } as const;
@@ -83,6 +87,52 @@ const MIN_MAP_WIDTH = 360;
 const RESIZE_HANDLE_WIDTH = 8;
 
 type ResizableWorkspace = keyof typeof DEFAULT_RIGHT_PANE_WIDTHS;
+type AssistantOperationalPicturePreferences = {
+  sections: AssistantOperationalPictureSection[];
+  allMissions: boolean;
+  missionIds: string[];
+};
+
+const DEFAULT_ASSISTANT_OPERATIONAL_PICTURE: AssistantOperationalPicturePreferences = {
+  sections: ["agents", "missions", "plans", "health", "warnings"],
+  allMissions: true,
+  missionIds: [],
+};
+
+function readAssistantOperationalPicturePreferences(): AssistantOperationalPicturePreferences {
+  if (typeof window === "undefined") return DEFAULT_ASSISTANT_OPERATIONAL_PICTURE;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY) ?? "{}") as Partial<AssistantOperationalPicturePreferences>;
+    const sections = Array.isArray(stored.sections)
+      ? stored.sections.filter((section): section is AssistantOperationalPictureSection => DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections.includes(section as AssistantOperationalPictureSection))
+      : DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections;
+    return {
+      sections: sections.length ? sections : DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections,
+      allMissions: stored.allMissions !== false,
+      missionIds: Array.isArray(stored.missionIds) ? stored.missionIds.filter((missionId): missionId is string => typeof missionId === "string") : [],
+    };
+  } catch {
+    return DEFAULT_ASSISTANT_OPERATIONAL_PICTURE;
+  }
+}
+
+function buildAssistantOperationalPictureOptions(
+  preferences: AssistantOperationalPicturePreferences,
+  missions: { mission_id: string; config?: MissionConfig }[],
+): AssistantOperationalPictureOptions {
+  const missionIds = preferences.allMissions
+    ? undefined
+    : preferences.missionIds.filter((missionId) => missions.some((mission) => mission.mission_id === missionId));
+  const selectedMissionIds = missionIds ? new Set(missionIds) : undefined;
+  return {
+    sections: preferences.sections,
+    mission_ids: missionIds,
+    operator_missions: missions
+      .filter((mission) => mission.config && (!selectedMissionIds || selectedMissionIds.has(mission.mission_id)))
+      .map((mission) => mission.config as MissionConfig)
+      .slice(0, 64),
+  };
+}
 
 function advancedUiGateEnabled() {
   if (typeof window === "undefined") return false;
@@ -226,6 +276,13 @@ function filterGeojsonForScenario(collection: FeatureCollection | undefined, sce
   };
 }
 
+function frozenWorldRoads(roadImports: ScenarioCatalogEntry["road_imports"] = []): FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: roadImports.flatMap((roadImport) => roadImport.geojson.features),
+  };
+}
+
 function flattenGeoJsonPoints(collection: FeatureCollection | undefined) {
   return collection?.features.flatMap((feature) => flattenCoordinatePoints(geoJsonCoordinates(feature.geometry))) ?? [];
 }
@@ -335,6 +392,9 @@ export default function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [assistantDebugEnabled, setAssistantDebugEnabled] = useState(false);
+  const [assistantOperationalPicture, setAssistantOperationalPicture] = useState<AssistantOperationalPicturePreferences>(
+    () => readAssistantOperationalPicturePreferences(),
+  );
   const [advancedUiAvailable] = useState(() => advancedUiGateEnabled());
   const [rightPaneWidths, setRightPaneWidths] = useState<Record<ResizableWorkspace, number>>(() => readRightPaneWidths());
   const activeMissionIdRef = useRef<string | undefined>();
@@ -354,6 +414,10 @@ export default function App() {
   }, [rightPaneWidths]);
 
   useEffect(() => {
+    window.localStorage.setItem(ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY, JSON.stringify(assistantOperationalPicture));
+  }, [assistantOperationalPicture]);
+
+  useEffect(() => {
     const result = writeAssistantConversationStore(assistantConversationStore);
     if (result.persisted && (result.debugTracesStripped || result.evictedConversationIds.length > 0)) {
       setAssistantConversationStore(result.store);
@@ -361,8 +425,12 @@ export default function App() {
   }, [assistantConversationStore]);
 
   useEffect(() => {
+    if (tab === "plan") {
+      setTab("mission");
+      return;
+    }
     if (advancedUiAvailable) return;
-    if (workspace !== "c2") setWorkspace("c2");
+    if (workspace === "contracts") setWorkspace("c2");
     if (tab === "diagnostics") setTab("mission");
   }, [advancedUiAvailable, tab, workspace]);
 
@@ -543,15 +611,32 @@ export default function App() {
     }
     return featureIds;
   }, [activeScenarioContext?.scenario_id, pendingScenarioFeatureToAdd, scenarioFeatureIds]);
-  const scenarioVisibleMapFeatures = useMemo(
-    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, scenarioFeatureIdSet)),
-    [mapFeatures, scenarioFeatureIdSet],
+  const worldBuilderFeatureIdSet = useMemo(() => {
+    const featureIds = new Set(scenarioFeatureIdSet);
+    for (const feature of mapFeatures) {
+      if (feature.feature_type === "objective") featureIds.add(feature.feature_id);
+    }
+    return featureIds;
+  }, [mapFeatures, scenarioFeatureIdSet]);
+  const worldBuilderMapFeatures = useMemo(
+    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, worldBuilderFeatureIdSet)),
+    [mapFeatures, worldBuilderFeatureIdSet],
   );
-  const runtimeScenarioContext = useMemo(
-    () => scenarioState.library.scenarios.find((scenario) => scenario.scenario_id === activeScenarioRuntime?.scenario_id),
-    [activeScenarioRuntime?.scenario_id, scenarioState.library.scenarios],
+  const runtimeWorldCatalogEntry = useMemo(
+    () => scenarioCatalog.find((entry) =>
+      entry.runtime_active
+      && entry.scenario_id === activeScenarioRuntime?.scenario_id
+      && (!activeScenarioRuntime?.map_collection || entry.map_collection === activeScenarioRuntime.map_collection)),
+    [activeScenarioRuntime?.map_collection, activeScenarioRuntime?.scenario_id, scenarioCatalog],
   );
-  const runtimeFeatureIdSet = useMemo(() => new Set(runtimeScenarioContext?.feature_ids ?? []), [runtimeScenarioContext?.feature_ids]);
+  const runtimeFeatureIdSet = useMemo(
+    () => new Set(activeScenarioRuntime?.feature_ids ?? runtimeWorldCatalogEntry?.feature_ids ?? []),
+    [activeScenarioRuntime?.feature_ids, runtimeWorldCatalogEntry?.feature_ids],
+  );
+  const runtimeWorldRoads = useMemo(
+    () => frozenWorldRoads(runtimeWorldCatalogEntry?.road_imports),
+    [runtimeWorldCatalogEntry?.road_imports],
+  );
   const c2FeatureIdSet = useMemo(() => {
     const featureIds = new Set(runtimeFeatureIdSet);
     for (const feature of mapFeatures) {
@@ -567,7 +652,7 @@ export default function App() {
   const c2Agents = useMemo(() => {
     if (!activeScenarioRuntime?.scenario_id) return [];
 
-    const scenarioAgents = activeScenarioRuntime.agents ?? runtimeScenarioContext?.agents ?? [];
+    const scenarioAgents = activeScenarioRuntime.agents ?? runtimeWorldCatalogEntry?.agents ?? [];
     const liveAgentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
     return scenarioAgents.map((agent) => {
       const agentId = normalizeUuidish(agent.agent_id);
@@ -579,7 +664,7 @@ export default function App() {
         current_location: telemetry?.current_location ?? liveAgent?.current_location ?? agent.current_location,
       };
     });
-  }, [activeScenarioRuntime, agentTelemetry, agents, runtimeScenarioContext?.agents]);
+  }, [activeScenarioRuntime, agentTelemetry, agents, runtimeWorldCatalogEntry?.agents]);
   const c2MapFeatures = hasRuntimeScenario ? runtimeMapFeatures : [];
 
   const validation = useMemo(() => {
@@ -629,16 +714,16 @@ export default function App() {
     setMapDraftResetNonce(Date.now());
   }, []);
   const mapViewFeatures = useMemo(
-    () => (workspace === "scenario" ? scenarioVisibleMapFeatures : c2MapFeatures),
-    [c2MapFeatures, scenarioVisibleMapFeatures, workspace],
+    () => (workspace === "scenario" ? worldBuilderMapFeatures : c2MapFeatures),
+    [c2MapFeatures, workspace, worldBuilderMapFeatures],
   );
   const mapViewGeojson = useMemo(
     () => workspace === "scenario"
-      ? filterGeojsonForScenario(geojson, scenarioFeatureIdSet)
+      ? filterGeojsonForScenario(geojson, worldBuilderFeatureIdSet)
       : hasRuntimeScenario
         ? filterGeojsonForScenario(geojson, c2FeatureIdSet)
         : filterGeojsonForScenario(geojson, new Set()),
-    [c2FeatureIdSet, geojson, hasRuntimeScenario, scenarioFeatureIdSet, workspace],
+    [c2FeatureIdSet, geojson, hasRuntimeScenario, workspace, worldBuilderFeatureIdSet],
   );
 
   useEffect(() => {
@@ -676,7 +761,7 @@ export default function App() {
     setPlacingScenarioAgentId(agentId);
     setCommandFeedback({
       tone: "warn",
-      message: "Click the map to set this scenario vehicle start position.",
+      message: "Click the map to set this world-definition vehicle start position.",
     });
   }
 
@@ -698,7 +783,7 @@ export default function App() {
     setMapFocusPoints({ points: [point], nonce: Date.now() });
     setCommandFeedback({
       tone: "ok",
-      message: "Scenario vehicle start position updated.",
+      message: "World-definition vehicle start position updated.",
     });
   }
 
@@ -1167,13 +1252,13 @@ export default function App() {
     }
     setCommandFeedback({
       tone: result.feature_count > 0 ? "ok" : "warn",
-      message: `Added OSM road section with ${result.feature_count} way${result.feature_count === 1 ? "" : "s"} to this scenario.`,
+      message: `Added OSM road section with ${result.feature_count} way${result.feature_count === 1 ? "" : "s"} to this world definition.`,
     });
     return result;
   }
 
   async function launchScenarioFromLab(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
-    setCommandFeedback({ tone: "warn", message: "Freezing and activating scenario reality..." });
+    setCommandFeedback({ tone: "warn", message: "Launching this definition as the active world..." });
     const result = await launchScenario(request);
     setAgentTelemetry({});
     if (result.agents) setAgents(result.agents);
@@ -1273,6 +1358,7 @@ export default function App() {
         conversation_id: targetConversationId,
         message,
         debug: debugRequested || undefined,
+        operational_picture: buildAssistantOperationalPictureOptions(assistantOperationalPicture, missionList),
       });
       registerAssistantProposal(response, true);
       setAssistantConversationStore((current) => updateAssistantConversationMessages(
@@ -1451,8 +1537,8 @@ export default function App() {
   const scenarioReadinessMessage = activeScenarioRuntime?.ready
     ? ""
     : activeScenarioRuntime?.status === "stale"
-      ? "The scenario runtime became stale after backend containers stopped. Open Scenario and activate it again."
-      : activeScenarioRuntime?.error || activeScenarioRuntime?.message || "Open Scenario and activate one before initializing a mission.";
+      ? "The active world became stale after backend containers stopped. Open Worlds and launch the definition again."
+      : activeScenarioRuntime?.error || activeScenarioRuntime?.message || "Open Worlds and launch a definition before initializing a mission.";
   const initDisabledReason = !hasMission
     ? "Load or create a valid mission first."
     : validation.length > 0
@@ -1472,6 +1558,10 @@ export default function App() {
       state: missionStates[missionId],
     }));
   }, [hiddenMissionIds, missionConfigs, missionStates]);
+  const assistantOperationalPictureOptions = useMemo(
+    () => buildAssistantOperationalPictureOptions(assistantOperationalPicture, missionList),
+    [assistantOperationalPicture, missionList],
+  );
   const selectedPlanningScenario = useMemo(
     () => planningDiagnostics?.scenario_analysis?.scenarios?.find((scenario) => scenario.id === selectedPlanningScenarioId),
     [planningDiagnostics, selectedPlanningScenarioId],
@@ -1484,26 +1574,25 @@ export default function App() {
   const workspaceItems = advancedUiAvailable
     ? [
         { value: "c2", label: "C2" },
-        { value: "scenario", label: "Scenario" },
+        { value: "scenario", label: "Worlds" },
         { value: "contracts", label: "Contracts" },
       ]
-    : [{ value: "c2", label: "C2" }];
+    : [
+        { value: "c2", label: "C2" },
+        { value: "scenario", label: "Worlds" },
+      ];
   const c2TabItems = advancedUiAvailable
     ? [
         { value: "mission", label: "Mission" },
-        { value: "plan", label: "Plan" },
         { value: "assets", label: "Assets" },
         { value: "diagnostics", label: "Diagnostics" },
       ]
     : [
         { value: "mission", label: "Mission" },
-        { value: "plan", label: "Plan" },
         { value: "assets", label: "Assets" },
       ];
-  const c2PaneTitle = tab === "plan" ? "Plan" : tab === "assets" ? "Assets" : tab === "diagnostics" ? "Diagnostics" : "Missions";
-  const c2PaneIcon = tab === "plan"
-    ? <Route className="h-4 w-4 text-primary" />
-    : tab === "assets"
+  const c2PaneTitle = tab === "assets" ? "Assets" : tab === "diagnostics" ? "Diagnostics" : "Missions";
+  const c2PaneIcon = tab === "assets"
       ? <MapPinned className="h-4 w-4 text-primary" />
       : tab === "diagnostics"
         ? <Bug className="h-4 w-4 text-primary" />
@@ -1566,7 +1655,7 @@ export default function App() {
         features={mapViewFeatures}
         geojson={mapViewGeojson}
         osmRoads={mapUsesScenarioContext ? undefined : osmRoads}
-        scenarioRoads={workspace === "scenario" ? scenarioRoads : runtimeScenarioContext?.roads}
+        scenarioRoads={workspace === "scenario" ? scenarioRoads : runtimeWorldRoads}
         mission={mapMission}
         taskPlan={mapTaskPlan}
         plannerState={mapPlannerState}
@@ -1613,17 +1702,15 @@ export default function App() {
           <div className="flex items-center gap-2">
             {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : assistantActive ? <Bot className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
             <div>
-              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "Scenario Lab" : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
+              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "World Builder" : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {advancedUiAvailable && (
-              <Tabs
-                value={workspace}
-                onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
-                items={workspaceItems}
-              />
-            )}
+            <Tabs
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              items={workspaceItems}
+            />
             {assistantActive ? (
               <Badge tone={assistantStatus?.configured ? "ok" : "default"}>assistant</Badge>
             ) : workspace === "c2" ? (
@@ -1664,21 +1751,19 @@ export default function App() {
               <span title={activeScenarioRuntime?.error}>
                 <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
                   {activeScenarioRuntime?.ready
-                    ? `active: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}`
+                    ? `world: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}`
                     : activeScenarioRuntime?.status === "stale"
-                      ? "scenario stale"
-                      : "no ready scenario"}
+                      ? "world stale"
+                      : "no active world"}
                 </Badge>
               </span>
             </div>
             {!activeScenarioRuntime?.ready && (
               <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
                 <span>{scenarioReadinessMessage}</span>
-                {advancedUiAvailable && (
-                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
-                    Open Scenario
-                  </Button>
-                )}
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
+                  Open Worlds
+                </Button>
               </div>
             )}
             {hasSelectedMission && (
@@ -1693,7 +1778,7 @@ export default function App() {
               />
             )}
             <div className="grid grid-cols-3 gap-2">
-              <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)} title={canSendMission ? "Initialize this mission in the active scenario" : initDisabledReason}>
+              <Button size="sm" variant="outline" onClick={() => sendInitMission().catch(() => undefined)} disabled={!canSendMission || Boolean(busyCommand)} title={canSendMission ? "Initialize this mission in the active world" : initDisabledReason}>
                 <ShieldCheck className="h-4 w-4" />
                 {busyCommand === "init" ? "Initializing" : "Init"}
               </Button>
@@ -1740,8 +1825,11 @@ export default function App() {
               commandFeedback={commandFeedback}
               debugAvailable={advancedUiAvailable}
               debugEnabled={assistantDebugEnabled}
+              operationalPicture={assistantOperationalPicture}
+              operationalPictureOptions={assistantOperationalPictureOptions}
               onPromptChange={setAssistantPrompt}
               onDebugEnabledChange={setAssistantDebugEnabled}
+              onOperationalPictureChange={setAssistantOperationalPicture}
               onSend={() => submitAssistantMessage().catch(() => undefined)}
               onNewConversation={startAssistantConversation}
               onSelectConversation={chooseAssistantConversation}
@@ -1763,6 +1851,7 @@ export default function App() {
                   missionText={missionText}
                   missionState={missionState}
                   missionList={missionList}
+                  taskPlan={taskPlan}
                   showNewMission={showNewMission}
                   validation={validation}
                   onLoadExample={loadExample}
@@ -1774,8 +1863,6 @@ export default function App() {
                   onClear={clearMission}
                 />
               )}
-
-              {tab === "plan" && <PlanPanel taskPlan={taskPlan} />}
 
               {tab === "assets" && <AssetsPanel agents={c2Agents} mapFeatures={c2MapFeatures} mission={mission} selectedFeatureId={selectedFeatureId} onSetObjective={setFeatureAsObjective} onRemoveFeature={(feature) => removeFeature(feature).catch((error) => setApiError(String(error)))} />}
 
@@ -1858,8 +1945,11 @@ function AssistantPanel({
   commandFeedback,
   debugAvailable,
   debugEnabled,
+  operationalPicture,
+  operationalPictureOptions,
   onPromptChange,
   onDebugEnabledChange,
+  onOperationalPictureChange,
   onSend,
   onNewConversation,
   onSelectConversation,
@@ -1890,8 +1980,11 @@ function AssistantPanel({
   commandFeedback?: { tone: "default" | "ok" | "warn" | "error"; message: string };
   debugAvailable: boolean;
   debugEnabled: boolean;
+  operationalPicture: AssistantOperationalPicturePreferences;
+  operationalPictureOptions: AssistantOperationalPictureOptions;
   onPromptChange: (value: string) => void;
   onDebugEnabledChange: (value: boolean) => void;
+  onOperationalPictureChange: (value: AssistantOperationalPicturePreferences) => void;
   onSend: () => void;
   onNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -1910,6 +2003,7 @@ function AssistantPanel({
   const configured = status?.configured === true;
   const statusTone = statusBusy ? "default" : configured ? "ok" : "warn";
   const statusLabel = statusBusy ? "checking" : configured ? "ready" : "not configured";
+  const operationalMissionIds = [...new Set([...Object.keys(missionConfigs), ...Object.keys(missionStates)])].sort();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1983,6 +2077,15 @@ function AssistantPanel({
             )}
           </div>
         </div>
+        <AssistantOperationalPictureControls
+          value={operationalPicture}
+          options={operationalPictureOptions}
+          missionIds={operationalMissionIds}
+          missionConfigs={missionConfigs}
+          missionStates={missionStates}
+          disabled={busy}
+          onChange={onOperationalPictureChange}
+        />
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" aria-live="polite">
@@ -2114,6 +2217,143 @@ function AssistantPanel({
   );
 }
 
+const ASSISTANT_OPERATIONAL_SECTION_OPTIONS: {
+  value: AssistantOperationalPictureSection;
+  label: string;
+  description: string;
+}[] = [
+  { value: "agents", label: "Vehicles", description: "Declared and connected vehicle summaries, including IDs." },
+  { value: "missions", label: "Missions", description: "Runtime missions plus selected browser working copies." },
+  { value: "plans", label: "Runtime plans", description: "Planner state and stored RuntimeDB.Planning summaries; plan IDs are mission IDs." },
+  { value: "health", label: "Health", description: "Backend, ROS, storage, and active-world health checks." },
+  { value: "warnings", label: "Warnings", description: "Current inconsistencies and operational cautions." },
+];
+
+function AssistantOperationalPictureControls({
+  value,
+  missionIds,
+  missionConfigs,
+  missionStates,
+  disabled,
+  onChange,
+}: {
+  value: AssistantOperationalPicturePreferences;
+  missionIds: string[];
+  missionConfigs: Record<string, MissionConfig>;
+  missionStates: Record<string, MissionState>;
+  disabled: boolean;
+  onChange: (value: AssistantOperationalPicturePreferences) => void;
+}) {
+  const selectedMissionIds = new Set(value.missionIds);
+  const selectedSectionCount = value.sections.length;
+  const scopedMissionCount = value.allMissions ? missionIds.length : missionIds.filter((missionId) => selectedMissionIds.has(missionId)).length;
+
+  function toggleSection(section: AssistantOperationalPictureSection) {
+    const selected = value.sections.includes(section);
+    if (selected && selectedSectionCount === 1) return;
+    onChange({
+      ...value,
+      sections: selected
+        ? value.sections.filter((candidate) => candidate !== section)
+        : ASSISTANT_OPERATIONAL_SECTION_OPTIONS.map((option) => option.value).filter((candidate) => candidate === section || value.sections.includes(candidate)),
+    });
+  }
+
+  function setAllMissions(allMissions: boolean) {
+    onChange({
+      ...value,
+      allMissions,
+      missionIds: allMissions ? [] : missionIds,
+    });
+  }
+
+  function toggleMission(missionId: string) {
+    const next = new Set(value.missionIds);
+    if (next.has(missionId)) next.delete(missionId);
+    else next.add(missionId);
+    onChange({ ...value, allMissions: false, missionIds: [...next].sort() });
+  }
+
+  return (
+    <details className="rounded-md border border-border bg-panel">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2 py-1.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Settings2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+          Operational picture
+        </span>
+        <span className="text-[10px] font-normal text-muted-foreground">
+          world + {value.sections.length} sections · {value.allMissions ? "all missions" : `${scopedMissionCount}/${missionIds.length} missions`}
+        </span>
+      </summary>
+      <div className="space-y-2 border-t border-border p-2 text-[11px]">
+        <div className="rounded-md border border-border bg-background px-2 py-1.5">
+          <div className="font-medium text-foreground">Active world is always included</div>
+          <p className="mt-0.5 leading-4 text-muted-foreground">Readiness, map facts, active features, and operator objective points remain available for safe grounding.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {ASSISTANT_OPERATIONAL_SECTION_OPTIONS.map((option) => {
+            const checked = value.sections.includes(option.value);
+            return (
+              <label key={option.value} className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-background p-2" title={option.description}>
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                  checked={checked}
+                  disabled={disabled || (checked && selectedSectionCount === 1)}
+                  onChange={() => toggleSection(option.value)}
+                />
+                <span className="min-w-0">
+                  <span className="block font-medium text-foreground">{option.label}</span>
+                  <span className="block leading-4 text-muted-foreground">{option.description}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {(value.sections.includes("missions") || value.sections.includes("plans")) && (
+          <div className="space-y-1.5 rounded-md border border-border bg-background p-2">
+            <label className="flex cursor-pointer items-center gap-2 font-medium text-foreground">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-primary"
+                checked={value.allMissions}
+                disabled={disabled}
+                onChange={(event) => setAllMissions(event.target.checked)}
+              />
+              Include all missions
+            </label>
+            <p className="leading-4 text-muted-foreground">Browser working copies are added as operator context; this does not claim they were initialized or planned.</p>
+            {!value.allMissions && (
+              <div className="max-h-40 space-y-1 overflow-y-auto border-t border-border pt-1.5">
+                {missionIds.length === 0 ? (
+                  <p className="text-muted-foreground">No missions are currently visible in C2.</p>
+                ) : missionIds.map((missionId) => {
+                  const config = missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config);
+                  return (
+                    <label key={missionId} className="flex cursor-pointer items-start gap-2 rounded-sm px-1 py-1 hover:bg-muted">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                        checked={selectedMissionIds.has(missionId)}
+                        disabled={disabled}
+                        onChange={() => toggleMission(missionId)}
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-foreground">{config?.name ?? "Unnamed mission"}</span>
+                        <span className="block break-all font-mono text-[10px] text-muted-foreground">Mission ID: {missionId}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function AssistantMissionCard({
   response,
   config,
@@ -2166,7 +2406,7 @@ function AssistantMissionCard({
           title={config ? "Open this mission in the manual editor and show it on the map" : "This proposal is not a loadable mission"}
         >
           <div className="truncate font-semibold">{config?.name ?? "Mission proposal"}</div>
-          <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{config?.mission_id ?? "No valid mission ID"}</div>
+          <div className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground">Mission ID: {config?.mission_id ?? "not assigned"}</div>
         </button>
         <Badge tone={valid ? revisionPending ? "warn" : state ? missionStateTone(state) : "ok" : "error"}>
           {valid ? revisionPending ? "Changes pending" : state ? humanizeEnum(status) : "Validated draft" : "Invalid"}
@@ -2279,6 +2519,7 @@ function AssistantDebugDisclosure({
   const backendEvents = traceEvents.filter((event) => !isModelProviderDebugEvent(event) && debugEventType(event) !== "tool_call");
   const modelFinalEvent = traceEvents.find((event) => debugEventType(event) === "model_final");
   const contextUsage = asDebugRecord(trace?.context_usage) ?? asDebugRecord(asDebugRecord(modelFinalEvent)?.context_usage);
+  const picture = asDebugRecord(trace?.operational_picture);
 
   return (
     <div className="mt-2 space-y-2 border-t border-dashed border-border pt-2 text-[11px]">
@@ -2288,6 +2529,31 @@ function AssistantDebugDisclosure({
       </div>
 
       <AssistantContextUsageBar usage={contextUsage} />
+
+      {trace && (
+        <details className="rounded-md border border-border bg-panel">
+          <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground">
+            Operational picture sent to model
+            {picture && <span className="ml-1.5 font-normal text-muted-foreground">({debugPictureSummary(picture)})</span>}
+          </summary>
+          <div className="space-y-1.5 border-t border-border p-2">
+            {picture ? (
+              <>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <DebugPictureChip label="map" value={asDebugRecord(asDebugRecord(picture.current_environment)?.map)?.name} />
+                  <DebugPictureChip label="revision" value={picture.picture_revision} />
+                  <DebugPictureChip label="observed" value={picture.observed_at} />
+                  <DebugPictureChip label="readiness" value={asDebugRecord(asDebugRecord(picture.current_environment)?.readiness)?.status} />
+                </div>
+                <OperationalPictureIdIndex picture={picture} />
+                <JsonExplorer value={safeDebugValue(picture)} maxHeightClassName="max-h-64" />
+              </>
+            ) : (
+              <p className="leading-4 text-muted-foreground">No operational-picture capture was returned for this turn.</p>
+            )}
+          </div>
+        </details>
+      )}
 
       <div className="rounded-md border border-border bg-panel p-2">
         <div className="flex items-center justify-between gap-2">
@@ -2455,6 +2721,84 @@ function debugEventType(value: unknown) {
 function isModelProviderDebugEvent(value: unknown) {
   const type = debugEventType(value);
   return type.startsWith("model_") || type.startsWith("provider_");
+}
+
+function debugPictureSummary(picture: Record<string, unknown>): string {
+  const environment = asDebugRecord(picture.current_environment);
+  const mapName = asDebugRecord(environment?.map)?.name;
+  const counts = (["agents", "missions", "plans"] as const).map(
+    (section) => `${debugPictureItemCount(picture[section])} ${section}`,
+  );
+  return [typeof mapName === "string" && mapName ? mapName : undefined, ...counts]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function debugPictureItemCount(section: unknown): number {
+  const items = asDebugRecord(section)?.items;
+  return Array.isArray(items) ? items.length : 0;
+}
+
+function OperationalPictureIdIndex({ picture }: { picture: Record<string, unknown> }) {
+  const environment = asDebugRecord(picture.current_environment);
+  const runtimeSections = ([
+    ["agents", "Vehicle ID"],
+    ["missions", "Mission ID"],
+    ["plans", "Mission / plan ID"],
+  ] as const).map(([section, idLabel]) => {
+    const items = asDebugRecord(picture[section])?.items;
+    const ids = Array.isArray(items)
+      ? items.map((item) => asDebugRecord(item)?.id).filter((itemId): itemId is string => typeof itemId === "string" && Boolean(itemId))
+      : [];
+    return { section, idLabel, ids };
+  });
+  const environmentSections = ([
+    ["map_features", "Map feature ID"],
+    ["operator_objectives", "Objective ID"],
+  ] as const).map(([section, idLabel]) => {
+    const items = environment?.[section];
+    const ids = Array.isArray(items)
+      ? items.map((item) => {
+          const record = asDebugRecord(item);
+          return record?.feature_id ?? record?.id;
+        }).filter((itemId): itemId is string => typeof itemId === "string" && Boolean(itemId))
+      : [];
+    return { section, idLabel, ids };
+  });
+  const sections = [...runtimeSections, ...environmentSections].filter((section) => section.ids.length > 0);
+  if (sections.length === 0) return null;
+  return (
+    <div className="space-y-1 rounded-md border border-border bg-background p-2">
+      <div className="font-medium text-foreground">Included IDs</div>
+      {sections.map((section) => (
+        <div key={section.section}>
+          <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{section.section}</div>
+          {section.ids.map((itemId) => (
+            <div key={`${section.section}-${itemId}`} className="break-all font-mono text-[10px] text-foreground">
+              {section.idLabel}: {itemId}
+            </div>
+          ))}
+        </div>
+      ))}
+      {sections.some((section) => section.section === "plans") && (
+        <p className="leading-4 text-muted-foreground">The current backend does not issue a separate plan ID; a stored plan is keyed by its mission ID.</p>
+      )}
+    </div>
+  );
+}
+
+function DebugPictureChip({ label, value }: { label: string; value: unknown }) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const text = String(value);
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums"
+      title={`${label}: ${text}`}
+    >
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 truncate text-foreground">{text}</span>
+    </span>
+  );
 }
 
 function safeDebugJson(value: unknown) {
@@ -2858,6 +3202,7 @@ function MissionPanel({
   missionText,
   missionState,
   missionList,
+  taskPlan,
   showNewMission,
   validation,
   onLoadExample,
@@ -2873,6 +3218,7 @@ function MissionPanel({
   missionText: string;
   missionState?: MissionState;
   missionList: MissionListItem[];
+  taskPlan?: ReturnType<typeof createTaskPlan>;
   showNewMission: boolean;
   validation: string[];
   onLoadExample: (example: MissionExample) => void;
@@ -2911,6 +3257,7 @@ function MissionPanel({
             mission={mission}
             missionText={missionText}
             missionState={missionState}
+            taskPlan={taskPlan}
             validation={validation}
             jsonFocusLabel={jsonFocusLabel}
             missionJsonRef={missionJsonRef}
@@ -2930,6 +3277,7 @@ function MissionPanel({
             mission={mission}
             missionText={missionText}
             missionState={missionState}
+            taskPlan={taskPlan}
             validation={validation}
             jsonFocusLabel={jsonFocusLabel}
             missionJsonRef={missionJsonRef}
@@ -2961,7 +3309,7 @@ function MissionPanel({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-semibold">{missionCardTitle(item)}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">{missionCardSubtitle(item)}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{missionCardSubtitle(item)}</div>
                   <div className="mt-2 flex flex-wrap gap-1">
                     <Badge>{behaviorLabel(item.config?.behavior)}</Badge>
                     <Badge>{vehicleCountLabel(item.config)}</Badge>
@@ -3032,6 +3380,7 @@ function MissionEditor({
   mission,
   missionText,
   missionState,
+  taskPlan,
   validation,
   jsonFocusLabel,
   missionJsonRef,
@@ -3041,6 +3390,7 @@ function MissionEditor({
   mission?: MissionConfig;
   missionText: string;
   missionState?: MissionState;
+  taskPlan?: ReturnType<typeof createTaskPlan>;
   validation: string[];
   jsonFocusLabel?: string;
   missionJsonRef: RefObject<HTMLTextAreaElement>;
@@ -3083,6 +3433,7 @@ function MissionEditor({
   return (
     <div className="space-y-3">
       {mission && <MissionSummaryCard mission={mission} state={missionState} />}
+      {taskPlan && <TaskProjectionDisclosure taskPlan={taskPlan} />}
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle icon={<FileJson className="h-4 w-4" />} label="Full Mission JSON" />
@@ -3119,16 +3470,24 @@ function MissionEditor({
   );
 }
 
-function PlanPanel({ taskPlan }: { taskPlan?: ReturnType<typeof createTaskPlan> }) {
-  if (!taskPlan) return <div className="rounded-md border border-border bg-panel p-4 text-sm text-muted-foreground">Load or edit a valid mission to preview the adapter-side task projection.</div>;
+function TaskProjectionDisclosure({ taskPlan }: { taskPlan: ReturnType<typeof createTaskPlan> }) {
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <Metric icon={<Route className="h-4 w-4" />} label="Tasks" value={Object.keys(taskPlan.tasks).length.toString()} />
-        <Metric icon={<MapPinned className="h-4 w-4" />} label="Objectives" value={Object.values(taskPlan.tasks).reduce((sum, task) => sum + task.objectives.length, 0).toString()} />
+    <details className="rounded-md border border-border bg-panel">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="flex items-center gap-2"><Route className="h-4 w-4 text-primary" />Browser task preview</span>
+        <Badge>{Object.keys(taskPlan.tasks).length} task{Object.keys(taskPlan.tasks).length === 1 ? "" : "s"}</Badge>
+      </summary>
+      <div className="space-y-2 border-t border-border p-3">
+        <p className="text-xs leading-5 text-muted-foreground">
+          This is generated locally from the mission definition by the UI. It is not the backend planner route; actual planner output appears in runtime status and diagnostics after Init.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <InfoTile label="Mission ID" value={taskPlan.mission_id} />
+          <InfoTile label="Objectives" value={Object.values(taskPlan.tasks).reduce((sum, task) => sum + task.objectives.length, 0).toString()} />
+        </div>
+        <JsonExplorer value={taskPlan} maxHeightClassName="max-h-80" />
       </div>
-      <Textarea className="h-[500px] resize-none" value={JSON.stringify(taskPlan, null, 2)} readOnly />
-    </div>
+    </details>
   );
 }
 
@@ -3211,7 +3570,7 @@ function MissionSummaryCard({ mission, state }: { mission: MissionConfig; state?
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{mission.name ?? shortId(mission.mission_id)}</div>
-          <div className="mt-1 break-all text-xs text-muted-foreground">{mission.mission_id}</div>
+          <div className="mt-1 break-all font-mono text-xs text-muted-foreground">Mission ID: {mission.mission_id}</div>
         </div>
         <Badge tone={missionStateTone(state)}>{state ? missionStatusLabel(state) : "draft"}</Badge>
       </div>
@@ -3234,7 +3593,7 @@ function RuntimeMissionDetails({ state }: { state: MissionState }) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold">Legacy Runtime Mission</div>
-            <div className="mt-1 break-all text-xs text-muted-foreground">{state.mission_id}</div>
+            <div className="mt-1 break-all font-mono text-xs text-muted-foreground">Mission ID: {state.mission_id}</div>
           </div>
           <Badge tone={missionStateTone(state)}>{missionStatusLabel(state)}</Badge>
         </div>
@@ -3515,7 +3874,7 @@ function missionCardTitle(item: MissionListItem) {
 
 function missionCardSubtitle(item: MissionListItem) {
   const status = item.state ? missionStatusLabel(item.state) : "local draft";
-  return `${status} · ${item.mission_id}`;
+  return `${status} · Mission ID: ${item.mission_id}`;
 }
 
 function behaviorLabel(behavior?: number) {

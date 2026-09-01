@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,12 +26,25 @@ from ..core.models import MissionRequest
 from ..operations.service import OperationalContextService
 
 
+class AssistantOperationalPictureOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sections: list[
+        Literal["agents", "missions", "plans", "health", "warnings"]
+    ] = Field(min_length=1, max_length=5)
+    mission_ids: list[str] | None = Field(default=None, max_length=64)
+    operator_missions: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=64
+    )
+
+
 class AssistantMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str = Field(min_length=1, max_length=256)
     message: str = Field(min_length=1)
     debug: bool = False
+    operational_picture: AssistantOperationalPictureOptions | None = None
 
 
 def _http_error(exc: ApplicationServiceError) -> HTTPException:
@@ -274,6 +287,29 @@ def assistant_router(
             ) from exc
         return update.to_dict()
 
+    @router.post("/operational-picture/preview")
+    async def operational_picture_preview(
+        payload: AssistantOperationalPictureOptions,
+    ) -> dict[str, Any]:
+        try:
+            assistant = get_assistant()
+            return await asyncio.to_thread(
+                assistant.preview_operational_picture,
+                payload.model_dump(mode="json"),
+            )
+        except AssistantInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except AssistantConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "operational picture preview is unavailable: "
+                    f"{type(exc).__name__}"
+                ),
+            ) from exc
+
     @router.post("/messages")
     async def send_message(payload: AssistantMessageRequest) -> dict[str, Any]:
         try:
@@ -284,6 +320,10 @@ def assistant_router(
             }
             if payload.debug:
                 chat_kwargs["debug"] = True
+            if payload.operational_picture is not None:
+                chat_kwargs["operational_picture_options"] = (
+                    payload.operational_picture.model_dump(mode="json")
+                )
             response = await asyncio.to_thread(
                 assistant.chat,
                 **chat_kwargs,
