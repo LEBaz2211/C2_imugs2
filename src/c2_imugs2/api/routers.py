@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .services import (
     ApplicationServiceError,
@@ -31,11 +31,27 @@ class AssistantOperationalPictureOptions(BaseModel):
 
     sections: list[
         Literal["agents", "missions", "plans", "health", "warnings"]
-    ] = Field(min_length=1, max_length=5)
+    ] = Field(max_length=5)
     mission_ids: list[str] | None = Field(default=None, max_length=64)
     operator_missions: list[dict[str, Any]] = Field(
         default_factory=list, max_length=64
     )
+    item_ids: dict[
+        Literal["agents", "missions", "plans", "health", "warnings"],
+        list[str],
+    ] = Field(default_factory=dict, max_length=5)
+
+    @field_validator("item_ids")
+    @classmethod
+    def validate_item_ids(
+        cls, value: dict[str, list[str]]
+    ) -> dict[str, list[str]]:
+        for section, item_ids in value.items():
+            if len(item_ids) > 256:
+                raise ValueError(
+                    f"operational picture {section} item selection exceeds 256 IDs"
+                )
+        return value
 
 
 class AssistantMessageRequest(BaseModel):

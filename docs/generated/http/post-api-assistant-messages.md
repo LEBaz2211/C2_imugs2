@@ -18,9 +18,9 @@ FastAPI handler `send_message`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by send_message | `—` | [`src/c2_imugs2/api/routers.py:314`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L314) |
-| sendAssistantMessage | `—` | [`frontend/src/api.ts:645`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L645) |
+| handled by send_message | `—` | [`src/c2_imugs2/api/routers.py:330`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L330) |
+| sendAssistantMessage | `—` | [`frontend/src/api.ts:651`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L651) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:314`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L314)
+- [`src/c2_imugs2/api/routers.py:330`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L330)

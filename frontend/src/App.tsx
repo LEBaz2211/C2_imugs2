@@ -32,6 +32,7 @@ import {
   type AssistantDebugTrace,
   type AssistantMessageResponse,
   type AssistantOperationalPictureOptions,
+  type AssistantOperationalPicturePreview,
   type AssistantOperationalPictureSection,
   type AssistantStatus,
   type ContractGraph,
@@ -91,12 +92,14 @@ type AssistantOperationalPicturePreferences = {
   sections: AssistantOperationalPictureSection[];
   allMissions: boolean;
   missionIds: string[];
+  itemIds: Partial<Record<AssistantOperationalPictureSection, string[]>>;
 };
 
 const DEFAULT_ASSISTANT_OPERATIONAL_PICTURE: AssistantOperationalPicturePreferences = {
   sections: ["agents", "missions", "plans", "health", "warnings"],
   allMissions: true,
   missionIds: [],
+  itemIds: {},
 };
 
 function readAssistantOperationalPicturePreferences(): AssistantOperationalPicturePreferences {
@@ -106,10 +109,18 @@ function readAssistantOperationalPicturePreferences(): AssistantOperationalPictu
     const sections = Array.isArray(stored.sections)
       ? stored.sections.filter((section): section is AssistantOperationalPictureSection => DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections.includes(section as AssistantOperationalPictureSection))
       : DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections;
+    const itemIds = Object.fromEntries(
+      Object.entries(stored.itemIds ?? {}).flatMap(([section, ids]) => (
+        DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections.includes(section as AssistantOperationalPictureSection) && Array.isArray(ids)
+          ? [[section, ids.filter((itemId): itemId is string => typeof itemId === "string")]]
+          : []
+      )),
+    ) as Partial<Record<AssistantOperationalPictureSection, string[]>>;
     return {
-      sections: sections.length ? sections : DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections,
+      sections,
       allMissions: stored.allMissions !== false,
       missionIds: Array.isArray(stored.missionIds) ? stored.missionIds.filter((missionId): missionId is string => typeof missionId === "string") : [],
+      itemIds,
     };
   } catch {
     return DEFAULT_ASSISTANT_OPERATIONAL_PICTURE;
@@ -123,14 +134,21 @@ function buildAssistantOperationalPictureOptions(
   const missionIds = preferences.allMissions
     ? undefined
     : preferences.missionIds.filter((missionId) => missions.some((mission) => mission.mission_id === missionId));
-  const selectedMissionIds = missionIds ? new Set(missionIds) : undefined;
+  const itemIds = { ...preferences.itemIds };
+  delete itemIds.missions;
+  delete itemIds.plans;
+  if (missionIds) {
+    itemIds.missions = missionIds;
+    itemIds.plans = missionIds;
+  }
   return {
     sections: preferences.sections,
     mission_ids: missionIds,
     operator_missions: missions
-      .filter((mission) => mission.config && (!selectedMissionIds || selectedMissionIds.has(mission.mission_id)))
+      .filter((mission) => mission.config)
       .map((mission) => mission.config as MissionConfig)
       .slice(0, 64),
+    item_ids: itemIds,
   };
 }
 
@@ -2081,8 +2099,6 @@ function AssistantPanel({
           value={operationalPicture}
           options={operationalPictureOptions}
           missionIds={operationalMissionIds}
-          missionConfigs={missionConfigs}
-          missionStates={missionStates}
           disabled={busy}
           onChange={onOperationalPictureChange}
         />
@@ -2200,18 +2216,38 @@ function AssistantPanel({
             The backend has no assistant API key configured. Configure it server-side, then retry status.
           </div>
         )}
-        <Textarea
-          className="min-h-20 resize-none font-sans text-sm"
-          value={prompt}
-          onChange={(event) => onPromptChange(event.target.value)}
-          placeholder={configured ? "Ask about operations or request a mission…" : "Assistant unavailable"}
-          disabled={!configured || busy}
-          aria-label="Message the mission assistant"
-        />
-        <Button type="submit" className="w-full" disabled={!configured || busy || !prompt.trim()}>
-          <Send className="h-4 w-4" />
-          {busy ? "Working…" : "Send"}
-        </Button>
+        <div className="rounded-md border border-input bg-panel shadow-sm focus-within:ring-2 focus-within:ring-ring">
+          <Textarea
+            className="max-h-40 min-h-10 resize-none overflow-y-auto border-0 bg-transparent px-3 pt-2.5 pb-1 font-sans text-sm leading-5 shadow-none focus:ring-0"
+            value={prompt}
+            onChange={(event) => onPromptChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                if (!event.currentTarget.disabled && prompt.trim()) onSend();
+              }
+            }}
+            placeholder={configured ? "Ask about operations or request a mission…" : "Assistant unavailable"}
+            disabled={!configured || busy}
+            rows={2}
+            aria-label="Message the mission assistant"
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
+            <span className="select-none pl-1 text-[10px] text-muted-foreground">
+              Enter sends · Shift+Enter newline
+            </span>
+            <Button
+              type="submit"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              disabled={!configured || busy || !prompt.trim()}
+              title={busy ? "Working…" : "Send (Enter)"}
+              aria-label={busy ? "Working" : "Send message"}
+            >
+              {busy ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+        </div>
       </form>
     </div>
   );
@@ -2231,26 +2267,66 @@ const ASSISTANT_OPERATIONAL_SECTION_OPTIONS: {
 
 function AssistantOperationalPictureControls({
   value,
+  options,
   missionIds,
-  missionConfigs,
-  missionStates,
   disabled,
   onChange,
 }: {
   value: AssistantOperationalPicturePreferences;
+  options: AssistantOperationalPictureOptions;
   missionIds: string[];
-  missionConfigs: Record<string, MissionConfig>;
-  missionStates: Record<string, MissionState>;
   disabled: boolean;
   onChange: (value: AssistantOperationalPicturePreferences) => void;
 }) {
+  const [preview, setPreview] = useState<AssistantOperationalPicturePreview | undefined>();
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [previewedAt, setPreviewedAt] = useState<number | undefined>();
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const optionsKey = useMemo(() => JSON.stringify(options), [options]);
+  const selectedPicture = preview?.operational_picture;
+  const availablePicture = preview?.available_operational_picture;
+  const availableMissionIds = [...new Set([
+    ...missionIds,
+    ...operationalSectionItemIds(availablePicture?.missions),
+    ...operationalSectionItemIds(availablePicture?.plans),
+  ])].sort();
   const selectedMissionIds = new Set(value.missionIds);
-  const selectedSectionCount = value.sections.length;
-  const scopedMissionCount = value.allMissions ? missionIds.length : missionIds.filter((missionId) => selectedMissionIds.has(missionId)).length;
+  const scopedMissionCount = value.allMissions
+    ? availableMissionIds.length
+    : availableMissionIds.filter((missionId) => selectedMissionIds.has(missionId)).length;
+  const selectedItemCount = value.sections.reduce(
+    (sum, section) => sum + operationalSectionItems(selectedPicture?.[section]).length,
+    0,
+  );
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setPreviewBusy(true);
+      setPreviewError("");
+      previewAssistantOperationalPicture(options)
+        .then((result) => {
+          if (!active) return;
+          setPreview(result);
+          setPreviewedAt(Date.now());
+        })
+        .catch((error) => {
+          if (!active) return;
+          setPreviewError(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {
+          if (active) setPreviewBusy(false);
+        });
+    }, refreshNonce === 0 ? 180 : 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [optionsKey, refreshNonce]);
 
   function toggleSection(section: AssistantOperationalPictureSection) {
     const selected = value.sections.includes(section);
-    if (selected && selectedSectionCount === 1) return;
     onChange({
       ...value,
       sections: selected
@@ -2263,15 +2339,29 @@ function AssistantOperationalPictureControls({
     onChange({
       ...value,
       allMissions,
-      missionIds: allMissions ? [] : missionIds,
+      missionIds: [],
     });
   }
 
   function toggleMission(missionId: string) {
-    const next = new Set(value.missionIds);
+    const next = new Set(value.allMissions ? availableMissionIds : value.missionIds);
     if (next.has(missionId)) next.delete(missionId);
     else next.add(missionId);
     onChange({ ...value, allMissions: false, missionIds: [...next].sort() });
+  }
+
+  function setAllSectionItems(section: AssistantOperationalPictureSection, allItems: boolean) {
+    const itemIds = { ...value.itemIds };
+    if (allItems) delete itemIds[section];
+    else itemIds[section] = [];
+    onChange({ ...value, itemIds });
+  }
+
+  function toggleSectionItem(section: AssistantOperationalPictureSection, itemId: string, availableIds: string[]) {
+    const next = new Set(value.itemIds[section] ?? availableIds);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    onChange({ ...value, itemIds: { ...value.itemIds, [section]: [...next].sort() } });
   }
 
   return (
@@ -2282,76 +2372,192 @@ function AssistantOperationalPictureControls({
           Operational picture
         </span>
         <span className="text-[10px] font-normal text-muted-foreground">
-          world + {value.sections.length} sections · {value.allMissions ? "all missions" : `${scopedMissionCount}/${missionIds.length} missions`}
+          {previewBusy && !preview ? "reading…" : `${value.sections.length + 1} keys · ${selectedItemCount} items`}
         </span>
       </summary>
       <div className="space-y-2 border-t border-border p-2 text-[11px]">
-        <div className="rounded-md border border-border bg-background px-2 py-1.5">
-          <div className="font-medium text-foreground">Active world is always included</div>
-          <p className="mt-0.5 leading-4 text-muted-foreground">Readiness, map facts, active features, and operator objective points remain available for safe grounding.</p>
+        <div className="flex items-start justify-between gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5">
+          <div className="min-w-0">
+            <div className="font-medium text-foreground">Model-input preview</div>
+            <p className="mt-0.5 leading-4 text-muted-foreground">
+              Uses the same projection and redaction code as Send. Runtime state is read again when the message is submitted.
+            </p>
+          </div>
+          <Button type="button" size="sm" variant="ghost" className="h-7" disabled={previewBusy} onClick={() => setRefreshNonce((current) => current + 1)}>
+            <RefreshCw className={`h-3.5 w-3.5 ${previewBusy ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
         </div>
-        <div className="grid grid-cols-2 gap-1.5">
+
+        {previewError && <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-950">Preview unavailable: {previewError}</div>}
+
+        <AssistantCurrentEnvironmentPreview value={selectedPicture?.current_environment} />
+
+        <div className="space-y-1.5">
           {ASSISTANT_OPERATIONAL_SECTION_OPTIONS.map((option) => {
             const checked = value.sections.includes(option.value);
+            const selectedSection = selectedPicture?.[option.value];
+            const availableSection = availablePicture?.[option.value];
+            const availableItems = operationalSectionItems(availableSection);
+            const selectedItems = operationalSectionItems(selectedSection);
+            const availableIds = operationalSectionItemIds(availableSection);
+            const missionScoped = option.value === "missions" || option.value === "plans";
+            const allItems = missionScoped ? value.allMissions : value.itemIds[option.value] === undefined;
+            const selectedIds = missionScoped ? selectedMissionIds : new Set(value.itemIds[option.value] ?? availableIds);
+            const metadata = asDebugRecord(asDebugRecord(selectedSection)?.metadata ?? asDebugRecord(availableSection)?.metadata);
             return (
-              <label key={option.value} className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-background p-2" title={option.description}>
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-3.5 w-3.5 accent-primary"
-                  checked={checked}
-                  disabled={disabled || (checked && selectedSectionCount === 1)}
-                  onChange={() => toggleSection(option.value)}
-                />
-                <span className="min-w-0">
-                  <span className="block font-medium text-foreground">{option.label}</span>
-                  <span className="block leading-4 text-muted-foreground">{option.description}</span>
-                </span>
-              </label>
+              <div key={option.value} className={`rounded-md border bg-background ${checked ? "border-border" : "border-dashed border-border opacity-70"}`}>
+                <label className="flex cursor-pointer items-start gap-2 p-2" title={option.description}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={() => toggleSection(option.value)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono font-semibold text-foreground">{option.value}</span>
+                      <span className="text-muted-foreground">{option.label}</span>
+                      <Badge tone={checked ? "ok" : "default"}>{checked ? `${selectedItems.length}/${availableItems.length} sent` : "not sent"}</Badge>
+                      {typeof metadata?.freshness === "string" && <Badge>{metadata.freshness}</Badge>}
+                    </span>
+                    <span className="mt-0.5 block leading-4 text-muted-foreground">{option.description}</span>
+                  </span>
+                </label>
+
+                {checked && availableItems.length > 0 && (
+                  <div className="space-y-1 border-t border-border px-2 py-1.5">
+                    <label className="flex cursor-pointer items-center gap-2 font-medium text-foreground">
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 accent-primary"
+                        checked={allItems}
+                        disabled={disabled}
+                        onChange={(event) => missionScoped
+                          ? setAllMissions(event.target.checked)
+                          : setAllSectionItems(option.value, event.target.checked)}
+                      />
+                      All {option.value} items
+                    </label>
+                    <div className="max-h-36 space-y-0.5 overflow-y-auto border-t border-border pt-1">
+                      {availableItems.map((item, index) => {
+                        const itemId = operationalItemId(item, index);
+                        const selected = allItems || selectedIds.has(itemId);
+                        return (
+                          <label key={`${option.value}-${itemId}`} className="flex cursor-pointer items-start gap-2 rounded-sm px-1 py-1 hover:bg-muted">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                              checked={selected}
+                              disabled={disabled}
+                              onChange={() => missionScoped
+                                ? toggleMission(itemId)
+                                : toggleSectionItem(option.value, itemId, availableIds)}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-1">
+                                <span className="truncate font-medium text-foreground">{operationalItemLabel(item)}</span>
+                                {typeof asDebugRecord(item)?.kind === "string" && <Badge>{String(asDebugRecord(item)?.kind)}</Badge>}
+                              </span>
+                              <span className="block break-all font-mono text-[10px] text-muted-foreground">id: {itemId}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
+
         {(value.sections.includes("missions") || value.sections.includes("plans")) && (
-          <div className="space-y-1.5 rounded-md border border-border bg-background p-2">
-            <label className="flex cursor-pointer items-center gap-2 font-medium text-foreground">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5 accent-primary"
-                checked={value.allMissions}
-                disabled={disabled}
-                onChange={(event) => setAllMissions(event.target.checked)}
-              />
-              Include all missions
-            </label>
-            <p className="leading-4 text-muted-foreground">Browser working copies are added as operator context; this does not claim they were initialized or planned.</p>
-            {!value.allMissions && (
-              <div className="max-h-40 space-y-1 overflow-y-auto border-t border-border pt-1.5">
-                {missionIds.length === 0 ? (
-                  <p className="text-muted-foreground">No missions are currently visible in C2.</p>
-                ) : missionIds.map((missionId) => {
-                  const config = missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config);
-                  return (
-                    <label key={missionId} className="flex cursor-pointer items-start gap-2 rounded-sm px-1 py-1 hover:bg-muted">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
-                        checked={selectedMissionIds.has(missionId)}
-                        disabled={disabled}
-                        onChange={() => toggleMission(missionId)}
-                      />
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium text-foreground">{config?.name ?? "Unnamed mission"}</span>
-                        <span className="block break-all font-mono text-[10px] text-muted-foreground">Mission ID: {missionId}</span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
+          <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-muted-foreground">
+            Mission scope is shared by <span className="font-mono text-foreground">missions</span> and <span className="font-mono text-foreground">plans</span> because runtime plans are keyed by mission ID. {value.allMissions ? `All ${availableMissionIds.length} available mission IDs are included.` : `${scopedMissionCount} of ${availableMissionIds.length} mission IDs are included.`}
+            Browser working copies are labelled as operator context and do not imply runtime state.
           </div>
         )}
+
+        <details className="rounded-md border border-border bg-background">
+          <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Exact JSON for the next model turn
+            {selectedPicture && <span className="ml-1.5 font-normal text-muted-foreground">({debugPictureSummary(selectedPicture)})</span>}
+          </summary>
+          <div className="space-y-1.5 border-t border-border p-2">
+            {selectedPicture
+              ? <JsonExplorer value={selectedPicture} maxHeightClassName="max-h-96" initialExpandedDepth={2} />
+              : <p className="text-muted-foreground">Waiting for the model-facing projection.</p>}
+          </div>
+        </details>
+
+        <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+          <span>{previewedAt ? `Previewed ${formatAssistantObservedAt(new Date(previewedAt).toISOString())}` : "Not previewed yet"}</span>
+          <span>{value.allMissions ? "all mission IDs" : `${scopedMissionCount}/${availableMissionIds.length} mission IDs`}</span>
+        </div>
       </div>
     </details>
   );
+}
+
+function AssistantCurrentEnvironmentPreview({ value }: { value: unknown }) {
+  const environment = asDebugRecord(value);
+  const readiness = asDebugRecord(environment?.readiness);
+  const map = asDebugRecord(environment?.map);
+  const mapFeatures = Array.isArray(environment?.map_features) ? environment.map_features : [];
+  const objectives = Array.isArray(environment?.operator_objectives) ? environment.operator_objectives : [];
+  return (
+    <div className="rounded-md border border-border bg-background p-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked readOnly aria-label="Current environment is always included" />
+        <span className="font-mono font-semibold text-foreground">current_environment</span>
+        <Badge tone="ok">always sent</Badge>
+        {typeof readiness?.status === "string" && <Badge tone={readiness.ready === true ? "ok" : "warn"}>{readiness.status}</Badge>}
+      </div>
+      <p className="mt-1 leading-4 text-muted-foreground">Required grounding: readiness, map summary, active map features, and operator objective points.</p>
+      <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+        <InfoTile label="Map" value={typeof map?.name === "string" ? map.name : "unknown"} />
+        <InfoTile label="Map features" value={String(mapFeatures.length)} />
+        <InfoTile label="Objectives" value={String(objectives.length)} />
+      </div>
+      {mapFeatures.length + objectives.length > 0 && (
+        <div className="mt-1.5 max-h-24 space-y-0.5 overflow-y-auto border-t border-border pt-1">
+          {[...mapFeatures, ...objectives].map((item, index) => {
+            const record = asDebugRecord(item);
+            const itemId = String(record?.feature_id ?? record?.id ?? `item-${index + 1}`);
+            return <div key={itemId} className="break-all font-mono text-[10px] text-muted-foreground">id: {itemId}</div>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function operationalSectionItems(value: unknown): Record<string, unknown>[] {
+  const items = asDebugRecord(value)?.items;
+  return Array.isArray(items) ? items.filter((item): item is Record<string, unknown> => Boolean(asDebugRecord(item))) : [];
+}
+
+function operationalSectionItemIds(value: unknown): string[] {
+  return operationalSectionItems(value).map(operationalItemId);
+}
+
+function operationalItemId(item: unknown, index = 0): string {
+  const itemId = asDebugRecord(item)?.id;
+  return typeof itemId === "string" && itemId ? itemId : `item-${index + 1}`;
+}
+
+function operationalItemLabel(item: unknown): string {
+  const record = asDebugRecord(item);
+  const data = asDebugRecord(record?.data);
+  const adapterState = asDebugRecord(data?.adapter_state);
+  const backendConfig = asDebugRecord(data?.backend_config);
+  const workingCopy = asDebugRecord(data?.operator_working_copy);
+  for (const candidate of [workingCopy?.name, adapterState?.name, backendConfig?.name, data?.name, data?.message, data?.status_name]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return operationalItemId(item);
 }
 
 function AssistantMissionCard({

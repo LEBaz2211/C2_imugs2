@@ -59,8 +59,9 @@ minimum size.
 
 Pane hierarchy belongs directly below the workspace title and above section
 tabs, readiness, runtime state, and commands. A selected mission keeps that
-same context header across Mission, Plan, Assets, and Diagnostics; Back returns
-to the Missions collection and its default Mission section.
+same context header across Mission, Assets, and Diagnostics; its browser task
+preview is a labelled disclosure inside Mission. Back returns to the Missions
+collection and its default Mission section.
 
 ## Replacement Core
 
@@ -284,7 +285,10 @@ summary, bounded active features, fleet, missions, plans, health, and warnings;
 it does not know the scenario-management mechanism.
 
 The UI may narrow the model-facing fleet, mission, runtime-plan, health, and
-warning sections for each turn; active-world grounding is always retained.
+warning sections and their keyed items for each turn; active-world grounding
+is always retained. A read-only preview uses the exact model-safe projection
+and redaction path without invoking the model, exposing the selected JSON,
+freshness, counts, and IDs before Send.
 Selected browser mission working copies are overlaid as explicitly
 operator-authored mission context so drafts absent from backend runtime and
 MongoDB remain addressable by their full mission IDs. This request-scoped

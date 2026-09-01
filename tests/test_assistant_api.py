@@ -81,6 +81,7 @@ class FakeAssistant:
         self.calls: list[tuple[str, str]] = []
         self.debug_calls: list[bool] = []
         self.operational_picture_calls: list[dict[str, Any] | None] = []
+        self.operational_picture_preview_calls: list[dict[str, Any] | None] = []
         self.resets: list[str] = []
 
     def _response(
@@ -137,6 +138,22 @@ class FakeAssistant:
     def reset_conversation(self, conversation_id: str) -> bool:
         self.resets.append(conversation_id)
         return True
+
+    def preview_operational_picture(
+        self, operational_picture_options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        self.operational_picture_preview_calls.append(operational_picture_options)
+        picture = {
+            "context_schema": "1.0",
+            "picture_revision": "api-test:preview",
+            "observed_at": "2026-08-22T00:00:01Z",
+            "current_environment": {},
+            "missions": {"metadata": {}, "items": []},
+        }
+        return {
+            "operational_picture": picture,
+            "available_operational_picture": picture,
+        }
 
 
 class BusyAssistant(FakeAssistant):
@@ -293,6 +310,47 @@ def test_assistant_api_forwards_bounded_operational_picture_selection() -> None:
             "operator_missions": [
                 {"mission_id": "mission-a", "name": "Browser draft"}
             ],
+            "item_ids": {},
+        }
+    ]
+
+
+def test_assistant_api_previews_exact_model_projection_without_chat() -> None:
+    assistant = FakeAssistant({"not": "used"})
+    context = OperationalContextService(ChangingOperationalProvider(), runtime_id="api-test")
+    client = _client(assistant, context)
+
+    response = client.post(
+        "/api/assistant/operational-picture/preview",
+        json={
+            "sections": ["missions", "health"],
+            "mission_ids": ["mission-a"],
+            "item_ids": {
+                "missions": ["mission-a"],
+                "health": ["backend"],
+            },
+            "operator_missions": [
+                {"mission_id": "mission-a", "name": "Browser draft"}
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["operational_picture"]["picture_revision"] == (
+        "api-test:preview"
+    )
+    assert assistant.calls == []
+    assert assistant.operational_picture_preview_calls == [
+        {
+            "sections": ["missions", "health"],
+            "mission_ids": ["mission-a"],
+            "operator_missions": [
+                {"mission_id": "mission-a", "name": "Browser draft"}
+            ],
+            "item_ids": {
+                "missions": ["mission-a"],
+                "health": ["backend"],
+            },
         }
     ]
 

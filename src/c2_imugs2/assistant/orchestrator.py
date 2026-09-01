@@ -202,16 +202,27 @@ class AssistantOrchestrator:
         self,
         operational_picture_options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Return the current model-safe projection without invoking the model."""
+        """Return selected and available model-safe views without invoking the model."""
 
         picture = self._next_picture(None)
-        projected = self._model_operational_picture(
+        selected = self._model_operational_picture(
             picture, operational_picture_options
         )
-        redacted = self._redact_sensitive_value(projected)
-        if not isinstance(redacted, dict):
+        available_options = dict(operational_picture_options or {})
+        available_options["sections"] = list(_MODEL_OPERATIONAL_SECTIONS)
+        available_options["mission_ids"] = None
+        available_options["item_ids"] = {}
+        available = self._model_operational_picture(picture, available_options)
+        redacted_selected = self._redact_sensitive_value(selected)
+        redacted_available = self._redact_sensitive_value(available)
+        if not isinstance(redacted_selected, dict) or not isinstance(
+            redacted_available, dict
+        ):
             raise AssistantInputError("operational picture projection is invalid")
-        return redacted
+        return {
+            "operational_picture": redacted_selected,
+            "available_operational_picture": redacted_available,
+        }
 
     def _prepare_turn(
         self,
@@ -360,7 +371,7 @@ class AssistantOrchestrator:
     ) -> dict[str, Any]:
         """Project internal runtime state into the model-facing environment view."""
 
-        selected_sections, selected_mission_ids, operator_missions = (
+        selected_sections, selected_mission_ids, operator_missions, item_ids = (
             self._operational_picture_selection(options)
         )
 
@@ -436,8 +447,9 @@ class AssistantOrchestrator:
             "current_environment": current_environment,
         }
         if "agents" in selected_sections:
-            projected["agents"] = self._project_model_section(
-                picture.sections["agents"]
+            projected["agents"] = self._filter_projected_items(
+                self._project_model_section(picture.sections["agents"]),
+                item_ids.get("agents"),
             )
         if "missions" in selected_sections:
             missions = self._project_model_section(picture.sections["missions"])
@@ -447,18 +459,29 @@ class AssistantOrchestrator:
                 selected_mission_ids,
                 observed_at=picture_dict["observed_at"],
             )
+            projected["missions"] = self._filter_projected_items(
+                projected["missions"], item_ids.get("missions")
+            )
         if "plans" in selected_sections:
             plans = self._project_model_section(picture.sections["plans"])
             projected["plans"] = self._filter_projected_missions(
                 plans, selected_mission_ids
             )
+            projected["plans"] = self._filter_projected_items(
+                projected["plans"], item_ids.get("plans")
+            )
         if "health" in selected_sections:
-            projected["health"] = self._project_model_section(
-                picture.sections["health"], excluded_item_ids={"storage-indexes"}
+            projected["health"] = self._filter_projected_items(
+                self._project_model_section(
+                    picture.sections["health"],
+                    excluded_item_ids={"storage-indexes"},
+                ),
+                item_ids.get("health"),
             )
         if "warnings" in selected_sections:
-            projected["warnings"] = self._project_model_section(
-                picture.sections["warnings"]
+            projected["warnings"] = self._filter_projected_items(
+                self._project_model_section(picture.sections["warnings"]),
+                item_ids.get("warnings"),
             )
         if options is not None:
             projected["context_selection"] = {
@@ -473,14 +496,23 @@ class AssistantOrchestrator:
                     if selected_mission_ids is None
                     else sorted(selected_mission_ids)
                 ),
+                "item_filters": {
+                    section: sorted(section_ids)
+                    for section, section_ids in sorted(item_ids.items())
+                },
             }
         return projected
 
     def _operational_picture_selection(
         self, options: Mapping[str, Any] | None
-    ) -> tuple[set[str], set[str] | None, list[dict[str, Any]]]:
+    ) -> tuple[
+        set[str],
+        set[str] | None,
+        list[dict[str, Any]],
+        dict[str, set[str]],
+    ]:
         if options is None:
-            return set(_MODEL_OPERATIONAL_SECTIONS), None, []
+            return set(_MODEL_OPERATIONAL_SECTIONS), None, [], {}
 
         raw_sections = options.get("sections")
         if not isinstance(raw_sections, list):
@@ -490,11 +522,6 @@ class AssistantOrchestrator:
             for section in raw_sections
             if isinstance(section, str) and section in _MODEL_OPERATIONAL_SECTIONS
         }
-        if not selected_sections:
-            raise AssistantInputError(
-                "operational picture must include at least one selectable section"
-            )
-
         raw_mission_ids = options.get("mission_ids")
         selected_mission_ids: set[str] | None = None
         if raw_mission_ids is not None:
@@ -533,7 +560,24 @@ class AssistantOrchestrator:
                     f"operator mission {mission_id!r} exceeds the context limit"
                 )
             operator_missions.append(dict(mission))
-        return selected_sections, selected_mission_ids, operator_missions
+
+        raw_item_ids = options.get("item_ids", {})
+        if not isinstance(raw_item_ids, Mapping):
+            raise AssistantInputError("operational picture item_ids must be an object")
+        item_ids: dict[str, set[str]] = {}
+        for section, raw_ids in raw_item_ids.items():
+            if section not in _MODEL_OPERATIONAL_SECTIONS:
+                continue
+            if not isinstance(raw_ids, list):
+                raise AssistantInputError(
+                    f"operational picture {section} item_ids must be a list"
+                )
+            item_ids[section] = {
+                self._model_safe_text(item_id.strip())
+                for item_id in raw_ids[:256]
+                if isinstance(item_id, str) and item_id.strip()
+            }
+        return selected_sections, selected_mission_ids, operator_missions, item_ids
 
     def _merge_operator_missions(
         self,
@@ -591,6 +635,21 @@ class AssistantOrchestrator:
                 for item in section.get("items", [])
                 if isinstance(item, Mapping)
                 and item.get("id") in selected_mission_ids
+            ],
+        }
+
+    @staticmethod
+    def _filter_projected_items(
+        section: dict[str, Any], selected_item_ids: set[str] | None
+    ) -> dict[str, Any]:
+        if selected_item_ids is None:
+            return section
+        return {
+            **section,
+            "items": [
+                item
+                for item in section.get("items", [])
+                if isinstance(item, Mapping) and item.get("id") in selected_item_ids
             ],
         }
 

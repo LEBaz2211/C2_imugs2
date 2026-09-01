@@ -16,11 +16,11 @@
       ],
       "source_refs": [
         {
-          "line": 353,
+          "line": 369,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 655,
+          "line": 661,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -43,7 +43,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 588,
+          "line": 594,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -62,11 +62,11 @@
       ],
       "source_refs": [
         {
-          "line": 222,
+          "line": 238,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 637,
+          "line": 643,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -100,7 +100,7 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 273,
+          "line": 289,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -119,11 +119,11 @@
       ],
       "source_refs": [
         {
-          "line": 269,
+          "line": 285,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 641,
+          "line": 647,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -146,7 +146,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 605,
+          "line": 611,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -169,7 +169,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 596,
+          "line": 602,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -226,7 +226,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 613,
+          "line": 619,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -266,7 +266,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 564,
+          "line": 570,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -289,7 +289,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 609,
+          "line": 615,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -308,11 +308,11 @@
       ],
       "source_refs": [
         {
-          "line": 200,
+          "line": 216,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 625,
+          "line": 631,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -335,7 +335,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 600,
+          "line": 606,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -358,7 +358,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 560,
+          "line": 566,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -377,11 +377,11 @@
       ],
       "source_refs": [
         {
-          "line": 232,
+          "line": 248,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 580,
+          "line": 586,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -400,11 +400,11 @@
       ],
       "source_refs": [
         {
-          "line": 239,
+          "line": 255,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 576,
+          "line": 582,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -423,11 +423,11 @@
       ],
       "source_refs": [
         {
-          "line": 314,
+          "line": 330,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 645,
+          "line": 651,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -446,11 +446,11 @@
       ],
       "source_refs": [
         {
-          "line": 291,
+          "line": 307,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 649,
+          "line": 655,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -473,7 +473,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 584,
+          "line": 590,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -496,7 +496,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 568,
+          "line": 574,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -515,11 +515,11 @@
       ],
       "source_refs": [
         {
-          "line": 193,
+          "line": 209,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 621,
+          "line": 627,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -538,11 +538,11 @@
       ],
       "source_refs": [
         {
-          "line": 208,
+          "line": 224,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 629,
+          "line": 635,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -561,11 +561,11 @@
       ],
       "source_refs": [
         {
-          "line": 215,
+          "line": 231,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 633,
+          "line": 639,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -584,11 +584,11 @@
       ],
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         },
         {
-          "line": 572,
+          "line": 578,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -605,7 +605,7 @@
       "producers": [],
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -628,7 +628,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 617,
+          "line": 623,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -651,7 +651,7 @@
           "path": "src/c2_imugs2/api/app.py"
         },
         {
-          "line": 592,
+          "line": 598,
           "path": "frontend/src/api.ts"
         }
       ]
@@ -4820,7 +4820,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 353,
+          "line": 369,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -4856,7 +4856,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 222,
+          "line": 238,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -4892,7 +4892,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 273,
+          "line": 289,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -4910,7 +4910,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 269,
+          "line": 285,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5072,7 +5072,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 200,
+          "line": 216,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5126,7 +5126,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 232,
+          "line": 248,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5144,7 +5144,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 239,
+          "line": 255,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5162,7 +5162,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 314,
+          "line": 330,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5180,7 +5180,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 291,
+          "line": 307,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5234,7 +5234,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 193,
+          "line": 209,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5252,7 +5252,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 208,
+          "line": 224,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5270,7 +5270,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 215,
+          "line": 231,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5288,7 +5288,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -5306,7 +5306,7 @@
       "layer": "http",
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ]
@@ -9124,7 +9124,7 @@
     }
   ],
   "schema_version": 2,
-  "source_digest": "27eb96b0901cc31c",
+  "source_digest": "0e90a6a6c42261fe",
   "state_machines": [
     {
       "description": "Allowed mission status transitions enforced by MissionManager.",
@@ -9837,7 +9837,7 @@
       "relationship": "handled by reset_conversation",
       "source_refs": [
         {
-          "line": 353,
+          "line": 369,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -9852,7 +9852,7 @@
       "relationship": "resetAssistantConversation",
       "source_refs": [
         {
-          "line": 655,
+          "line": 661,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9867,7 +9867,7 @@
       "relationship": "deleteMapFeature",
       "source_refs": [
         {
-          "line": 588,
+          "line": 594,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9897,7 +9897,7 @@
       "relationship": "forgetMission",
       "source_refs": [
         {
-          "line": 637,
+          "line": 643,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9912,7 +9912,7 @@
       "relationship": "handled by forget",
       "source_refs": [
         {
-          "line": 222,
+          "line": 238,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -9942,7 +9942,7 @@
       "relationship": "handled by operational_picture",
       "source_refs": [
         {
-          "line": 273,
+          "line": 289,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -9957,7 +9957,7 @@
       "relationship": "getAssistantStatus",
       "source_refs": [
         {
-          "line": 641,
+          "line": 647,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -9972,7 +9972,7 @@
       "relationship": "handled by assistant_status",
       "source_refs": [
         {
-          "line": 269,
+          "line": 285,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -9987,7 +9987,7 @@
       "relationship": "getContracts",
       "source_refs": [
         {
-          "line": 605,
+          "line": 611,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10017,7 +10017,7 @@
       "relationship": "getDiagnostics",
       "source_refs": [
         {
-          "line": 596,
+          "line": 602,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10077,7 +10077,7 @@
       "relationship": "getLegacyTrace",
       "source_refs": [
         {
-          "line": 613,
+          "line": 619,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10122,7 +10122,7 @@
       "relationship": "getOsmRoads",
       "source_refs": [
         {
-          "line": 564,
+          "line": 570,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10152,7 +10152,7 @@
       "relationship": "getMissionExamples",
       "source_refs": [
         {
-          "line": 609,
+          "line": 615,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10182,7 +10182,7 @@
       "relationship": "getMissionState",
       "source_refs": [
         {
-          "line": 625,
+          "line": 631,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10197,7 +10197,7 @@
       "relationship": "handled by get_mission",
       "source_refs": [
         {
-          "line": 200,
+          "line": 216,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10212,7 +10212,7 @@
       "relationship": "getPlanningDiagnostics",
       "source_refs": [
         {
-          "line": 600,
+          "line": 606,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10242,7 +10242,7 @@
       "relationship": "getRuntimeBootstrap",
       "source_refs": [
         {
-          "line": 560,
+          "line": 566,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10272,7 +10272,7 @@
       "relationship": "getScenarios",
       "source_refs": [
         {
-          "line": 580,
+          "line": 586,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10287,7 +10287,7 @@
       "relationship": "handled by catalog",
       "source_refs": [
         {
-          "line": 232,
+          "line": 248,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10302,7 +10302,7 @@
       "relationship": "getActiveScenario",
       "source_refs": [
         {
-          "line": 576,
+          "line": 582,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10317,7 +10317,7 @@
       "relationship": "handled by active",
       "source_refs": [
         {
-          "line": 239,
+          "line": 255,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10332,7 +10332,7 @@
       "relationship": "handled by send_message",
       "source_refs": [
         {
-          "line": 314,
+          "line": 330,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10347,7 +10347,7 @@
       "relationship": "sendAssistantMessage",
       "source_refs": [
         {
-          "line": 645,
+          "line": 651,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10362,7 +10362,7 @@
       "relationship": "handled by operational_picture_preview",
       "source_refs": [
         {
-          "line": 291,
+          "line": 307,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10377,7 +10377,7 @@
       "relationship": "previewAssistantOperationalPicture",
       "source_refs": [
         {
-          "line": 649,
+          "line": 655,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10392,7 +10392,7 @@
       "relationship": "createMapFeature",
       "source_refs": [
         {
-          "line": 584,
+          "line": 590,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10437,7 +10437,7 @@
       "relationship": "queryOsmRoads",
       "source_refs": [
         {
-          "line": 568,
+          "line": 574,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10452,7 +10452,7 @@
       "relationship": "handled by init_mission",
       "source_refs": [
         {
-          "line": 193,
+          "line": 209,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10467,7 +10467,7 @@
       "relationship": "initMission",
       "source_refs": [
         {
-          "line": 621,
+          "line": 627,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10482,7 +10482,7 @@
       "relationship": "approveMission",
       "source_refs": [
         {
-          "line": 629,
+          "line": 635,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10497,7 +10497,7 @@
       "relationship": "handled by approve",
       "source_refs": [
         {
-          "line": 208,
+          "line": 224,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10512,7 +10512,7 @@
       "relationship": "handled by start",
       "source_refs": [
         {
-          "line": 215,
+          "line": 231,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10527,7 +10527,7 @@
       "relationship": "startMission",
       "source_refs": [
         {
-          "line": 633,
+          "line": 639,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10542,7 +10542,7 @@
       "relationship": "handled by activate",
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10557,7 +10557,7 @@
       "relationship": "launchScenario",
       "source_refs": [
         {
-          "line": 572,
+          "line": 578,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10572,7 +10572,7 @@
       "relationship": "handled by activate",
       "source_refs": [
         {
-          "line": 244,
+          "line": 260,
           "path": "src/c2_imugs2/api/routers.py"
         }
       ],
@@ -10602,7 +10602,7 @@
       "relationship": "resetLegacyRuntime",
       "source_refs": [
         {
-          "line": 617,
+          "line": 623,
           "path": "frontend/src/api.ts"
         }
       ],
@@ -10632,7 +10632,7 @@
       "relationship": "updateMapFeature",
       "source_refs": [
         {
-          "line": 592,
+          "line": 598,
           "path": "frontend/src/api.ts"
         }
       ],

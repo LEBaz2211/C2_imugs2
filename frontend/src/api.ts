@@ -487,6 +487,12 @@ export type AssistantOperationalPictureOptions = {
   sections: AssistantOperationalPictureSection[];
   mission_ids?: string[] | null;
   operator_missions?: MissionConfig[];
+  item_ids?: Partial<Record<AssistantOperationalPictureSection, string[]>>;
+};
+
+export type AssistantOperationalPicturePreview = {
+  operational_picture: Record<string, unknown>;
+  available_operational_picture: Record<string, unknown>;
 };
 
 export type AssistantDebugModelMessage = {
@@ -648,7 +654,7 @@ export async function sendAssistantMessage(request: AssistantMessageRequest): Pr
 
 export async function previewAssistantOperationalPicture(
   options: AssistantOperationalPictureOptions,
-): Promise<Record<string, unknown>> {
+): Promise<AssistantOperationalPicturePreview> {
   return postJson("/api/assistant/operational-picture/preview", options);
 }
 

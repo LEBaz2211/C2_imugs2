@@ -517,6 +517,7 @@ def test_model_operational_picture_applies_section_and_browser_mission_selection
         {
             "sections": ["missions", "plans"],
             "mission_ids": ["mission-visible"],
+            "item_ids": {"missions": ["mission-visible"]},
             "operator_missions": [
                 {"mission_id": "mission-hidden", "name": "Hidden"},
                 {"mission_id": "mission-visible", "name": "Visible"},
@@ -541,6 +542,51 @@ def test_model_operational_picture_applies_section_and_browser_mission_selection
     assert mission["data"]["operator_working_copy"]["name"] == "Visible"
     assert projected["plans"]["items"] == []
     assert projected["context_selection"]["mission_filter"] == ["mission-visible"]
+    assert projected["context_selection"]["item_filters"] == {
+        "missions": ["mission-visible"]
+    }
+
+
+def test_operational_picture_preview_uses_same_projection_without_model_call() -> None:
+    settings = AssistantSettings()
+    model = FakeChatModel(['{"answer":"must not be used"}'])
+    assistant = AssistantOrchestrator(
+        context=RevisionContext(),
+        model=LangChainOpenAIProvider(settings, model=model),
+        settings=settings,
+        picture_materializer=picture_materializer,
+    )
+
+    preview = assistant.preview_operational_picture(
+        {
+            "sections": ["missions"],
+            "mission_ids": ["mission-visible"],
+            "item_ids": {"missions": ["mission-visible"]},
+            "operator_missions": [
+                {"mission_id": "mission-hidden", "name": "Hidden"},
+                {"mission_id": "mission-visible", "name": "Visible"},
+            ],
+        }
+    )
+
+    assert model.invocations == []
+    selected = preview["operational_picture"]
+    available = preview["available_operational_picture"]
+    assert [item["id"] for item in selected["missions"]["items"]] == [
+        "mission-visible"
+    ]
+    assert [item["id"] for item in available["missions"]["items"]] == [
+        "mission-hidden",
+        "mission-visible",
+    ]
+    assert set(available) >= {
+        "current_environment",
+        "agents",
+        "missions",
+        "plans",
+        "health",
+        "warnings",
+    }
 
 
 def test_debug_messages_match_the_request_and_never_include_credentials(

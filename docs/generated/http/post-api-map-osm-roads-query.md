@@ -19,7 +19,7 @@ FastAPI handler `query_osm_roads`
 | Relationship | Contract | Evidence |
 |---|---|---|
 | handled by query_osm_roads | `—` | [`src/c2_imugs2/api/app.py:320`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L320) |
-| queryOsmRoads | `—` | [`frontend/src/api.ts:568`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L568) |
+| queryOsmRoads | `—` | [`frontend/src/api.ts:574`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L574) |
 
 ## Definition evidence
 

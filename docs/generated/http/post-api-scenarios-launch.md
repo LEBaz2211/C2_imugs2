@@ -18,8 +18,8 @@ FastAPI handler `activate`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by activate | `—` | [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244) |
+| handled by activate | `—` | [`src/c2_imugs2/api/routers.py:260`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L260) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:244`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L244)
+- [`src/c2_imugs2/api/routers.py:260`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L260)

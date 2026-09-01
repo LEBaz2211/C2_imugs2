@@ -111,12 +111,16 @@ The model-facing picture contains:
   issue a second, independent plan ID;
 - `health` and `warnings`: source failures, freshness, and adapter diagnostics.
 
-The assistant header exposes an **Operational picture** selector. The active
-world is always included for safe grounding; the operator can include or omit
-vehicles, missions, runtime plans, health, and warnings, and can scope mission
-and plan context to all or selected mission IDs. This selection changes only
-the model-facing projection for a turn. It does not mutate the revisioned
-backend read model or any runtime record.
+The assistant header exposes an **Operational picture** selector shaped like
+the model-facing object. The active `current_environment` key is always
+included for safe grounding. Each optional top-level section shows its current
+freshness, available/sent item counts, full item IDs, and per-item checkboxes;
+mission and plan scope is shared because plan items are keyed by mission ID.
+The selector also renders the exact redacted JSON projection for the next
+turn. Its read-only preview endpoint runs the same projection code as Send but
+does not invoke the model. Runtime state is read again on Send, so the preview
+is an accurate live representation rather than a frozen command payload. These
+choices do not mutate the revisioned backend read model or runtime records.
 
 The former C2 **Plan** tab displayed `createTaskPlan()` output generated in the
 browser from the current mission definition. That preview is not planner
@@ -179,7 +183,7 @@ Mission feedback with non-empty task waypoints proves a usable path. Planner
 | `frontend/src/assistantHistory.ts` | Persists and bounds browser conversations; strips debug traces or evicts old conversations if storage is full. |
 | `frontend/src/api.ts` | Typed HTTP client for assistant and mission endpoints plus the ROS-derived SSE event stream. |
 | `src/c2_imugs2/api/app.py` | `create_app()` composes runtime services, lazy assistant construction, status reporting, mission state, and event normalization. |
-| `src/c2_imugs2/api/routers.py` | Defines assistant endpoints and runs the deterministic post-model proposal and environment-binding gate. |
+| `src/c2_imugs2/api/routers.py` | Defines assistant message and read-only model-projection preview endpoints and runs the deterministic post-model proposal and environment-binding gate. |
 | `src/c2_imugs2/assistant/config.py` | Loads validated non-secret LM Studio and context limits from environment variables. |
 | `src/c2_imugs2/assistant/factory.py` | Wires the context service, LangChain provider, prompts, and orchestrator without contacting the model. |
 | `src/c2_imugs2/assistant/prompts.py` | Loads editable versioned prompt files and constructs `ChatPromptTemplate`. |

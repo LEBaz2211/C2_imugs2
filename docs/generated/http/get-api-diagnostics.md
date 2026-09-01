@@ -18,7 +18,7 @@ FastAPI handler `diagnostics`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getDiagnostics | `—` | [`frontend/src/api.ts:596`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L596) |
+| getDiagnostics | `—` | [`frontend/src/api.ts:602`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L602) |
 | handled by diagnostics | `—` | [`src/c2_imugs2/api/app.py:186`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L186) |
 
 ## Definition evidence
