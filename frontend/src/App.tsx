@@ -1,15 +1,17 @@
-import { ArrowLeft, Bot, Bug, CheckCircle2, Clock, FileJson, GripVertical, ListChecks, MapPinned, Play, Plus, RefreshCw, Route, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
+import { ArrowLeft, Bot, Bug, CheckCircle2, Clock, FileJson, Globe, GripVertical, ListChecks, MapPinned, Play, Plus, RefreshCw, Route, ScanEye, Send, Settings2, ShieldCheck, SlidersHorizontal, Target, Trash2, Workflow, XCircle } from "lucide-react";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   approveMission,
+  createLiveFeature,
   createMapFeature,
   createEventSource,
   deleteMapFeature,
+  deleteLiveFeature,
   forgetMission as forgetMissionRecord,
   getContracts,
-  getActiveScenario,
+  getActiveWorld,
   getAssistantStatus,
   getDiagnostics,
   getLegacyTrace,
@@ -18,22 +20,19 @@ import {
   getOsmRoads,
   getPlanningDiagnostics,
   getRuntimeBootstrap,
-  getScenarios,
+  getWorlds,
   initMission,
-  launchScenario,
-  queryOsmRoads,
-  previewAssistantOperationalPicture,
+  launchWorld,
   resetLegacyRuntime,
   resetAssistantConversation,
   sendAssistantMessage,
   startMission,
   updateMapFeature,
+  updateLiveFeature,
   type AgentUpdateEvent,
   type AssistantDebugTrace,
   type AssistantMessageResponse,
   type AssistantOperationalPictureOptions,
-  type AssistantOperationalPicturePreview,
-  type AssistantOperationalPictureSection,
   type AssistantStatus,
   type ContractGraph,
   type DiagnosticsState,
@@ -41,14 +40,14 @@ import {
   type LegacyTrace,
   type MissionExample,
   type MissionState,
-  type OsmRoadImportRequest,
   type PlanningDiagnostics,
-  type PlanningScenario,
-  type PlanningScenarioAnalysis,
+  type PlanningVariant,
+  type PlanningVariantAnalysis,
   type PlannerUpdateEvent,
-  type ScenarioLaunchRequest,
-  type ScenarioLaunchResult,
-  type ScenarioCatalogEntry,
+  type WorldLaunchRequest,
+  type WorldLaunchResult,
+  type WorldCatalogEntry,
+  type WorldBinding,
 } from "./api";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -71,90 +70,135 @@ import {
   type AssistantTranscriptItem,
 } from "./assistantHistory";
 import { editJsonForKey, jsonCursorPosition } from "./jsonEditor";
-import { createTaskPlan, normalizeMission, validateMission } from "./mission";
+import { createTaskPlan, normalizeMission, relocateMissionInlineGeometry, validateMission } from "./mission";
+import { migrateLegacyBrowserData } from "./legacyWorldMigration";
+import { AssistantContextPage, normalizeExcludePaths } from "./AssistantContextPage";
 import { ContractExplorer } from "./ContractExplorer";
 import { MapView, type DraftMapFeature } from "./MapView";
-import { ScenarioLab, loadScenarioContextLibrary, type ScenarioAgentPlacement, type ScenarioContextLibrary, type ScenarioMapView } from "./ScenarioLab";
+import { WorldBuilder, loadWorldContextLibrary, type WorldAgentPlacement, type WorldContextLibrary, type WorldFeatureDeletion, type WorldMapView } from "./WorldBuilder";
+import { WorldPicker } from "./WorldPicker";
 import type { Agent, MapFeature, MissionConfig } from "./types";
+import {
+  deploymentIdentity,
+  mapFeaturesFromGeojson,
+  projectActiveDeploymentGeojson,
+  projectDefinitionGeojson,
+  projectDefinitionMapFeatures,
+  sameActiveWorldProjection,
+  sameWorldBinding,
+  worldBindingFromActiveWorld,
+} from "./worldIsolation";
 
 const LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5";
 const HIDDEN_MISSIONS_STORAGE_KEY = "c2_imugs2_hidden_missions";
 const ASSISTANT_MISSION_DRAFTS_STORAGE_KEY = "c2_imugs2_assistant_mission_drafts_v1";
-const ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY = "c2_imugs2_assistant_operational_picture_v1";
+const ASSISTANT_CONTEXT_FILTER_STORAGE_KEY = "c2_imugs2_assistant_context_filter_v1";
+const ALL_ASSISTANT_CONTEXT_SECTIONS = ["agents", "missions", "plans", "health", "warnings"] as const;
 const RIGHT_PANE_WIDTHS_STORAGE_KEY = "c2_imugs2_right_pane_widths";
-const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, scenario: 860 } as const;
-const MIN_RIGHT_PANE_WIDTHS = { c2: 380, scenario: 520 } as const;
+const DEFAULT_RIGHT_PANE_WIDTHS = { c2: 540, world: 860 } as const;
+const MIN_RIGHT_PANE_WIDTHS = { c2: 380, world: 520 } as const;
 const MIN_MAP_WIDTH = 360;
 const RESIZE_HANDLE_WIDTH = 8;
 
 type ResizableWorkspace = keyof typeof DEFAULT_RIGHT_PANE_WIDTHS;
-type AssistantOperationalPicturePreferences = {
-  sections: AssistantOperationalPictureSection[];
-  allMissions: boolean;
-  missionIds: string[];
-  itemIds: Partial<Record<AssistantOperationalPictureSection, string[]>>;
-};
+type Workspace = "c2" | "world" | "contracts" | "context";
 
-const DEFAULT_ASSISTANT_OPERATIONAL_PICTURE: AssistantOperationalPicturePreferences = {
-  sections: ["agents", "missions", "plans", "health", "warnings"],
-  allMissions: true,
-  missionIds: [],
-  itemIds: {},
-};
-
-function readAssistantOperationalPicturePreferences(): AssistantOperationalPicturePreferences {
-  if (typeof window === "undefined") return DEFAULT_ASSISTANT_OPERATIONAL_PICTURE;
+function readAssistantContextExcludePaths(): string[] {
+  if (typeof window === "undefined") return [];
   try {
-    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY) ?? "{}") as Partial<AssistantOperationalPicturePreferences>;
-    const sections = Array.isArray(stored.sections)
-      ? stored.sections.filter((section): section is AssistantOperationalPictureSection => DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections.includes(section as AssistantOperationalPictureSection))
-      : DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections;
-    const itemIds = Object.fromEntries(
-      Object.entries(stored.itemIds ?? {}).flatMap(([section, ids]) => (
-        DEFAULT_ASSISTANT_OPERATIONAL_PICTURE.sections.includes(section as AssistantOperationalPictureSection) && Array.isArray(ids)
-          ? [[section, ids.filter((itemId): itemId is string => typeof itemId === "string")]]
-          : []
-      )),
-    ) as Partial<Record<AssistantOperationalPictureSection, string[]>>;
-    return {
-      sections,
-      allMissions: stored.allMissions !== false,
-      missionIds: Array.isArray(stored.missionIds) ? stored.missionIds.filter((missionId): missionId is string => typeof missionId === "string") : [],
-      itemIds,
-    };
+    const stored = JSON.parse(window.localStorage.getItem(ASSISTANT_CONTEXT_FILTER_STORAGE_KEY) ?? "[]") as unknown;
+    if (!Array.isArray(stored)) return [];
+    return normalizeExcludePaths(stored.filter((path): path is string => typeof path === "string" && path.trim().length > 0));
   } catch {
-    return DEFAULT_ASSISTANT_OPERATIONAL_PICTURE;
+    return [];
   }
 }
 
+function operatorMissionConfigs(
+  missions: { mission_id: string; config?: MissionConfig }[],
+): MissionConfig[] {
+  return missions
+    .filter((mission) => mission.config)
+    .map((mission) => mission.config as MissionConfig)
+    .slice(0, 64);
+}
+
+function agentGroupCenter(agents: Agent[]): [number, number] | undefined {
+  const locations = agents.map((agent) => agent.current_location).filter((point) => (
+    Array.isArray(point)
+    && point.length === 2
+    && point.every((value) => typeof value === "number" && Number.isFinite(value))
+  ));
+  if (!locations.length) return undefined;
+  return [
+    locations.reduce((sum, point) => sum + point[0], 0) / locations.length,
+    locations.reduce((sum, point) => sum + point[1], 0) / locations.length,
+  ];
+}
+
+function riskSafeRoadAnchor(snapshot: FeatureCollection | undefined, preferred?: [number, number]): [number, number] | undefined {
+  if (!snapshot || !preferred) return undefined;
+  const risks = snapshot.features.flatMap((feature) => {
+    if (feature.properties?.feature_type !== "risk" || feature.geometry.type !== "Polygon") return [];
+    return [feature.geometry.coordinates];
+  });
+  const candidates = snapshot.features.flatMap((feature) => {
+    if (feature.geometry.type !== "LineString") return [];
+    return feature.geometry.coordinates.filter((point): point is [number, number] => {
+      if (!isCoordinatePair(point)) return false;
+      return !risks.some((polygon) => pointInPolygon(point, polygon));
+    });
+  });
+  return candidates.reduce<[number, number] | undefined>((nearest, point) => {
+    if (!nearest) return point;
+    return approximateDistanceSquared(point, preferred) < approximateDistanceSquared(nearest, preferred) ? point : nearest;
+  }, undefined);
+}
+
+function isCoordinatePair(point: number[]): point is [number, number] {
+  return point.length === 2 && point.every((value) => Number.isFinite(value));
+}
+
+function pointInPolygon(point: [number, number], rings: number[][][]): boolean {
+  if (!rings.length || !pointInRing(point, rings[0])) return false;
+  return !rings.slice(1).some((ring) => pointInRing(point, ring));
+}
+
+function pointInRing(point: [number, number], ring: number[][]): boolean {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const currentPoint = ring[index];
+    const previousPoint = ring[previous];
+    if (!currentPoint || !previousPoint) continue;
+    const crosses = (currentPoint[1] > point[1]) !== (previousPoint[1] > point[1]);
+    if (crosses && point[0] < ((previousPoint[0] - currentPoint[0]) * (point[1] - currentPoint[1])) / (previousPoint[1] - currentPoint[1]) + currentPoint[0]) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function approximateDistanceSquared(left: [number, number], right: [number, number]) {
+  const latitudeScale = Math.cos((right[1] * Math.PI) / 180);
+  const dx = (left[0] - right[0]) * latitudeScale;
+  const dy = left[1] - right[1];
+  return dx * dx + dy * dy;
+}
+
 function buildAssistantOperationalPictureOptions(
-  preferences: AssistantOperationalPicturePreferences,
+  excludePaths: string[],
   missions: { mission_id: string; config?: MissionConfig }[],
 ): AssistantOperationalPictureOptions {
-  const missionIds = preferences.allMissions
-    ? undefined
-    : preferences.missionIds.filter((missionId) => missions.some((mission) => mission.mission_id === missionId));
-  const itemIds = { ...preferences.itemIds };
-  delete itemIds.missions;
-  delete itemIds.plans;
-  if (missionIds) {
-    itemIds.missions = missionIds;
-    itemIds.plans = missionIds;
-  }
   return {
-    sections: preferences.sections,
-    mission_ids: missionIds,
-    operator_missions: missions
-      .filter((mission) => mission.config)
-      .map((mission) => mission.config as MissionConfig)
-      .slice(0, 64),
-    item_ids: itemIds,
+    sections: [...ALL_ASSISTANT_CONTEXT_SECTIONS],
+    operator_missions: operatorMissionConfigs(missions),
+    exclude_paths: excludePaths,
   };
 }
 
 function advancedUiGateEnabled() {
   if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("assistantDebug") === "1";
+  return new URLSearchParams(window.location.search).get("debug") === "1";
 }
 
 function assistantProposalConfig(response?: AssistantMessageResponse): MissionConfig | undefined {
@@ -240,18 +284,18 @@ function readRightPaneWidths(): Record<ResizableWorkspace, number> {
     const saved = JSON.parse(window.localStorage.getItem(RIGHT_PANE_WIDTHS_STORAGE_KEY) ?? "{}") as Partial<Record<ResizableWorkspace, unknown>>;
     return {
       c2: typeof saved.c2 === "number" && Number.isFinite(saved.c2) ? Math.max(MIN_RIGHT_PANE_WIDTHS.c2, saved.c2) : DEFAULT_RIGHT_PANE_WIDTHS.c2,
-      scenario: typeof saved.scenario === "number" && Number.isFinite(saved.scenario) ? Math.max(MIN_RIGHT_PANE_WIDTHS.scenario, saved.scenario) : DEFAULT_RIGHT_PANE_WIDTHS.scenario,
+      world: typeof saved.world === "number" && Number.isFinite(saved.world) ? Math.max(MIN_RIGHT_PANE_WIDTHS.world, saved.world) : DEFAULT_RIGHT_PANE_WIDTHS.world,
     };
   } catch {
     return { ...DEFAULT_RIGHT_PANE_WIDTHS };
   }
 }
 
-function loadInitialScenarioState() {
-  const library = loadScenarioContextLibrary();
+function loadInitialWorldState() {
+  const library = loadWorldContextLibrary();
   return {
     library,
-    activeId: library.active_scenario_id || undefined,
+    activeId: library.active_world_id || undefined,
   };
 }
 
@@ -271,38 +315,7 @@ function writeHiddenMissionIds(ids: Set<string>) {
 }
 
 function isUserMapFeature(feature: MapFeature) {
-  return feature.properties?.source === "user";
-}
-
-function geoJsonFeatureId(feature: Feature) {
-  const featureId = feature.properties?.feature_id ?? feature.id;
-  return typeof featureId === "string" ? featureId : undefined;
-}
-
-function isScenarioVisibleMapFeature(feature: MapFeature, scenarioFeatureIds: Set<string>) {
-  return scenarioFeatureIds.has(feature.feature_id);
-}
-
-function filterGeojsonForScenario(collection: FeatureCollection | undefined, scenarioFeatureIds: Set<string>): FeatureCollection | undefined {
-  if (!collection) return collection;
-  return {
-    ...collection,
-    features: collection.features.filter((feature) => {
-      const featureId = geoJsonFeatureId(feature);
-      return featureId !== undefined && scenarioFeatureIds.has(featureId);
-    }),
-  };
-}
-
-function frozenWorldRoads(roadImports: ScenarioCatalogEntry["road_imports"] = []): FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: roadImports.flatMap((roadImport) => roadImport.geojson.features),
-  };
-}
-
-function flattenGeoJsonPoints(collection: FeatureCollection | undefined) {
-  return collection?.features.flatMap((feature) => flattenCoordinatePoints(geoJsonCoordinates(feature.geometry))) ?? [];
+  return ["user", "authoring", "live_overlay"].includes(String(feature.properties?.source ?? ""));
 }
 
 function geoJsonCoordinates(geometry: Geometry | null | undefined) {
@@ -315,8 +328,8 @@ function flattenCoordinatePoints(value: unknown): [number, number][] {
   return value.flatMap((item) => flattenCoordinatePoints(item));
 }
 
-function mapViewKey(scenarioId: string, view: ScenarioMapView) {
-  return `${scenarioId}:${view.center[0].toFixed(7)},${view.center[1].toFixed(7)},${view.zoom}`;
+function mapViewKey(worldId: string, view: WorldMapView) {
+  return `${worldId}:${view.center[0].toFixed(7)},${view.center[1].toFixed(7)},${view.zoom}`;
 }
 
 function geometryLiteralFromFeature(feature: MapFeature) {
@@ -367,6 +380,7 @@ export default function App() {
     ...readAssistantMissionDrafts(),
   }));
   const [missionStates, setMissionStates] = useState<Record<string, MissionState>>({});
+  const [missionWorldBindings, setMissionWorldBindings] = useState<Record<string, WorldBinding>>({});
   const [hiddenMissionIds, setHiddenMissionIds] = useState<Set<string>>(() => readHiddenMissionIds());
   const [showNewMission, setShowNewMission] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState | undefined>();
@@ -376,7 +390,7 @@ export default function App() {
   const [contractsError, setContractsError] = useState("");
   const [planningDiagnostics, setPlanningDiagnostics] = useState<PlanningDiagnostics | undefined>();
   const [planningDiagnosticsBusy, setPlanningDiagnosticsBusy] = useState(false);
-  const [selectedPlanningScenarioId, setSelectedPlanningScenarioId] = useState<string | undefined>();
+  const [selectedPlanningVariantId, setSelectedPlanningVariantId] = useState<string | undefined>();
   const [legacyResetResult, setLegacyResetResult] = useState<LegacyResetResult | undefined>();
   const [legacyResetBusy, setLegacyResetBusy] = useState(false);
   const [plannerState, setPlannerState] = useState<PlannerUpdateEvent | undefined>();
@@ -385,23 +399,23 @@ export default function App() {
   const [busyCommand, setBusyCommand] = useState<"init" | "approve" | "start" | undefined>();
   const [busyCommandMissionId, setBusyCommandMissionId] = useState<string | undefined>();
   const [initRequestedAt, setInitRequestedAt] = useState<number | undefined>();
-  const [nowMs, setNowMs] = useState(Date.now());
   const [tab, setTab] = useState("mission");
-  const [workspace, setWorkspace] = useState<"c2" | "scenario" | "contracts">("c2");
+  const [workspace, setWorkspace] = useState<Workspace>("c2");
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | undefined>();
-  const [scenarioAgents, setScenarioAgents] = useState<Agent[]>([]);
-  const [scenarioFeatureIds, setScenarioFeatureIds] = useState<string[]>([]);
-  const [scenarioRoads, setScenarioRoads] = useState<FeatureCollection | undefined>();
-  const [scenarioState, setScenarioState] = useState<{ library: ScenarioContextLibrary; activeId?: string }>(() => loadInitialScenarioState());
-  const [activeScenarioRuntime, setActiveScenarioRuntime] = useState<ScenarioLaunchResult | undefined>();
-  const [scenarioCatalog, setScenarioCatalog] = useState<ScenarioCatalogEntry[]>([]);
-  const [pendingScenarioFeatureToAdd, setPendingScenarioFeatureToAdd] = useState<{ featureId: string; scenarioId: string; nonce: number } | undefined>();
-  const [pendingScenarioAgentPlacement, setPendingScenarioAgentPlacement] = useState<ScenarioAgentPlacement | undefined>();
-  const [placingScenarioAgentId, setPlacingScenarioAgentId] = useState<string | undefined>();
+  const [worldAgents, setWorldAgents] = useState<Agent[]>([]);
+  const [worldFeatureIds, setWorldFeatureIds] = useState<string[]>([]);
+  const [worldRoads, setWorldRoads] = useState<FeatureCollection | undefined>();
+  const [worldState, setWorldState] = useState<{ library: WorldContextLibrary; activeId?: string }>(() => loadInitialWorldState());
+  const [activeWorldRuntime, setActiveWorldRuntime] = useState<WorldLaunchResult | undefined>();
+  const [worldCatalog, setWorldCatalog] = useState<WorldCatalogEntry[]>([]);
+  const [pendingWorldFeatureToAdd, setPendingWorldFeatureToAdd] = useState<{ featureId: string; worldId: string; nonce: number } | undefined>();
+  const [pendingWorldFeatureToDelete, setPendingWorldFeatureToDelete] = useState<WorldFeatureDeletion | undefined>();
+  const [pendingWorldAgentPlacement, setPendingWorldAgentPlacement] = useState<WorldAgentPlacement | undefined>();
+  const [placingWorldAgentId, setPlacingWorldAgentId] = useState<string | undefined>();
   const [mapFocus, setMapFocus] = useState<{ featureIds: string[]; nonce: number } | undefined>();
   const [mapFocusPoints, setMapFocusPoints] = useState<{ points: [number, number][]; nonce: number } | undefined>();
-  const [currentMapView, setCurrentMapView] = useState<ScenarioMapView | undefined>();
-  const [mapViewFocus, setMapViewFocus] = useState<{ view: ScenarioMapView; nonce: number } | undefined>();
+  const [currentMapView, setCurrentMapView] = useState<WorldMapView | undefined>();
+  const [mapViewFocus, setMapViewFocus] = useState<{ view: WorldMapView; nonce: number } | undefined>();
   const [mapDraftResetNonce, setMapDraftResetNonce] = useState(0);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("");
@@ -410,14 +424,17 @@ export default function App() {
   const [assistantBusy, setAssistantBusy] = useState(false);
   const [assistantError, setAssistantError] = useState("");
   const [assistantDebugEnabled, setAssistantDebugEnabled] = useState(false);
-  const [assistantOperationalPicture, setAssistantOperationalPicture] = useState<AssistantOperationalPicturePreferences>(
-    () => readAssistantOperationalPicturePreferences(),
+  const [assistantContextExcludePaths, setAssistantContextExcludePaths] = useState<string[]>(
+    () => readAssistantContextExcludePaths(),
   );
   const [advancedUiAvailable] = useState(() => advancedUiGateEnabled());
   const [rightPaneWidths, setRightPaneWidths] = useState<Record<ResizableWorkspace, number>>(() => readRightPaneWidths());
   const activeMissionIdRef = useRef<string | undefined>();
   const draftMissionIdRef = useRef<string | undefined>();
-  const focusedScenarioViewRef = useRef<string | undefined>();
+  const focusedWorldViewRef = useRef<string | undefined>();
+  const pendingAgentUpdatesRef = useRef(new Map<string, AgentUpdateEvent>());
+  const agentUpdateFrameRef = useRef<number | undefined>();
+  const focusedRuntimeViewRef = useRef<string | undefined>();
   const missionJsonRef = useRef<HTMLTextAreaElement | null>(null);
   const rightPaneRef = useRef<HTMLElement | null>(null);
   const paneScrollRef = useRef<HTMLElement | null>(null);
@@ -426,14 +443,17 @@ export default function App() {
   const assistantConversationId = activeAssistantConversation.conversationId;
   const assistantMessages = activeAssistantConversation.messages;
   const assistantConversationHistory = assistantConversationSummaries(assistantConversationStore);
+  const applyActiveWorldRuntime = useCallback((next: WorldLaunchResult) => {
+    setActiveWorldRuntime((current) => sameActiveWorldProjection(current, next) ? current : next);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(RIGHT_PANE_WIDTHS_STORAGE_KEY, JSON.stringify(rightPaneWidths));
   }, [rightPaneWidths]);
 
   useEffect(() => {
-    window.localStorage.setItem(ASSISTANT_OPERATIONAL_PICTURE_STORAGE_KEY, JSON.stringify(assistantOperationalPicture));
-  }, [assistantOperationalPicture]);
+    window.localStorage.setItem(ASSISTANT_CONTEXT_FILTER_STORAGE_KEY, JSON.stringify(assistantContextExcludePaths));
+  }, [assistantContextExcludePaths]);
 
   useEffect(() => {
     const result = writeAssistantConversationStore(assistantConversationStore);
@@ -451,11 +471,6 @@ export default function App() {
     if (workspace === "contracts") setWorkspace("c2");
     if (tab === "diagnostics") setTab("mission");
   }, [advancedUiAvailable, tab, workspace]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     if (!assistantOpen || assistantStatus) return;
@@ -491,8 +506,16 @@ export default function App() {
       .catch((error) => setApiError(`Backend bootstrap unavailable, using fallback data. ${String(error)}`));
 
     getOsmRoads().then(setOsmRoads).catch(() => undefined);
-    getActiveScenario().then(setActiveScenarioRuntime).catch(() => undefined);
-    getScenarios().then((payload) => setScenarioCatalog(payload.scenarios)).catch(() => undefined);
+    getActiveWorld().then(applyActiveWorldRuntime).catch(() => undefined);
+    getWorlds()
+      .then(async (payload) => {
+        if (await migrateLegacyBrowserData(payload.worlds)) {
+          setWorldCatalog((await getWorlds()).worlds);
+        } else {
+          setWorldCatalog(payload.worlds);
+        }
+      })
+      .catch(() => undefined);
     getMissionExamples()
       .then((payload) => {
         setExamples(payload.examples.length ? payload.examples : fallbackMissionExamples);
@@ -524,40 +547,96 @@ export default function App() {
     source.addEventListener("agent.updated", (event) => {
       const update = JSON.parse((event as MessageEvent).data) as AgentUpdateEvent;
       const updateAgentId = normalizeUuidish(update.agent_id);
-      setAgentTelemetry((current) => ({ ...current, [updateAgentId]: update }));
-      setAgents((current) =>
-        current.map((agent) =>
-          normalizeUuidish(agent.agent_id) === updateAgentId
-            ? {
-                ...agent,
-                status: update.status ?? agent.status,
-                current_location: update.current_location ?? agent.current_location,
-              }
-            : agent,
-        ),
-      );
+      pendingAgentUpdatesRef.current.set(updateAgentId, update);
+      if (agentUpdateFrameRef.current !== undefined) return;
+      agentUpdateFrameRef.current = window.requestAnimationFrame(() => {
+        agentUpdateFrameRef.current = undefined;
+        const updates = pendingAgentUpdatesRef.current;
+        if (!updates.size) return;
+        const applied = new Map(updates);
+        updates.clear();
+        setAgentTelemetry((current) => {
+          let changed = false;
+          const next = { ...current };
+          for (const [agentId, update] of applied) {
+            const existing = current[agentId];
+            if (existing?.status === update.status && sameLonLat(existing?.current_location, update.current_location)) continue;
+            next[agentId] = update;
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+        setAgents((current) => {
+          let changed = false;
+          const next = current.map((agent) => {
+            const update = applied.get(normalizeUuidish(agent.agent_id));
+            if (!update) return agent;
+            const status = update.status ?? agent.status;
+            const current_location = update.current_location ?? agent.current_location;
+            if (status === agent.status && sameLonLat(current_location, agent.current_location)) return agent;
+            changed = true;
+            return { ...agent, status, current_location };
+          });
+          return changed ? next : current;
+        });
+      });
     });
     source.onerror = () => setApiError("Live ROS event stream interrupted; reconnecting...");
-    return () => source.close();
+    return () => {
+      source.close();
+      if (agentUpdateFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(agentUpdateFrameRef.current);
+        agentUpdateFrameRef.current = undefined;
+      }
+      pendingAgentUpdatesRef.current.clear();
+    };
   }, [advancedUiAvailable]);
 
   useEffect(() => {
     let cancelled = false;
-    const refreshScenarioReadiness = () => {
-      getActiveScenario()
-        .then((scenario) => {
-          if (!cancelled) setActiveScenarioRuntime(scenario);
+    const refreshWorldReadiness = () => {
+      getActiveWorld()
+        .then((world) => {
+          if (!cancelled) applyActiveWorldRuntime(world);
         })
         .catch(() => undefined);
     };
-    const timer = window.setInterval(refreshScenarioReadiness, 10_000);
-    window.addEventListener("focus", refreshScenarioReadiness);
+    const timer = window.setInterval(refreshWorldReadiness, 10_000);
+    window.addEventListener("focus", refreshWorldReadiness);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
-      window.removeEventListener("focus", refreshScenarioReadiness);
+      window.removeEventListener("focus", refreshWorldReadiness);
     };
-  }, []);
+  }, [applyActiveWorldRuntime]);
+
+  const activeDeploymentIdentity = deploymentIdentity(activeWorldRuntime);
+  const previousDeploymentIdentityRef = useRef<string | undefined>();
+  useEffect(() => {
+    const previous = previousDeploymentIdentityRef.current;
+    previousDeploymentIdentityRef.current = activeDeploymentIdentity;
+    if (previous === undefined || previous === activeDeploymentIdentity) return;
+    setSelectedFeatureId(undefined);
+    setMapFocus(undefined);
+    setMapFocusPoints(undefined);
+    setMapViewFocus(undefined);
+    setPendingWorldAgentPlacement(undefined);
+    setPlacingWorldAgentId(undefined);
+    setPlannerState(undefined);
+    pendingAgentUpdatesRef.current.clear();
+    if (agentUpdateFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(agentUpdateFrameRef.current);
+      agentUpdateFrameRef.current = undefined;
+    }
+    setAgentTelemetry({});
+    activeMissionIdRef.current = undefined;
+    draftMissionIdRef.current = undefined;
+    setMission(undefined);
+    setMissionText("");
+    setMissionState(undefined);
+    setShowNewMission(false);
+    setMapDraftResetNonce(Date.now());
+  }, [activeDeploymentIdentity]);
 
   useEffect(() => {
     const missionId = activeMissionIdRef.current;
@@ -585,6 +664,9 @@ export default function App() {
   function applyMissionRuntimeUpdate(update: MissionState, source = "mission_feedback") {
     const activeMissionId = activeMissionIdRef.current;
     setMissionStates((current) => mergeMissionState(current, update));
+    if (update.world_binding) {
+      setMissionWorldBindings((current) => ({ ...current, [update.mission_id]: update.world_binding! }));
+    }
     if (activeMissionId && update.mission_id === activeMissionId) {
       setMissionState((current) => ({ ...current, ...update }));
       if (hasPlannedPaths(update.planned_paths)) {
@@ -617,62 +699,47 @@ export default function App() {
     }
   }
 
-  const activeScenarioContext = useMemo(
-    () => scenarioState.library.scenarios.find((scenario) => scenario.scenario_id === scenarioState.activeId),
-    [scenarioState.activeId, scenarioState.library.scenarios],
+  const activeWorldContext = useMemo(
+    () => worldState.library.worlds.find((world) => world.world_id === worldState.activeId),
+    [worldState.activeId, worldState.library.worlds],
   );
-  const scenarioFeatureIdSet = useMemo(() => {
-    const featureIds = new Set(scenarioFeatureIds);
-    const pending = pendingScenarioFeatureToAdd;
-    if (pending && pending.scenarioId === activeScenarioContext?.scenario_id) {
+  const worldFeatureIdSet = useMemo(() => {
+    const featureIds = new Set(worldFeatureIds);
+    const pending = pendingWorldFeatureToAdd;
+    if (pending && pending.worldId === activeWorldContext?.world_id) {
       featureIds.add(pending.featureId);
     }
     return featureIds;
-  }, [activeScenarioContext?.scenario_id, pendingScenarioFeatureToAdd, scenarioFeatureIds]);
+  }, [activeWorldContext?.world_id, pendingWorldFeatureToAdd, worldFeatureIds]);
   const worldBuilderFeatureIdSet = useMemo(() => {
-    const featureIds = new Set(scenarioFeatureIdSet);
-    for (const feature of mapFeatures) {
-      if (feature.feature_type === "objective") featureIds.add(feature.feature_id);
-    }
-    return featureIds;
-  }, [mapFeatures, scenarioFeatureIdSet]);
+    return new Set(worldFeatureIdSet);
+  }, [worldFeatureIdSet]);
   const worldBuilderMapFeatures = useMemo(
-    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, worldBuilderFeatureIdSet)),
+    () => projectDefinitionMapFeatures(mapFeatures, worldBuilderFeatureIdSet),
     [mapFeatures, worldBuilderFeatureIdSet],
   );
   const runtimeWorldCatalogEntry = useMemo(
-    () => scenarioCatalog.find((entry) =>
+    () => worldCatalog.find((entry) =>
       entry.runtime_active
-      && entry.scenario_id === activeScenarioRuntime?.scenario_id
-      && (!activeScenarioRuntime?.map_collection || entry.map_collection === activeScenarioRuntime.map_collection)),
-    [activeScenarioRuntime?.map_collection, activeScenarioRuntime?.scenario_id, scenarioCatalog],
+      && entry.world_id === activeWorldRuntime?.world_id
+      && (!activeWorldRuntime?.map_collection || entry.map_collection === activeWorldRuntime.map_collection)),
+    [activeWorldRuntime?.map_collection, activeWorldRuntime?.world_id, worldCatalog],
   );
-  const runtimeFeatureIdSet = useMemo(
-    () => new Set(activeScenarioRuntime?.feature_ids ?? runtimeWorldCatalogEntry?.feature_ids ?? []),
-    [activeScenarioRuntime?.feature_ids, runtimeWorldCatalogEntry?.feature_ids],
+  const activeRuntimeGeojson = useMemo<FeatureCollection>(
+    () => projectActiveDeploymentGeojson(activeWorldRuntime),
+    [activeWorldRuntime],
   );
-  const runtimeWorldRoads = useMemo(
-    () => frozenWorldRoads(runtimeWorldCatalogEntry?.road_imports),
-    [runtimeWorldCatalogEntry?.road_imports],
-  );
-  const c2FeatureIdSet = useMemo(() => {
-    const featureIds = new Set(runtimeFeatureIdSet);
-    for (const feature of mapFeatures) {
-      if (isUserMapFeature(feature)) featureIds.add(feature.feature_id);
-    }
-    return featureIds;
-  }, [mapFeatures, runtimeFeatureIdSet]);
   const runtimeMapFeatures = useMemo(
-    () => mapFeatures.filter((feature) => isScenarioVisibleMapFeature(feature, c2FeatureIdSet)),
-    [c2FeatureIdSet, mapFeatures],
+    () => mapFeaturesFromGeojson(activeRuntimeGeojson),
+    [activeRuntimeGeojson],
   );
-  const hasRuntimeScenario = Boolean(activeScenarioRuntime?.scenario_id);
+  const hasRuntimeWorld = Boolean(activeDeploymentIdentity);
   const c2Agents = useMemo(() => {
-    if (!activeScenarioRuntime?.scenario_id) return [];
+    if (!activeDeploymentIdentity || !activeWorldRuntime?.world_id) return [];
 
-    const scenarioAgents = activeScenarioRuntime.agents ?? runtimeWorldCatalogEntry?.agents ?? [];
+    const worldAgents = activeWorldRuntime.agents ?? runtimeWorldCatalogEntry?.agents ?? [];
     const liveAgentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
-    return scenarioAgents.map((agent) => {
+    return worldAgents.map((agent) => {
       const agentId = normalizeUuidish(agent.agent_id);
       const liveAgent = liveAgentsById.get(agentId);
       const telemetry = agentTelemetry[agentId];
@@ -682,8 +749,8 @@ export default function App() {
         current_location: telemetry?.current_location ?? liveAgent?.current_location ?? agent.current_location,
       };
     });
-  }, [activeScenarioRuntime, agentTelemetry, agents, runtimeWorldCatalogEntry?.agents]);
-  const c2MapFeatures = hasRuntimeScenario ? runtimeMapFeatures : [];
+  }, [activeDeploymentIdentity, activeWorldRuntime, agentTelemetry, agents, runtimeWorldCatalogEntry?.agents]);
+  const c2MapFeatures = hasRuntimeWorld ? runtimeMapFeatures : [];
 
   const validation = useMemo(() => {
     if (!missionText.trim()) return [];
@@ -695,109 +762,138 @@ export default function App() {
   }, [c2Agents, c2MapFeatures, missionText]);
 
   const taskPlan = useMemo(() => (mission ? createTaskPlan(mission, c2Agents, c2MapFeatures) : undefined), [c2Agents, c2MapFeatures, mission]);
-  const mapMission = workspace === "scenario" ? undefined : mission;
-  const mapTaskPlan = workspace === "scenario" ? undefined : taskPlan;
-  const mapPlannerState = workspace === "scenario" ? undefined : plannerState;
-  const mapUsesScenarioContext = workspace === "scenario" || hasRuntimeScenario;
-  const mapAgents = workspace === "scenario" ? scenarioAgents : c2Agents;
-  const placingScenarioAgent = scenarioAgents.find((agent) => agent.agent_id === placingScenarioAgentId);
-  const applyScenarioAgents = useCallback((nextAgents: Agent[]) => setScenarioAgents(nextAgents), []);
-  const applyScenarioFeatureIds = useCallback((featureIds: string[]) => setScenarioFeatureIds(featureIds), []);
-  const applyScenarioRoads = useCallback((roads?: FeatureCollection) => setScenarioRoads(roads), []);
-  const applyScenarioLibrary = useCallback((library: ScenarioContextLibrary) => {
-    setScenarioState((current) => {
-      const requestedId = library.active_scenario_id || current.activeId;
-      const activeId = requestedId && library.scenarios.some((scenario) => scenario.scenario_id === requestedId)
+  const mapMission = workspace === "world" ? undefined : mission;
+  const mapTaskPlan = workspace === "world" ? undefined : taskPlan;
+  const mapPlannerState = workspace === "world" ? undefined : plannerState;
+  const mapUsesWorldContext = workspace === "world" || hasRuntimeWorld;
+  const mapAgents = workspace === "world" ? worldAgents : c2Agents;
+  const placingWorldAgent = worldAgents.find((agent) => agent.agent_id === placingWorldAgentId);
+  const applyWorldAgents = useCallback((nextAgents: Agent[]) => setWorldAgents(nextAgents), []);
+  const applyWorldFeatureIds = useCallback((featureIds: string[]) => setWorldFeatureIds(featureIds), []);
+  const applyWorldRoads = useCallback((roads?: FeatureCollection) => setWorldRoads(roads), []);
+  const applyWorldLibrary = useCallback((library: WorldContextLibrary) => {
+    setWorldState((current) => {
+      const requestedId = library.active_world_id || current.activeId;
+      const activeId = requestedId && library.worlds.some((world) => world.world_id === requestedId)
         ? requestedId
-        : library.scenarios[0]?.scenario_id;
+        : library.worlds[0]?.world_id;
       return { library, activeId };
     });
-    setPendingScenarioFeatureToAdd((pending) => {
+    setPendingWorldFeatureToAdd((pending) => {
       if (!pending) return pending;
-      const target = library.scenarios.find((scenario) => scenario.scenario_id === pending.scenarioId);
+      const target = library.worlds.find((world) => world.world_id === pending.worldId);
       return target?.feature_ids.includes(pending.featureId) ? undefined : pending;
     });
   }, []);
-  const resetScenarioWorkspace = useCallback(() => {
+  const resetWorldWorkspace = useCallback(() => {
     setSelectedFeatureId(undefined);
-    setScenarioAgents([]);
-    setScenarioFeatureIds([]);
-    setScenarioRoads(undefined);
-    setPendingScenarioFeatureToAdd(undefined);
-    setPendingScenarioAgentPlacement(undefined);
-    setPlacingScenarioAgentId(undefined);
+    setWorldAgents([]);
+    setWorldFeatureIds([]);
+    setWorldRoads(undefined);
+    setPendingWorldFeatureToAdd(undefined);
+    setPendingWorldFeatureToDelete(undefined);
+    setPendingWorldAgentPlacement(undefined);
+    setPlacingWorldAgentId(undefined);
     setMapFocus(undefined);
     setMapFocusPoints(undefined);
     setMapViewFocus(undefined);
     setMapDraftResetNonce(Date.now());
   }, []);
+  const handleWorldContextChange = useCallback((library: WorldContextLibrary) => {
+    resetWorldWorkspace();
+    applyWorldLibrary(library);
+  }, [applyWorldLibrary, resetWorldWorkspace]);
   const mapViewFeatures = useMemo(
-    () => (workspace === "scenario" ? worldBuilderMapFeatures : c2MapFeatures),
+    () => (workspace === "world" ? worldBuilderMapFeatures : c2MapFeatures),
     [c2MapFeatures, workspace, worldBuilderMapFeatures],
   );
   const mapViewGeojson = useMemo(
-    () => workspace === "scenario"
-      ? filterGeojsonForScenario(geojson, worldBuilderFeatureIdSet)
-      : hasRuntimeScenario
-        ? filterGeojsonForScenario(geojson, c2FeatureIdSet)
-        : filterGeojsonForScenario(geojson, new Set()),
-    [c2FeatureIdSet, geojson, hasRuntimeScenario, workspace, worldBuilderFeatureIdSet],
+    () => workspace === "world"
+      ? projectDefinitionGeojson(geojson, worldBuilderFeatureIdSet)
+      : hasRuntimeWorld
+        ? activeRuntimeGeojson
+        : { type: "FeatureCollection" as const, features: [] },
+    [activeRuntimeGeojson, geojson, hasRuntimeWorld, workspace, worldBuilderFeatureIdSet],
   );
 
   useEffect(() => {
-    if (!mapUsesScenarioContext || !selectedFeatureId) return;
+    if (!mapUsesWorldContext || !selectedFeatureId) return;
     if (!mapViewFeatures.some((feature) => feature.feature_id === selectedFeatureId)) setSelectedFeatureId(undefined);
-  }, [mapUsesScenarioContext, mapViewFeatures, selectedFeatureId]);
+  }, [mapUsesWorldContext, mapViewFeatures, selectedFeatureId]);
 
   useEffect(() => {
-    if (!activeScenarioContext) {
-      setScenarioAgents([]);
-      setScenarioFeatureIds([]);
-      setScenarioRoads(undefined);
+    if (!activeWorldContext) {
+      setWorldAgents([]);
+      setWorldFeatureIds([]);
+      setWorldRoads(undefined);
       return;
     }
-    setScenarioAgents(activeScenarioContext.agents);
-    setScenarioFeatureIds(activeScenarioContext.feature_ids);
-    setScenarioRoads(activeScenarioContext.roads);
-  }, [activeScenarioContext]);
+    setWorldAgents(activeWorldContext.agents);
+    setWorldFeatureIds(activeWorldContext.feature_ids);
+    setWorldRoads(activeWorldContext.roads);
+  }, [activeWorldContext]);
 
   useEffect(() => {
-    if (workspace !== "scenario" || !activeScenarioContext?.map_view) return;
-    const key = mapViewKey(activeScenarioContext.scenario_id, activeScenarioContext.map_view);
-    if (focusedScenarioViewRef.current === key) return;
-    focusedScenarioViewRef.current = key;
-    setMapViewFocus({ view: activeScenarioContext.map_view, nonce: Date.now() });
+    if (workspace !== "world") {
+      focusedWorldViewRef.current = undefined;
+      return;
+    }
+    if (!activeWorldContext?.map_view) return;
+    const key = mapViewKey(activeWorldContext.world_id, activeWorldContext.map_view);
+    if (focusedWorldViewRef.current === key) return;
+    focusedWorldViewRef.current = key;
+    setMapViewFocus({ view: activeWorldContext.map_view, nonce: Date.now() });
   }, [
-    activeScenarioContext?.scenario_id,
-    activeScenarioContext?.map_view?.center[0],
-    activeScenarioContext?.map_view?.center[1],
-    activeScenarioContext?.map_view?.zoom,
+    activeWorldContext?.world_id,
+    activeWorldContext?.map_view?.center[0],
+    activeWorldContext?.map_view?.center[1],
+    activeWorldContext?.map_view?.zoom,
     workspace,
   ]);
 
-  function beginPlaceScenarioAgent(agentId: string) {
-    setPlacingScenarioAgentId(agentId);
+  const activeRuntimeMapView = activeWorldRuntime?.map_view ?? runtimeWorldCatalogEntry?.map_view;
+  useEffect(() => {
+    if (workspace !== "c2") {
+      focusedRuntimeViewRef.current = undefined;
+      return;
+    }
+    if (!activeDeploymentIdentity || !activeRuntimeMapView) return;
+    const key = `${activeDeploymentIdentity}:${mapViewKey(activeWorldRuntime?.world_id ?? "active", activeRuntimeMapView)}`;
+    if (focusedRuntimeViewRef.current === key) return;
+    focusedRuntimeViewRef.current = key;
+    setMapViewFocus({ view: activeRuntimeMapView, nonce: Date.now() });
+  }, [
+    activeDeploymentIdentity,
+    activeRuntimeMapView?.center[0],
+    activeRuntimeMapView?.center[1],
+    activeRuntimeMapView?.zoom,
+    activeWorldRuntime?.world_id,
+    workspace,
+  ]);
+
+  function beginPlaceWorldAgent(agentId: string) {
+    setPlacingWorldAgentId(agentId);
     setCommandFeedback({
       tone: "warn",
       message: "Click the map to set this world-definition vehicle start position.",
     });
   }
 
-  function cancelPlaceScenarioAgent() {
-    setPlacingScenarioAgentId(undefined);
+  function cancelPlaceWorldAgent() {
+    setPlacingWorldAgentId(undefined);
     setCommandFeedback(undefined);
   }
 
-  function placeScenarioAgent(point: [number, number]) {
-    const scenarioId = activeScenarioContext?.scenario_id ?? scenarioState.activeId;
-    if (!scenarioId || !placingScenarioAgentId) return;
-    setPendingScenarioAgentPlacement({
-      scenarioId,
-      agentId: placingScenarioAgentId,
+  function placeWorldAgent(point: [number, number]) {
+    const worldId = activeWorldContext?.world_id ?? worldState.activeId;
+    if (!worldId || !placingWorldAgentId) return;
+    setPendingWorldAgentPlacement({
+      worldId,
+      agentId: placingWorldAgentId,
       point,
       nonce: Date.now(),
     });
-    setPlacingScenarioAgentId(undefined);
+    setPlacingWorldAgentId(undefined);
     setMapFocusPoints({ points: [point], nonce: Date.now() });
     setCommandFeedback({
       tone: "ok",
@@ -812,7 +908,7 @@ export default function App() {
     setMissionState(undefined);
     setPlannerState(undefined);
     setMissionText(JSON.stringify(next, null, 2));
-    if (focus) setJsonFocus({ ...focus, nonce: Date.now() });
+    setJsonFocus(focus ? { ...focus, nonce: Date.now() } : undefined);
     setCommandFeedback(undefined);
     setInitRequestedAt(undefined);
   }
@@ -863,11 +959,43 @@ export default function App() {
       writeAssistantMissionDraft(next);
     }
     draftMissionIdRef.current = next.mission_id;
+    const binding = worldBindingFromActiveWorld(activeWorldRuntime);
+    if (binding) {
+      setMissionWorldBindings((current) => ({ ...current, [next.mission_id]: binding }));
+    }
   }
 
   function loadExample(example: MissionExample) {
-    const next = { ...example.config, mission_id: crypto.randomUUID() };
-    updateMission(next, { needle: '"mission_id"', label: "mission_id" });
+    let next = normalizeMission(structuredClone(example.config));
+    next.mission_id = crypto.randomUUID();
+
+    const requiredCapabilities = normalizeCapabilityTags(next.required_capabilities);
+    const compatibleAgents = c2Agents.filter((agent) => agentMatchesMissionRequirements(agent, next));
+    const requiredVehicleCount = next.vehicles.length;
+    let exampleFeedback: { tone: "ok" | "warn"; message: string };
+    if (compatibleAgents.length >= requiredVehicleCount) {
+      const assignedAgents = compatibleAgents.slice(0, requiredVehicleCount);
+      next.vehicles = assignedAgents.map((agent) => agent.agent_id);
+      const assignedCenter = agentGroupCenter(assignedAgents);
+      const target = example.id.startsWith("icd_")
+        ? riskSafeRoadAnchor(activeWorldRuntime?.snapshot, assignedCenter)
+          ?? runtimeWorldCatalogEntry?.map_view?.center
+          ?? assignedCenter
+        : undefined;
+      if (target) next = relocateMissionInlineGeometry(next, target, 0.08);
+      exampleFeedback = {
+        tone: "ok",
+        message: `Loaded ${example.name}, mapped its ${requiredVehicleCount} vehicle slot${requiredVehicleCount === 1 ? "" : "s"} to the active world${target ? ", and fitted its inline geometry around a risk-safe world road" : ""}.`,
+      };
+    } else {
+      const capabilityText = requiredCapabilities.length ? ` with ${requiredCapabilities.join(", ")}` : "";
+      exampleFeedback = {
+        tone: "warn",
+        message: `Loaded the template, but the active world needs ${requiredVehicleCount} vehicle${requiredVehicleCount === 1 ? "" : "s"}${capabilityText} matching its declared limits; only ${compatibleAgents.length} currently match. Launch or update the world, then load this example again.`,
+      };
+    }
+    updateMission(next);
+    setCommandFeedback(exampleFeedback);
     setMissionState(undefined);
     setPlannerState(undefined);
     setTab("mission");
@@ -933,6 +1061,11 @@ export default function App() {
       delete next[missionId];
       return next;
     });
+    setMissionWorldBindings((current) => {
+      const next = { ...current };
+      delete next[missionId];
+      return next;
+    });
     setHiddenMissionIds((current) => {
       const next = new Set(current).add(missionId);
       writeHiddenMissionIds(next);
@@ -944,7 +1077,7 @@ export default function App() {
   }
 
   async function createDrawnFeature(draft: DraftMapFeature) {
-    const targetScenarioId = workspace === "scenario" ? activeScenarioContext?.scenario_id ?? scenarioState.activeId : undefined;
+    const targetWorldId = workspace === "world" ? activeWorldContext?.world_id ?? worldState.activeId : undefined;
     const featureId = crypto.randomUUID();
     const name = draft.name || `${draft.feature_type} ${mapFeatures.length + 1}`;
     const geometry = toGeoJsonGeometry(draft);
@@ -960,13 +1093,20 @@ export default function App() {
     };
 
     try {
+      if (workspace !== "world") {
+        await createLiveFeature(feature);
+        setActiveWorldRuntime(await getActiveWorld());
+        setMapFocus({ featureIds: [featureId], nonce: Date.now() });
+        setCommandFeedback({ tone: "ok", message: `Added deployment overlay '${name}'.` });
+        return;
+      }
       const result = await createMapFeature(feature);
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
       setMapFeaturesReady(true);
       setMapFocus({ featureIds: [featureId], nonce: Date.now() });
       setMapFocusPoints(undefined);
-      if (targetScenarioId) setPendingScenarioFeatureToAdd({ featureId, scenarioId: targetScenarioId, nonce: Date.now() });
+      if (targetWorldId) setPendingWorldFeatureToAdd({ featureId, worldId: targetWorldId, nonce: Date.now() });
       setCommandFeedback({ tone: "ok", message: `Added ${draft.feature_type} feature '${name}'.` });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -977,7 +1117,8 @@ export default function App() {
   }
 
   async function updateDrawnFeature(featureId: string, draft: DraftMapFeature) {
-    const existing = mapFeatures.find((feature) => feature.feature_id === featureId);
+    const editableFeatures = workspace === "world" ? mapFeatures : c2MapFeatures;
+    const existing = editableFeatures.find((feature) => feature.feature_id === featureId);
     if (!existing) return;
     const name = draft.name || existing.name;
     const geometry = toGeoJsonGeometry(draft);
@@ -994,6 +1135,14 @@ export default function App() {
     };
 
     try {
+      if (workspace !== "world") {
+        await updateLiveFeature(featureId, feature);
+        setActiveWorldRuntime(await getActiveWorld());
+        setSelectedFeatureId(featureId);
+        setMapFocus({ featureIds: [featureId], nonce: Date.now() });
+        setCommandFeedback({ tone: "ok", message: `Updated deployment overlay '${name}'.` });
+        return;
+      }
       const result = await updateMapFeature(featureId, feature);
       setGeojson(result.geojson);
       setMapFeatures(result.map_features);
@@ -1072,11 +1221,11 @@ export default function App() {
       );
       setCommandFeedback({ tone: "ok", message: `Added objective '${feature.name}' to the mission.` });
     } else if ((feature.feature_type === "geofence" || feature.feature_type === "workspace") && feature.geometry.type === "Polygon") {
-      const vehicleCoverageDistances = coverageDistancesForVehicles(vehicles, c2Agents);
-      const coverageDistances = base.objective.maximum_coverage_distances?.length
-        ? base.objective.maximum_coverage_distances
-        : vehicleCoverageDistances?.length
-          ? vehicleCoverageDistances
+      const vehicleCoverageSwaths = coverageSwathsForVehicles(vehicles, c2Agents);
+      const coverageSwaths = base.objective.coverage_swath_widths?.length
+        ? base.objective.coverage_swath_widths
+        : vehicleCoverageSwaths?.length
+          ? vehicleCoverageSwaths
           : [6];
       updateMission(
         {
@@ -1096,7 +1245,7 @@ export default function App() {
             ...base.objective,
             geometries: [{ feature_id: feature.feature_id }],
             maximize_coverage: true,
-            maximum_coverage_distances: coverageDistances,
+            coverage_swath_widths: coverageSwaths,
           },
         },
         { needle: '"objective"', label: "coverage geofence" },
@@ -1106,6 +1255,7 @@ export default function App() {
       const transit = base.transit ?? {};
       const roads = Array.isArray(transit["roads"]) ? transit["roads"] : [];
       const missionRoad = missionGeometryRefFromFeature(feature);
+      const useAsLinePatrol = base.behavior === 1 && base.objective.geometries.length === 0;
       updateMission(
         {
           ...base,
@@ -1115,7 +1265,8 @@ export default function App() {
           vehicles,
           objective: {
             ...base.objective,
-            geometries: [...base.objective.geometries, missionRoad],
+            geometries: useAsLinePatrol ? [missionRoad] : base.objective.geometries,
+            maximize_coverage: useAsLinePatrol ? true : base.objective.maximize_coverage,
           },
           transit: {
             ...transit,
@@ -1128,7 +1279,12 @@ export default function App() {
         },
         { needle: '"geometries"', label: "mission road" },
       );
-      setCommandFeedback({ tone: "ok", message: `Added road '${feature.name}' as a routable mission road.` });
+      setCommandFeedback({
+        tone: "ok",
+        message: useAsLinePatrol
+          ? `Added road '${feature.name}' as a COVERAGE line-patrol objective.`
+          : `Added road '${feature.name}' as a transit reference. It is routable only when it belongs to the active world's frozen road graph.`,
+      });
     } else if (feature.feature_type === "risk" && feature.geometry.type === "Polygon") {
       updateMission(
         {
@@ -1161,19 +1317,52 @@ export default function App() {
   async function removeFeature(feature: MapFeature) {
     setApiError("");
     try {
-      const result = await deleteMapFeature(feature.feature_id);
-      setGeojson(result.geojson);
-      setMapFeatures(result.map_features);
-      setMapFeaturesReady(true);
-      setScenarioFeatureIds((current) => current.filter((featureId) => featureId !== feature.feature_id));
+      if (workspace === "world") {
+        const worldId = activeWorldContext?.world_id ?? worldState.activeId;
+        if (!worldId) throw new Error("Select a saved world before deleting an authoring asset.");
+        setPendingWorldFeatureToDelete({ featureId: feature.feature_id, worldId, nonce: Date.now() });
+        setCommandFeedback({ tone: "warn", message: `Removing '${feature.name}' from the world and authoring library...` });
+        return;
+      }
+      await deleteLiveFeature(feature.feature_id);
+      setActiveWorldRuntime(await getActiveWorld());
       if (selectedFeatureId === feature.feature_id) setSelectedFeatureId(undefined);
-      const missionUsesFeature = mission?.objective.geometries.some((geometryRef) => geometryRef.feature_id === feature.feature_id);
-      if (missionUsesFeature) clearMission();
-      setCommandFeedback({ tone: "ok", message: `Removed asset '${feature.name}'.` });
+      setCommandFeedback({ tone: "ok", message: `Removed deployment overlay '${feature.name}'.` });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setApiError(message);
       setCommandFeedback({ tone: "error", message: `Remove asset failed: ${message}` });
+    }
+  }
+
+  async function deleteWorldAuthoringFeature(
+    worldId: string,
+    mapName: string,
+    featureId: string,
+    revision: number,
+  ): Promise<WorldCatalogEntry | undefined> {
+    const featureName = mapFeatures.find((feature) => feature.feature_id === featureId)?.name ?? featureId;
+    try {
+      const result = await deleteMapFeature(featureId, mapName, { worldId, revision });
+      setGeojson(result.geojson);
+      setMapFeatures(result.map_features);
+      setMapFeaturesReady(true);
+      setWorldFeatureIds((current) => current.filter((item) => item !== featureId));
+      setSelectedFeatureId((current) => current === featureId ? undefined : current);
+      if (result.world) {
+        setWorldCatalog((current) => current.map((world) => world.world_id === result.world?.world_id ? result.world : world));
+      }
+      const missionUsesFeature = mission?.objective.geometries.some((geometryRef) => geometryRef.feature_id === featureId);
+      if (missionUsesFeature) clearMission();
+      setCommandFeedback({ tone: "ok", message: `Removed asset '${featureName}' from the world and authoring library.` });
+      return result.world ?? undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setApiError(message);
+      setCommandFeedback({ tone: "error", message: `Remove asset failed: ${message}` });
+      throw error;
+    } finally {
+      setPendingWorldFeatureToDelete(undefined);
     }
   }
 
@@ -1185,6 +1374,9 @@ export default function App() {
     setCommandFeedback({ tone: "warn", message: `${commandLabel(command)} request sent to the adapter...` });
     try {
       const result = await action();
+      if (result.world_binding) {
+        setMissionWorldBindings((current) => ({ ...current, [result.mission_id]: result.world_binding! }));
+      }
       setMissionState(result);
       setMissionStates((current) => mergeMissionState(current, result, command === "init"));
       setCommandFeedback({ tone: "ok", message: commandSuccessMessage(command, result) });
@@ -1245,9 +1437,9 @@ export default function App() {
       const activeMissionId = activeMissionIdRef.current ?? mission?.mission_id ?? missionState?.mission_id;
       const result = await getPlanningDiagnostics(activeMissionId);
       setPlanningDiagnostics(result);
-      setSelectedPlanningScenarioId((current) => {
-        const scenarios = result.scenario_analysis?.scenarios ?? [];
-        if (current && scenarios.some((scenario) => scenario.id === current)) return current;
+      setSelectedPlanningVariantId((current) => {
+        const variants = result.variant_analysis?.variants ?? [];
+        if (current && variants.some((variant) => variant.id === current)) return current;
         return undefined;
       });
       const refreshed = await getDiagnostics();
@@ -1261,27 +1453,13 @@ export default function App() {
     }
   }
 
-  async function importScenarioOsmRoads(request: OsmRoadImportRequest) {
-    const result = await queryOsmRoads(request);
-    const points = flattenGeoJsonPoints(result.geojson);
-    if (points.length) {
-      setMapFocus(undefined);
-      setMapFocusPoints({ points, nonce: Date.now() });
-    }
-    setCommandFeedback({
-      tone: result.feature_count > 0 ? "ok" : "warn",
-      message: `Added OSM road section with ${result.feature_count} way${result.feature_count === 1 ? "" : "s"} to this world definition.`,
-    });
-    return result;
-  }
-
-  async function launchScenarioFromLab(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
+  async function launchWorldFromLab(worldId: string, request: WorldLaunchRequest): Promise<WorldLaunchResult> {
     setCommandFeedback({ tone: "warn", message: "Launching this definition as the active world..." });
-    const result = await launchScenario(request);
+    const result = await launchWorld(worldId, request);
     setAgentTelemetry({});
     if (result.agents) setAgents(result.agents);
-    setActiveScenarioRuntime(result);
-    getScenarios().then((payload) => setScenarioCatalog(payload.scenarios)).catch(() => undefined);
+    setActiveWorldRuntime(result);
+    getWorlds().then((payload) => setWorldCatalog(payload.worlds)).catch(() => undefined);
     setCommandFeedback({
       tone: result.ready ? "ok" : "warn",
       message: result.message,
@@ -1376,7 +1554,7 @@ export default function App() {
         conversation_id: targetConversationId,
         message,
         debug: debugRequested || undefined,
-        operational_picture: buildAssistantOperationalPictureOptions(assistantOperationalPicture, missionList),
+        operational_picture: buildAssistantOperationalPictureOptions(assistantContextExcludePaths, missionList),
       });
       registerAssistantProposal(response, true);
       setAssistantConversationStore((current) => updateAssistantConversationMessages(
@@ -1436,6 +1614,10 @@ export default function App() {
   function registerAssistantProposal(response: AssistantMessageResponse, adoptModelRevision = false) {
     const proposed = assistantProposalConfig(response);
     if (!proposed) return undefined;
+    const proposalBinding = response.mission_proposal_validation?.world_binding ?? response.picture_world_binding ?? undefined;
+    if (proposalBinding) {
+      setMissionWorldBindings((current) => ({ ...current, [proposed.mission_id]: proposalBinding }));
+    }
     const state = missionStates[proposed.mission_id];
     // Once a proposal is in the ordinary mission editor, that editor owns the
     // working copy. A newly returned model proposal is an intentional revision;
@@ -1517,8 +1699,8 @@ export default function App() {
       return;
     }
     if (command === "init") {
-      if (!activeScenarioRuntime?.ready) {
-        setCommandFeedback({ tone: "error", message: scenarioReadinessMessage });
+      if (!activeWorldRuntime?.ready) {
+        setCommandFeedback({ tone: "error", message: worldReadinessMessage });
         return;
       }
       await initializeMissionConfig(config);
@@ -1551,40 +1733,45 @@ export default function App() {
   const hasMission = Boolean(missionText.trim());
   const hasSelectedMission = hasMission || Boolean(missionState);
   const missionPaneOpen = showNewMission || hasSelectedMission;
-  const canSendMission = hasMission && validation.length === 0 && Boolean(activeScenarioRuntime?.ready);
-  const scenarioReadinessMessage = activeScenarioRuntime?.ready
+  const canSendMission = hasMission && validation.length === 0 && Boolean(activeWorldRuntime?.ready);
+  const worldReadinessMessage = activeWorldRuntime?.ready
     ? ""
-    : activeScenarioRuntime?.status === "stale"
+    : activeWorldRuntime?.status === "stale"
       ? "The active world became stale after backend containers stopped. Open Worlds and launch the definition again."
-      : activeScenarioRuntime?.error || activeScenarioRuntime?.message || "Open Worlds and launch a definition before initializing a mission.";
+      : activeWorldRuntime?.error || activeWorldRuntime?.message || "Open Worlds and launch a definition before initializing a mission.";
   const initDisabledReason = !hasMission
     ? "Load or create a valid mission first."
     : validation.length > 0
       ? `Resolve the mission validation issue${validation.length === 1 ? "" : "s"} first.`
-      : scenarioReadinessMessage;
+      : worldReadinessMessage;
   const currentStatus = missionState ? missionStatusLabel(missionState) : "";
   const missionMatchesState = Boolean(mission && missionState?.mission_id === mission.mission_id);
   const missionMatchesInitializedConfig = missionMatchesState && missionConfigsEquivalent(mission, asMissionConfig(missionState?.config));
   const missionIsCommandTarget = missionState?.command_target === true;
   const canApproveMission = missionMatchesInitializedConfig && missionIsCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(currentStatus);
   const canStartMission = missionMatchesInitializedConfig && missionIsCommandTarget && currentStatus === "ACCEPTED";
+  const activeMissionWorldBinding = worldBindingFromActiveWorld(activeWorldRuntime);
   const missionList = useMemo(() => {
     const ids = new Set([...Object.keys(missionConfigs), ...Object.keys(missionStates)]);
-    return [...ids].filter((missionId) => !hiddenMissionIds.has(missionId)).map((missionId) => ({
-      mission_id: missionId,
-      config: missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config),
-      state: missionStates[missionId],
-    }));
-  }, [hiddenMissionIds, missionConfigs, missionStates]);
-  const assistantOperationalPictureOptions = useMemo(
-    () => buildAssistantOperationalPictureOptions(assistantOperationalPicture, missionList),
-    [assistantOperationalPicture, missionList],
+    return [...ids]
+      .filter((missionId) => !hiddenMissionIds.has(missionId))
+      .map((missionId) => ({
+        mission_id: missionId,
+        config: missionConfigs[missionId] ?? asMissionConfig(missionStates[missionId]?.config),
+        state: missionStates[missionId],
+        binding: missionStates[missionId]?.world_binding ?? missionWorldBindings[missionId],
+      }))
+      .filter((item) => sameWorldBinding(item.binding, activeMissionWorldBinding));
+  }, [activeMissionWorldBinding, hiddenMissionIds, missionConfigs, missionStates, missionWorldBindings]);
+  const assistantOperatorMissions = useMemo(
+    () => operatorMissionConfigs(missionList),
+    [missionList],
   );
-  const selectedPlanningScenario = useMemo(
-    () => planningDiagnostics?.scenario_analysis?.scenarios?.find((scenario) => scenario.id === selectedPlanningScenarioId),
-    [planningDiagnostics, selectedPlanningScenarioId],
+  const selectedPlanningVariant = useMemo(
+    () => planningDiagnostics?.variant_analysis?.variants?.find((variant) => variant.id === selectedPlanningVariantId),
+    [planningDiagnostics, selectedPlanningVariantId],
   );
-  const resizableWorkspace: ResizableWorkspace = workspace === "scenario" ? "scenario" : "c2";
+  const resizableWorkspace: ResizableWorkspace = workspace === "world" ? "world" : "c2";
   const rightPaneWidth = rightPaneWidths[resizableWorkspace];
   const rightPaneMinWidth = MIN_RIGHT_PANE_WIDTHS[resizableWorkspace];
   const assistantActive = workspace === "c2" && assistantOpen;
@@ -1592,12 +1779,12 @@ export default function App() {
   const workspaceItems = advancedUiAvailable
     ? [
         { value: "c2", label: "C2" },
-        { value: "scenario", label: "Worlds" },
+        { value: "world", label: "World" },
+        { value: "context", label: "Context" },
         { value: "contracts", label: "Contracts" },
       ]
     : [
         { value: "c2", label: "C2" },
-        { value: "scenario", label: "Worlds" },
       ];
   const c2TabItems = advancedUiAvailable
     ? [
@@ -1638,6 +1825,37 @@ export default function App() {
     return Math.max(rightPaneMinWidth, window.innerWidth - assistantPaneWidth - MIN_MAP_WIDTH - RESIZE_HANDLE_WIDTH);
   }
 
+  if (workspace === "context") {
+    return (
+      <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-background text-foreground">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <ScanEye className="h-5 w-5 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">Assistant Context Filter</h2>
+              <p className="text-[10px] text-muted-foreground">Tick only the operational context the assistant should receive.</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Tabs
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as Workspace)}
+              items={workspaceItems}
+            />
+            <Badge tone={assistantContextExcludePaths.length > 0 ? "ok" : "default"}>
+              {assistantContextExcludePaths.length} removed paths
+            </Badge>
+          </div>
+        </header>
+        <AssistantContextPage
+          excludePaths={assistantContextExcludePaths}
+          operatorMissions={assistantOperatorMissions}
+          onChange={setAssistantContextExcludePaths}
+        />
+      </main>
+    );
+  }
+
   if (advancedUiAvailable && workspace === "contracts") {
     return (
       <main className="flex h-screen min-h-[720px] flex-col overflow-hidden bg-[#07111f] text-slate-100">
@@ -1651,7 +1869,7 @@ export default function App() {
           <div className="flex shrink-0 items-center gap-2">
             <Tabs
               value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              onValueChange={(value) => setWorkspace(value as Workspace)}
               items={workspaceItems}
             />
             <Badge tone={contractsError ? "error" : "ok"}>
@@ -1672,12 +1890,12 @@ export default function App() {
         agents={mapAgents}
         features={mapViewFeatures}
         geojson={mapViewGeojson}
-        osmRoads={mapUsesScenarioContext ? undefined : osmRoads}
-        scenarioRoads={workspace === "scenario" ? scenarioRoads : runtimeWorldRoads}
+        osmRoads={mapUsesWorldContext ? undefined : osmRoads}
+        worldRoads={workspace === "world" ? worldRoads : undefined}
         mission={mapMission}
         taskPlan={mapTaskPlan}
         plannerState={mapPlannerState}
-        planningScenario={selectedPlanningScenario}
+        planningVariant={selectedPlanningVariant}
         selectedFeatureId={selectedFeatureId}
         focusFeatureIds={mapFocus?.featureIds}
         focusPoints={mapFocusPoints?.points}
@@ -1685,8 +1903,8 @@ export default function App() {
         focusPointsNonce={mapFocusPoints?.nonce}
         focusView={mapViewFocus}
         resetDraftNonce={mapDraftResetNonce}
-        placingAgentName={placingScenarioAgent?.name || placingScenarioAgent?.agent_id}
-        onPlaceAgent={placingScenarioAgentId ? placeScenarioAgent : undefined}
+        placingAgentName={placingWorldAgent?.name || placingWorldAgent?.agent_id}
+        onPlaceAgent={placingWorldAgentId ? placeWorldAgent : undefined}
         onViewportChange={setCurrentMapView}
         onCreateFeature={(feature) => createDrawnFeature(feature).catch((error) => setApiError(String(error)))}
         onUpdateFeature={(featureId, feature) => updateDrawnFeature(featureId, feature).catch((error) => setApiError(String(error)))}
@@ -1718,15 +1936,15 @@ export default function App() {
       >
         <header className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
-            {workspace === "scenario" ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : assistantActive ? <Bot className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
+            {workspace === "world" ? (advancedUiAvailable ? <SlidersHorizontal className="h-5 w-5 text-primary" /> : <Globe className="h-5 w-5 text-primary" />) : assistantActive ? <Bot className="h-5 w-5 text-primary" /> : <FileJson className="h-5 w-5 text-primary" />}
             <div>
-              <h2 className="text-sm font-semibold">{workspace === "scenario" ? "World Builder" : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
+              <h2 className="text-sm font-semibold">{workspace === "world" ? (advancedUiAvailable ? "World Builder" : "World Picker") : assistantActive ? "C2 Assistant" : "Mission Definition"}</h2>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <Tabs
               value={workspace}
-              onValueChange={(value) => setWorkspace(value as "c2" | "scenario" | "contracts")}
+              onValueChange={(value) => setWorkspace(value as Workspace)}
               items={workspaceItems}
             />
             {assistantActive ? (
@@ -1734,7 +1952,9 @@ export default function App() {
             ) : workspace === "c2" ? (
               !missionPaneOpen ? <Badge>empty</Badge> : showNewMission && !hasMission ? <Badge>new</Badge> : !hasMission ? <Badge>runtime</Badge> : validation.length === 0 ? <Badge tone="ok">valid</Badge> : <Badge tone="error">{validation.length} issue{validation.length === 1 ? "" : "s"}</Badge>
             ) : (
-              <Badge tone="ok">builder</Badge>
+              advancedUiAvailable
+                ? <Badge tone="ok">builder</Badge>
+                : <Badge tone={activeWorldRuntime?.ready ? "ok" : "default"}>{activeWorldRuntime?.ready ? "active" : "picker"}</Badge>
             )}
           </div>
         </header>
@@ -1766,20 +1986,20 @@ export default function App() {
                 onValueChange={setTab}
                 items={c2TabItems}
               />
-              <span title={activeScenarioRuntime?.error}>
-                <Badge tone={activeScenarioRuntime?.ready ? "ok" : "warn"}>
-                  {activeScenarioRuntime?.ready
-                    ? `world: ${activeScenarioRuntime.name ?? activeScenarioRuntime.scenario_id}`
-                    : activeScenarioRuntime?.status === "stale"
+              <span title={activeWorldRuntime?.error}>
+                <Badge tone={activeWorldRuntime?.ready ? "ok" : "warn"}>
+                  {activeWorldRuntime?.ready
+                    ? `world: ${activeWorldRuntime.name ?? activeWorldRuntime.world_id}`
+                    : activeWorldRuntime?.status === "stale"
                       ? "world stale"
                       : "no active world"}
                 </Badge>
               </span>
             </div>
-            {!activeScenarioRuntime?.ready && (
+            {!activeWorldRuntime?.ready && (
               <div className="flex items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-                <span>{scenarioReadinessMessage}</span>
-                <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("scenario")}>
+                <span>{worldReadinessMessage}</span>
+                <Button size="sm" variant="outline" className="shrink-0" onClick={() => setWorkspace("world")}>
                   Open Worlds
                 </Button>
               </div>
@@ -1792,7 +2012,6 @@ export default function App() {
                 agentTelemetry={agentTelemetry}
                 busyCommand={busyCommand}
                 initRequestedAt={initRequestedAt}
-                nowMs={nowMs}
               />
             )}
             <div className="grid grid-cols-3 gap-2">
@@ -1811,7 +2030,7 @@ export default function App() {
             </div>
             {commandFeedback && (
               <div className="flex items-start gap-2 rounded-md border border-border bg-panel px-3 py-2 text-xs">
-                <Badge tone={commandFeedback.tone}>{commandFeedback.tone === "warn" ? "sending" : commandFeedback.tone}</Badge>
+                <Badge tone={commandFeedback.tone}>{commandFeedback.tone === "warn" ? "warning" : commandFeedback.tone}</Badge>
                 <span className="leading-6">{commandFeedback.message}</span>
               </div>
             )}
@@ -1838,16 +2057,14 @@ export default function App() {
               busyCommand={busyCommand}
               busyCommandMissionId={busyCommandMissionId}
               initRequestedAt={initRequestedAt}
-              nowMs={nowMs}
-              activeScenarioReady={activeScenarioRuntime?.ready === true}
+              activeWorldReady={activeWorldRuntime?.ready === true}
               commandFeedback={commandFeedback}
               debugAvailable={advancedUiAvailable}
               debugEnabled={assistantDebugEnabled}
-              operationalPicture={assistantOperationalPicture}
-              operationalPictureOptions={assistantOperationalPictureOptions}
               onPromptChange={setAssistantPrompt}
               onDebugEnabledChange={setAssistantDebugEnabled}
-              onOperationalPictureChange={setAssistantOperationalPicture}
+              onOpenContext={() => setWorkspace("context")}
+              contextRemovedCount={assistantContextExcludePaths.length}
               onSend={() => submitAssistantMessage().catch(() => undefined)}
               onNewConversation={startAssistantConversation}
               onSelectConversation={chooseAssistantConversation}
@@ -1891,37 +2108,47 @@ export default function App() {
                   plannerState={plannerState}
                   planningDiagnostics={planningDiagnostics}
                   planningDiagnosticsBusy={planningDiagnosticsBusy}
-                  selectedPlanningScenarioId={selectedPlanningScenarioId}
+                  selectedPlanningVariantId={selectedPlanningVariantId}
                   legacyResetBusy={legacyResetBusy}
                   legacyResetResult={legacyResetResult}
                   onRefreshLegacyTrace={() => refreshLegacyTrace().catch((error) => setApiError(String(error)))}
                   onRefreshPlanningDiagnostics={() => refreshPlanningDiagnostics()}
-                  onSelectPlanningScenario={(scenarioId) => setSelectedPlanningScenarioId((current) => (current === scenarioId ? undefined : scenarioId))}
+                  onSelectPlanningVariant={(worldId) => setSelectedPlanningVariantId((current) => (current === worldId ? undefined : worldId))}
                   onCleanLegacyRuntime={() => cleanLegacyRuntimeForExamples()}
                 />
               )}
             </>
           ) : (
-            <ScenarioLab
-              mapFeatures={mapFeatures}
-              mapFeaturesReady={mapFeaturesReady}
-              selectedFeatureId={selectedFeatureId}
-              pendingFeatureToAdd={pendingScenarioFeatureToAdd}
-              pendingAgentPlacement={pendingScenarioAgentPlacement}
-              currentMapView={currentMapView}
-              catalogScenarios={scenarioCatalog}
-              placingAgentId={placingScenarioAgentId}
-              onScenarioAgentsChange={applyScenarioAgents}
-              onActiveScenarioFeaturesChange={applyScenarioFeatureIds}
-              onScenarioRoadsChange={applyScenarioRoads}
-              onScenarioLibraryChange={applyScenarioLibrary}
-              onSelectFeature={selectMapFeature}
-              onImportOsmRoads={importScenarioOsmRoads}
-              onLaunchScenario={launchScenarioFromLab}
-              onScenarioContextReset={resetScenarioWorkspace}
-              onBeginPlaceAgent={beginPlaceScenarioAgent}
-              onCancelPlaceAgent={cancelPlaceScenarioAgent}
-            />
+            advancedUiAvailable ? (
+              <WorldBuilder
+                mapFeatures={mapFeatures}
+                mapFeaturesReady={mapFeaturesReady}
+                selectedFeatureId={selectedFeatureId}
+                pendingFeatureToAdd={pendingWorldFeatureToAdd}
+                pendingFeatureToDelete={pendingWorldFeatureToDelete}
+                pendingAgentPlacement={pendingWorldAgentPlacement}
+                currentMapView={currentMapView}
+                catalogWorlds={worldCatalog}
+                placingAgentId={placingWorldAgentId}
+                onWorldAgentsChange={applyWorldAgents}
+                onActiveWorldFeaturesChange={applyWorldFeatureIds}
+                onWorldRoadsChange={applyWorldRoads}
+                onWorldLibraryChange={applyWorldLibrary}
+                onSelectFeature={selectMapFeature}
+                onDeleteAuthoringFeature={deleteWorldAuthoringFeature}
+                onLaunchWorld={launchWorldFromLab}
+                onWorldContextReset={resetWorldWorkspace}
+                onBeginPlaceAgent={beginPlaceWorldAgent}
+                onCancelPlaceAgent={cancelPlaceWorldAgent}
+              />
+            ) : (
+              <WorldPicker
+                catalogWorlds={worldCatalog}
+                activeWorldId={activeWorldRuntime?.world_id}
+                onWorldContextChange={handleWorldContextChange}
+                onLaunchWorld={launchWorldFromLab}
+              />
+            )
           )}
         </section>
       </aside>
@@ -1958,16 +2185,14 @@ function AssistantPanel({
   busyCommand,
   busyCommandMissionId,
   initRequestedAt,
-  nowMs,
-  activeScenarioReady,
+  activeWorldReady,
   commandFeedback,
   debugAvailable,
   debugEnabled,
-  operationalPicture,
-  operationalPictureOptions,
+  contextRemovedCount,
   onPromptChange,
   onDebugEnabledChange,
-  onOperationalPictureChange,
+  onOpenContext,
   onSend,
   onNewConversation,
   onSelectConversation,
@@ -1993,16 +2218,14 @@ function AssistantPanel({
   busyCommand?: "init" | "approve" | "start";
   busyCommandMissionId?: string;
   initRequestedAt?: number;
-  nowMs: number;
-  activeScenarioReady: boolean;
+  activeWorldReady: boolean;
   commandFeedback?: { tone: "default" | "ok" | "warn" | "error"; message: string };
   debugAvailable: boolean;
   debugEnabled: boolean;
-  operationalPicture: AssistantOperationalPicturePreferences;
-  operationalPictureOptions: AssistantOperationalPictureOptions;
+  contextRemovedCount: number;
   onPromptChange: (value: string) => void;
   onDebugEnabledChange: (value: boolean) => void;
-  onOperationalPictureChange: (value: AssistantOperationalPicturePreferences) => void;
+  onOpenContext: () => void;
   onSend: () => void;
   onNewConversation: () => void;
   onSelectConversation: (conversationId: string) => void;
@@ -2021,7 +2244,6 @@ function AssistantPanel({
   const configured = status?.configured === true;
   const statusTone = statusBusy ? "default" : configured ? "ok" : "warn";
   const statusLabel = statusBusy ? "checking" : configured ? "ready" : "not configured";
-  const operationalMissionIds = [...new Set([...Object.keys(missionConfigs), ...Object.keys(missionStates)])].sort();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -2071,6 +2293,16 @@ function AssistantPanel({
             <Badge tone={statusTone}>{statusLabel}</Badge>
           </span>
           <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onOpenContext}
+              title="Choose exactly which operational context the assistant receives"
+            >
+              <ScanEye className="h-3.5 w-3.5" />
+              Context{contextRemovedCount > 0 ? ` · ${contextRemovedCount} removed` : ""}
+            </Button>
             {debugAvailable && (
               <Button
                 type="button"
@@ -2095,13 +2327,6 @@ function AssistantPanel({
             )}
           </div>
         </div>
-        <AssistantOperationalPictureControls
-          value={operationalPicture}
-          options={operationalPictureOptions}
-          missionIds={operationalMissionIds}
-          disabled={busy}
-          onChange={onOperationalPictureChange}
-        />
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" aria-live="polite">
@@ -2171,9 +2396,8 @@ function AssistantPanel({
                         agentTelemetry={agentTelemetry}
                         busyCommand={busyCommandMissionId === proposalConfig?.mission_id ? busyCommand : undefined}
                         initRequestedAt={proposalSelected ? initRequestedAt : undefined}
-                        nowMs={nowMs}
                         selected={proposalSelected}
-                        activeScenarioReady={activeScenarioReady}
+                        activeWorldReady={activeWorldReady}
                         feedback={proposalSelected ? commandFeedback : undefined}
                         onOpen={() => onOpenMission(response)}
                         onValidate={() => onValidateMission(response)}
@@ -2253,313 +2477,6 @@ function AssistantPanel({
   );
 }
 
-const ASSISTANT_OPERATIONAL_SECTION_OPTIONS: {
-  value: AssistantOperationalPictureSection;
-  label: string;
-  description: string;
-}[] = [
-  { value: "agents", label: "Vehicles", description: "Declared and connected vehicle summaries, including IDs." },
-  { value: "missions", label: "Missions", description: "Runtime missions plus selected browser working copies." },
-  { value: "plans", label: "Runtime plans", description: "Planner state and stored RuntimeDB.Planning summaries; plan IDs are mission IDs." },
-  { value: "health", label: "Health", description: "Backend, ROS, storage, and active-world health checks." },
-  { value: "warnings", label: "Warnings", description: "Current inconsistencies and operational cautions." },
-];
-
-function AssistantOperationalPictureControls({
-  value,
-  options,
-  missionIds,
-  disabled,
-  onChange,
-}: {
-  value: AssistantOperationalPicturePreferences;
-  options: AssistantOperationalPictureOptions;
-  missionIds: string[];
-  disabled: boolean;
-  onChange: (value: AssistantOperationalPicturePreferences) => void;
-}) {
-  const [preview, setPreview] = useState<AssistantOperationalPicturePreview | undefined>();
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewError, setPreviewError] = useState("");
-  const [previewedAt, setPreviewedAt] = useState<number | undefined>();
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const optionsKey = useMemo(() => JSON.stringify(options), [options]);
-  const selectedPicture = preview?.operational_picture;
-  const availablePicture = preview?.available_operational_picture;
-  const availableMissionIds = [...new Set([
-    ...missionIds,
-    ...operationalSectionItemIds(availablePicture?.missions),
-    ...operationalSectionItemIds(availablePicture?.plans),
-  ])].sort();
-  const selectedMissionIds = new Set(value.missionIds);
-  const scopedMissionCount = value.allMissions
-    ? availableMissionIds.length
-    : availableMissionIds.filter((missionId) => selectedMissionIds.has(missionId)).length;
-  const selectedItemCount = value.sections.reduce(
-    (sum, section) => sum + operationalSectionItems(selectedPicture?.[section]).length,
-    0,
-  );
-
-  useEffect(() => {
-    let active = true;
-    const timer = window.setTimeout(() => {
-      setPreviewBusy(true);
-      setPreviewError("");
-      previewAssistantOperationalPicture(options)
-        .then((result) => {
-          if (!active) return;
-          setPreview(result);
-          setPreviewedAt(Date.now());
-        })
-        .catch((error) => {
-          if (!active) return;
-          setPreviewError(error instanceof Error ? error.message : String(error));
-        })
-        .finally(() => {
-          if (active) setPreviewBusy(false);
-        });
-    }, refreshNonce === 0 ? 180 : 0);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [optionsKey, refreshNonce]);
-
-  function toggleSection(section: AssistantOperationalPictureSection) {
-    const selected = value.sections.includes(section);
-    onChange({
-      ...value,
-      sections: selected
-        ? value.sections.filter((candidate) => candidate !== section)
-        : ASSISTANT_OPERATIONAL_SECTION_OPTIONS.map((option) => option.value).filter((candidate) => candidate === section || value.sections.includes(candidate)),
-    });
-  }
-
-  function setAllMissions(allMissions: boolean) {
-    onChange({
-      ...value,
-      allMissions,
-      missionIds: [],
-    });
-  }
-
-  function toggleMission(missionId: string) {
-    const next = new Set(value.allMissions ? availableMissionIds : value.missionIds);
-    if (next.has(missionId)) next.delete(missionId);
-    else next.add(missionId);
-    onChange({ ...value, allMissions: false, missionIds: [...next].sort() });
-  }
-
-  function setAllSectionItems(section: AssistantOperationalPictureSection, allItems: boolean) {
-    const itemIds = { ...value.itemIds };
-    if (allItems) delete itemIds[section];
-    else itemIds[section] = [];
-    onChange({ ...value, itemIds });
-  }
-
-  function toggleSectionItem(section: AssistantOperationalPictureSection, itemId: string, availableIds: string[]) {
-    const next = new Set(value.itemIds[section] ?? availableIds);
-    if (next.has(itemId)) next.delete(itemId);
-    else next.add(itemId);
-    onChange({ ...value, itemIds: { ...value.itemIds, [section]: [...next].sort() } });
-  }
-
-  return (
-    <details className="rounded-md border border-border bg-panel">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2 py-1.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <Settings2 className="h-3.5 w-3.5 shrink-0 text-primary" />
-          Operational picture
-        </span>
-        <span className="text-[10px] font-normal text-muted-foreground">
-          {previewBusy && !preview ? "reading…" : `${value.sections.length + 1} keys · ${selectedItemCount} items`}
-        </span>
-      </summary>
-      <div className="space-y-2 border-t border-border p-2 text-[11px]">
-        <div className="flex items-start justify-between gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5">
-          <div className="min-w-0">
-            <div className="font-medium text-foreground">Model-input preview</div>
-            <p className="mt-0.5 leading-4 text-muted-foreground">
-              Uses the same projection and redaction code as Send. Runtime state is read again when the message is submitted.
-            </p>
-          </div>
-          <Button type="button" size="sm" variant="ghost" className="h-7" disabled={previewBusy} onClick={() => setRefreshNonce((current) => current + 1)}>
-            <RefreshCw className={`h-3.5 w-3.5 ${previewBusy ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-        </div>
-
-        {previewError && <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-950">Preview unavailable: {previewError}</div>}
-
-        <AssistantCurrentEnvironmentPreview value={selectedPicture?.current_environment} />
-
-        <div className="space-y-1.5">
-          {ASSISTANT_OPERATIONAL_SECTION_OPTIONS.map((option) => {
-            const checked = value.sections.includes(option.value);
-            const selectedSection = selectedPicture?.[option.value];
-            const availableSection = availablePicture?.[option.value];
-            const availableItems = operationalSectionItems(availableSection);
-            const selectedItems = operationalSectionItems(selectedSection);
-            const availableIds = operationalSectionItemIds(availableSection);
-            const missionScoped = option.value === "missions" || option.value === "plans";
-            const allItems = missionScoped ? value.allMissions : value.itemIds[option.value] === undefined;
-            const selectedIds = missionScoped ? selectedMissionIds : new Set(value.itemIds[option.value] ?? availableIds);
-            const metadata = asDebugRecord(asDebugRecord(selectedSection)?.metadata ?? asDebugRecord(availableSection)?.metadata);
-            return (
-              <div key={option.value} className={`rounded-md border bg-background ${checked ? "border-border" : "border-dashed border-border opacity-70"}`}>
-                <label className="flex cursor-pointer items-start gap-2 p-2" title={option.description}>
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-3.5 w-3.5 accent-primary"
-                    checked={checked}
-                    disabled={disabled}
-                    onChange={() => toggleSection(option.value)}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono font-semibold text-foreground">{option.value}</span>
-                      <span className="text-muted-foreground">{option.label}</span>
-                      <Badge tone={checked ? "ok" : "default"}>{checked ? `${selectedItems.length}/${availableItems.length} sent` : "not sent"}</Badge>
-                      {typeof metadata?.freshness === "string" && <Badge>{metadata.freshness}</Badge>}
-                    </span>
-                    <span className="mt-0.5 block leading-4 text-muted-foreground">{option.description}</span>
-                  </span>
-                </label>
-
-                {checked && availableItems.length > 0 && (
-                  <div className="space-y-1 border-t border-border px-2 py-1.5">
-                    <label className="flex cursor-pointer items-center gap-2 font-medium text-foreground">
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-primary"
-                        checked={allItems}
-                        disabled={disabled}
-                        onChange={(event) => missionScoped
-                          ? setAllMissions(event.target.checked)
-                          : setAllSectionItems(option.value, event.target.checked)}
-                      />
-                      All {option.value} items
-                    </label>
-                    <div className="max-h-36 space-y-0.5 overflow-y-auto border-t border-border pt-1">
-                      {availableItems.map((item, index) => {
-                        const itemId = operationalItemId(item, index);
-                        const selected = allItems || selectedIds.has(itemId);
-                        return (
-                          <label key={`${option.value}-${itemId}`} className="flex cursor-pointer items-start gap-2 rounded-sm px-1 py-1 hover:bg-muted">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-3.5 w-3.5 accent-primary"
-                              checked={selected}
-                              disabled={disabled}
-                              onChange={() => missionScoped
-                                ? toggleMission(itemId)
-                                : toggleSectionItem(option.value, itemId, availableIds)}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-1">
-                                <span className="truncate font-medium text-foreground">{operationalItemLabel(item)}</span>
-                                {typeof asDebugRecord(item)?.kind === "string" && <Badge>{String(asDebugRecord(item)?.kind)}</Badge>}
-                              </span>
-                              <span className="block break-all font-mono text-[10px] text-muted-foreground">id: {itemId}</span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {(value.sections.includes("missions") || value.sections.includes("plans")) && (
-          <div className="rounded-md border border-border bg-muted/30 px-2 py-1.5 text-muted-foreground">
-            Mission scope is shared by <span className="font-mono text-foreground">missions</span> and <span className="font-mono text-foreground">plans</span> because runtime plans are keyed by mission ID. {value.allMissions ? `All ${availableMissionIds.length} available mission IDs are included.` : `${scopedMissionCount} of ${availableMissionIds.length} mission IDs are included.`}
-            Browser working copies are labelled as operator context and do not imply runtime state.
-          </div>
-        )}
-
-        <details className="rounded-md border border-border bg-background">
-          <summary className="cursor-pointer px-2 py-1.5 font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            Exact JSON for the next model turn
-            {selectedPicture && <span className="ml-1.5 font-normal text-muted-foreground">({debugPictureSummary(selectedPicture)})</span>}
-          </summary>
-          <div className="space-y-1.5 border-t border-border p-2">
-            {selectedPicture
-              ? <JsonExplorer value={selectedPicture} maxHeightClassName="max-h-96" initialExpandedDepth={2} />
-              : <p className="text-muted-foreground">Waiting for the model-facing projection.</p>}
-          </div>
-        </details>
-
-        <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-          <span>{previewedAt ? `Previewed ${formatAssistantObservedAt(new Date(previewedAt).toISOString())}` : "Not previewed yet"}</span>
-          <span>{value.allMissions ? "all mission IDs" : `${scopedMissionCount}/${availableMissionIds.length} mission IDs`}</span>
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function AssistantCurrentEnvironmentPreview({ value }: { value: unknown }) {
-  const environment = asDebugRecord(value);
-  const readiness = asDebugRecord(environment?.readiness);
-  const map = asDebugRecord(environment?.map);
-  const mapFeatures = Array.isArray(environment?.map_features) ? environment.map_features : [];
-  const objectives = Array.isArray(environment?.operator_objectives) ? environment.operator_objectives : [];
-  return (
-    <div className="rounded-md border border-border bg-background p-2">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked readOnly aria-label="Current environment is always included" />
-        <span className="font-mono font-semibold text-foreground">current_environment</span>
-        <Badge tone="ok">always sent</Badge>
-        {typeof readiness?.status === "string" && <Badge tone={readiness.ready === true ? "ok" : "warn"}>{readiness.status}</Badge>}
-      </div>
-      <p className="mt-1 leading-4 text-muted-foreground">Required grounding: readiness, map summary, active map features, and operator objective points.</p>
-      <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-        <InfoTile label="Map" value={typeof map?.name === "string" ? map.name : "unknown"} />
-        <InfoTile label="Map features" value={String(mapFeatures.length)} />
-        <InfoTile label="Objectives" value={String(objectives.length)} />
-      </div>
-      {mapFeatures.length + objectives.length > 0 && (
-        <div className="mt-1.5 max-h-24 space-y-0.5 overflow-y-auto border-t border-border pt-1">
-          {[...mapFeatures, ...objectives].map((item, index) => {
-            const record = asDebugRecord(item);
-            const itemId = String(record?.feature_id ?? record?.id ?? `item-${index + 1}`);
-            return <div key={itemId} className="break-all font-mono text-[10px] text-muted-foreground">id: {itemId}</div>;
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function operationalSectionItems(value: unknown): Record<string, unknown>[] {
-  const items = asDebugRecord(value)?.items;
-  return Array.isArray(items) ? items.filter((item): item is Record<string, unknown> => Boolean(asDebugRecord(item))) : [];
-}
-
-function operationalSectionItemIds(value: unknown): string[] {
-  return operationalSectionItems(value).map(operationalItemId);
-}
-
-function operationalItemId(item: unknown, index = 0): string {
-  const itemId = asDebugRecord(item)?.id;
-  return typeof itemId === "string" && itemId ? itemId : `item-${index + 1}`;
-}
-
-function operationalItemLabel(item: unknown): string {
-  const record = asDebugRecord(item);
-  const data = asDebugRecord(record?.data);
-  const adapterState = asDebugRecord(data?.adapter_state);
-  const backendConfig = asDebugRecord(data?.backend_config);
-  const workingCopy = asDebugRecord(data?.operator_working_copy);
-  for (const candidate of [workingCopy?.name, adapterState?.name, backendConfig?.name, data?.name, data?.message, data?.status_name]) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate;
-  }
-  return operationalItemId(item);
-}
-
 function AssistantMissionCard({
   response,
   config,
@@ -2568,9 +2485,8 @@ function AssistantMissionCard({
   agentTelemetry,
   busyCommand,
   initRequestedAt,
-  nowMs,
   selected,
-  activeScenarioReady,
+  activeWorldReady,
   feedback,
   onOpen,
   onValidate,
@@ -2583,9 +2499,8 @@ function AssistantMissionCard({
   agentTelemetry: Record<string, AgentUpdateEvent>;
   busyCommand?: "init" | "approve" | "start";
   initRequestedAt?: number;
-  nowMs: number;
   selected: boolean;
-  activeScenarioReady: boolean;
+  activeWorldReady: boolean;
   feedback?: { tone: "default" | "ok" | "warn" | "error"; message: string };
   onOpen: () => void;
   onValidate: () => void;
@@ -2599,7 +2514,7 @@ function AssistantMissionCard({
   const revisionPending = Boolean(state && config && !missionConfigsEquivalent(config, initializedConfig));
   const canApprove = valid && !revisionPending && isCommandTarget && ["PLANNED", "PLANNED_ALTERNATIVE"].includes(status) && !busyCommand;
   const canStart = valid && !revisionPending && isCommandTarget && status === "ACCEPTED" && !busyCommand;
-  const canInit = valid && activeScenarioReady && !busyCommand;
+  const canInit = valid && activeWorldReady && !busyCommand;
 
   return (
     <div className={`space-y-2 rounded-md border bg-muted p-2 ${selected ? "border-primary shadow-sm" : "border-border"}`}>
@@ -2638,7 +2553,7 @@ function AssistantMissionCard({
         </ul>
       )}
 
-      {validation?.valid === true && !activeScenarioReady && validation.command_ready === false && validation.command_issues && validation.command_issues.length > 0 && (
+      {validation?.valid === true && !activeWorldReady && validation.command_ready === false && validation.command_issues && validation.command_issues.length > 0 && (
         <ul className="list-disc space-y-1 pl-4 text-amber-900">
           {validation.command_issues.map((issue, index) => (
             <li key={`${config?.mission_id ?? "proposal"}-command-issue-${index}`}>{issue.message}</li>
@@ -2655,7 +2570,6 @@ function AssistantMissionCard({
             agentTelemetry={agentTelemetry}
             busyCommand={busyCommand}
             initRequestedAt={initRequestedAt}
-            nowMs={nowMs}
           />
           {revisionPending && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-4 text-amber-950">
@@ -2678,7 +2592,7 @@ function AssistantMissionCard({
             </Button>
           </div>
           <div className="grid grid-cols-3 gap-1.5">
-            <Button type="button" size="sm" variant="outline" onClick={() => onCommand("init")} disabled={!canInit} title={activeScenarioReady ? "Initialize this mission and request planning" : "A ready environment is required before Init"}>
+            <Button type="button" size="sm" variant="outline" onClick={() => onCommand("init")} disabled={!canInit} title={activeWorldReady ? "Initialize this mission and request planning" : "A ready environment is required before Init"}>
               <ShieldCheck className="h-3.5 w-3.5" />
               {busyCommand === "init" ? "Initializing" : state ? "Re-init" : "Init"}
             </Button>
@@ -2960,7 +2874,6 @@ function OperationalPictureIdIndex({ picture }: { picture: Record<string, unknow
   });
   const environmentSections = ([
     ["map_features", "Map feature ID"],
-    ["operator_objectives", "Objective ID"],
   ] as const).map(([section, idLabel]) => {
     const items = environment?.[section];
     const ids = Array.isArray(items)
@@ -3150,7 +3063,6 @@ function MissionRuntimeStatus({
   agentTelemetry,
   busyCommand,
   initRequestedAt,
-  nowMs,
 }: {
   mission?: MissionConfig;
   missionState?: MissionState;
@@ -3158,7 +3070,6 @@ function MissionRuntimeStatus({
   agentTelemetry: Record<string, AgentUpdateEvent>;
   busyCommand?: "init" | "approve" | "start";
   initRequestedAt?: number;
-  nowMs: number;
 }) {
   const missionSignal = missionRuntimeSignal(missionState, busyCommand);
   const plannerSignal = plannerRuntimeSignal(mission?.mission_id ?? missionState?.mission_id, missionState, plannerState);
@@ -3166,7 +3077,6 @@ function MissionRuntimeStatus({
   const executionSignal = executionRuntimeSignal(mission, missionState, agentTelemetry);
   const signals = [missionSignal, plannerSignal, routeSignal, executionSignal];
   const startedAt = missionState?.initialized_at ? Date.parse(missionState.initialized_at) : initRequestedAt;
-  const elapsedSeconds = startedAt ? Math.max(0, Math.floor((nowMs - startedAt) / 1000)) : 0;
   const status = missionState ? missionStatusLabel(missionState) : "DRAFT";
   const isTerminal = ["COMPLETED", "FAILED", "PLANNED_FAILED", "STOPPED", "DELETED"].includes(status);
   const issue = missionIssueSnapshot(missionState);
@@ -3178,12 +3088,7 @@ function MissionRuntimeStatus({
         <ListChecks className="h-4 w-4 shrink-0 text-primary" />
         <span className="shrink-0 text-xs font-semibold">Runtime</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={headline}>{headline}</span>
-        {startedAt && !isTerminal && (
-          <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title="Time since initialization was requested">
-            <Clock className="h-3.5 w-3.5" />
-            {formatDuration(elapsedSeconds)}
-          </div>
-        )}
+        {startedAt && !isTerminal && <ElapsedClock startedAt={startedAt} />}
       </div>
       <div className="mt-2 grid grid-cols-4 gap-1.5">
         {signals.map((signal) => <RuntimeSignalChip key={signal.label} signal={signal} />)}
@@ -3451,7 +3356,12 @@ function MissionPanel({
                     <div className="font-medium">{example.name}</div>
                     <Badge>{example.behavior === 1 ? "coverage" : "navigate"}</Badge>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{example.vehicles.join(", ")}</div>
+                  <div className="mt-1 flex flex-wrap gap-1 text-xs text-muted-foreground">
+                    <span>{example.config.vehicles.length} vehicle{example.config.vehicles.length === 1 ? "" : "s"}</span>
+                    {normalizeCapabilityTags(example.config.required_capabilities).map((capability) => (
+                      <Badge key={capability}>{capability}</Badge>
+                    ))}
+                  </div>
                 </button>
               ))}
             </div>
@@ -3520,6 +3430,9 @@ function MissionPanel({
                     <Badge>{behaviorLabel(item.config?.behavior)}</Badge>
                     <Badge>{vehicleCountLabel(item.config)}</Badge>
                     <Badge>{objectiveSummary(item.config)}</Badge>
+                    <span title={item.binding?.world_id ?? undefined}>
+                      <Badge>world {shortId(item.binding?.world_id ?? "")}</Badge>
+                    </span>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -3755,7 +3668,7 @@ function AssetsPanel({
                   <Target className="h-4 w-4" />
                   Set objective
                 </Button>
-                <Button size="icon" variant="ghost" disabled={feature.properties?.source !== "user"} onClick={() => onRemoveFeature(feature)} title={feature.properties?.source === "user" ? "Remove user-created asset" : "Legacy baseline assets are read-only"}>
+                <Button size="icon" variant="ghost" disabled={feature.properties?.source !== "live_overlay"} onClick={() => onRemoveFeature(feature)} title={feature.properties?.source === "live_overlay" ? "Remove deployment overlay" : "Immutable snapshot assets are read-only"}>
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
@@ -3833,12 +3746,12 @@ function DiagnosticsPanel({
   plannerState,
   planningDiagnostics,
   planningDiagnosticsBusy,
-  selectedPlanningScenarioId,
+  selectedPlanningVariantId,
   legacyResetBusy,
   legacyResetResult,
   onRefreshLegacyTrace,
   onRefreshPlanningDiagnostics,
-  onSelectPlanningScenario,
+  onSelectPlanningVariant,
   onCleanLegacyRuntime,
 }: {
   diagnostics?: DiagnosticsState;
@@ -3846,21 +3759,21 @@ function DiagnosticsPanel({
   plannerState?: PlannerUpdateEvent;
   planningDiagnostics?: PlanningDiagnostics;
   planningDiagnosticsBusy: boolean;
-  selectedPlanningScenarioId?: string;
+  selectedPlanningVariantId?: string;
   legacyResetBusy: boolean;
   legacyResetResult?: LegacyResetResult;
   onRefreshLegacyTrace: () => void;
   onRefreshPlanningDiagnostics: () => void;
-  onSelectPlanningScenario: (scenarioId: string) => void;
+  onSelectPlanningVariant: (worldId: string) => void;
   onCleanLegacyRuntime: () => void;
 }) {
   if (!diagnostics) return <div className="text-sm text-muted-foreground">Waiting for diagnostics...</div>;
   return (
     <div className="space-y-3">
       <div className="flex justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={onRefreshPlanningDiagnostics} disabled={planningDiagnosticsBusy} title="Compare planner parameter scenarios and legacy mission output">
+        <Button size="sm" variant="outline" onClick={onRefreshPlanningDiagnostics} disabled={planningDiagnosticsBusy} title="Compare planning variants and backend mission output">
           <Route className="h-4 w-4" />
-          {planningDiagnosticsBusy ? "Checking" : "Scenario Debug"}
+          {planningDiagnosticsBusy ? "Checking" : "World Debug"}
         </Button>
         <Button size="sm" variant="outline" onClick={onCleanLegacyRuntime} disabled={legacyResetBusy} title="Test-only: clear old mission configs, plans, feedback, and logs from MongoDB">
           <Trash2 className="h-4 w-4" />
@@ -3897,7 +3810,7 @@ function DiagnosticsPanel({
               </div>
             ))}
           </div>
-          <PlanningScenarioMatrix analysis={planningDiagnostics.scenario_analysis} selectedScenarioId={selectedPlanningScenarioId} onSelectScenario={onSelectPlanningScenario} />
+          <PlanningVariantMatrix analysis={planningDiagnostics.variant_analysis} selectedVariantId={selectedPlanningVariantId} onSelectVariant={onSelectPlanningVariant} />
           <Textarea className="h-64 resize-none" value={JSON.stringify(planningDiagnostics, null, 2)} readOnly spellCheck={false} />
         </div>
       )}
@@ -3951,22 +3864,22 @@ function DiagnosticsPanel({
   );
 }
 
-function PlanningScenarioMatrix({
+function PlanningVariantMatrix({
   analysis,
-  selectedScenarioId,
-  onSelectScenario,
+  selectedVariantId,
+  onSelectVariant,
 }: {
-  analysis?: PlanningScenarioAnalysis;
-  selectedScenarioId?: string;
-  onSelectScenario: (scenarioId: string) => void;
+  analysis?: PlanningVariantAnalysis;
+  selectedVariantId?: string;
+  onSelectVariant: (variantId: string) => void;
 }) {
   if (!analysis) return null;
-  const scenarios = analysis.scenarios ?? [];
+  const variants = analysis.variants ?? [];
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-border bg-background p-3">
         <div className="flex items-center justify-between gap-3">
-          <SectionTitle icon={<Route className="h-4 w-4" />} label="Scenario Matrix" />
+          <SectionTitle icon={<Route className="h-4 w-4" />} label="Planning Variant Matrix" />
           <Badge tone={analysis.status === "ok" ? "ok" : "warn"}>{analysis.status}</Badge>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -3983,8 +3896,8 @@ function PlanningScenarioMatrix({
         ))}
       </div>
       <div className="space-y-2">
-        {scenarios.map((scenario) => (
-          <PlanningScenarioCard key={scenario.id} scenario={scenario} selected={scenario.id === selectedScenarioId} onSelect={() => onSelectScenario(scenario.id)} />
+        {variants.map((variant) => (
+          <PlanningVariantCard key={variant.id} variant={variant} selected={variant.id === selectedVariantId} onSelect={() => onSelectVariant(variant.id)} />
         ))}
       </div>
       {analysis.graph_summaries && (
@@ -3997,30 +3910,30 @@ function PlanningScenarioMatrix({
   );
 }
 
-function PlanningScenarioCard({ scenario, selected, onSelect }: { scenario: PlanningScenario; selected: boolean; onSelect: () => void }) {
-  const metrics = scenario.metrics ?? {};
-  const route = scenario.route ?? [];
+function PlanningVariantCard({ variant, selected, onSelect }: { variant: PlanningVariant; selected: boolean; onSelect: () => void }) {
+  const metrics = variant.metrics ?? {};
+  const route = variant.route ?? [];
   return (
     <div className={`rounded-md border bg-background p-3 ${selected ? "border-primary shadow-sm" : "border-border"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">{scenario.label}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{scenario.id}</div>
+          <div className="truncate text-sm font-semibold">{variant.label}</div>
+          <div className="mt-1 text-xs text-muted-foreground">{variant.id}</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {route.length > 0 && (
-            <Button size="sm" variant={selected ? "secondary" : "outline"} onClick={onSelect} title={selected ? "Hide this scenario on the map" : "Show this scenario route on the map"}>
+            <Button size="sm" variant={selected ? "secondary" : "outline"} onClick={onSelect} title={selected ? "Hide this planning variant" : "Show this planning variant route"}>
               <MapPinned className="h-4 w-4" />
               {selected ? "Shown" : "Map"}
             </Button>
           )}
-          <Badge tone={scenarioTone(scenario.status)}>{scenario.status}</Badge>
+          <Badge tone={variantTone(variant.status)}>{variant.status}</Badge>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <InfoTile label="Road filter" value={String(scenario.parameters?.road_filter ?? scenario.parameters?.source ?? "n/a")} />
-        <InfoTile label="Candidates" value={String(scenario.parameters?.candidate_count ?? "n/a")} />
-        <InfoTile label="Endpoint penalty" value={String(scenario.parameters?.endpoint_penalty ?? "n/a")} />
+        <InfoTile label="Road filter" value={String(variant.parameters?.road_filter ?? variant.parameters?.source ?? "n/a")} />
+        <InfoTile label="Candidates" value={String(variant.parameters?.candidate_count ?? "n/a")} />
+        <InfoTile label="Endpoint penalty" value={String(variant.parameters?.endpoint_penalty ?? "n/a")} />
         <InfoTile label="Points" value={String(metrics.point_count ?? route.length ?? "0")} />
         <InfoTile label="Graph length" value={formatMeters(metrics.graph_length_m)} />
         <InfoTile label="Visible length" value={formatMeters(metrics.visible_length_m)} />
@@ -4030,17 +3943,17 @@ function PlanningScenarioCard({ scenario, selected, onSelect }: { scenario: Plan
         <InfoTile label="Cost with endpoint" value={formatMeters(metrics.total_cost_with_endpoint_penalty_m)} />
       </div>
       {route.length > 0 && <div className="mt-2 rounded-sm border border-border bg-panel px-2 py-1 text-xs text-muted-foreground">{formatCoordinates(route[0])} to {formatCoordinates(route[route.length - 1])}</div>}
-      {scenario.notes?.map((note) => (
+      {variant.notes?.map((note) => (
         <div key={note} className="mt-2 rounded-sm border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
           {note}
         </div>
       ))}
-      {scenario.segments && scenario.segments.length > 0 && <Textarea className="mt-2 h-24 resize-none" value={JSON.stringify({ selected_nodes: scenario.selected_nodes, segments: scenario.segments }, null, 2)} readOnly spellCheck={false} />}
+      {variant.segments && variant.segments.length > 0 && <Textarea className="mt-2 h-24 resize-none" value={JSON.stringify({ selected_nodes: variant.selected_nodes, segments: variant.segments }, null, 2)} readOnly spellCheck={false} />}
     </div>
   );
 }
 
-function scenarioTone(status: string): "default" | "ok" | "warn" | "error" {
+function variantTone(status: string): "default" | "ok" | "warn" | "error" {
   if (status === "ok") return "ok";
   if (status === "no_route" || status === "no_graph" || status === "missing") return "warn";
   if (status === "error") return "error";
@@ -4068,7 +3981,7 @@ function SectionTitle({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-type MissionListItem = { mission_id: string; config?: MissionConfig; state?: MissionState };
+type MissionListItem = { mission_id: string; config?: MissionConfig; state?: MissionState; binding?: WorldBinding };
 
 function isActiveMission(item: MissionListItem, mission?: MissionConfig, missionState?: MissionState) {
   return mission?.mission_id === item.mission_id || (!mission && missionState?.mission_id === item.mission_id);
@@ -4182,6 +4095,48 @@ function normalizeUuidish(value: string) {
   return value.replace(/^agent_/, "").replace(/_/g, "-").toLowerCase();
 }
 
+function sameLonLat(left: [number, number] | null | undefined, right: [number, number] | null | undefined) {
+  if (!left || !right) return false;
+  return left[0] === right[0] && left[1] === right[1];
+}
+
+function ElapsedClock({ startedAt }: { startedAt: number }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title="Time since initialization was requested">
+      <Clock className="h-3.5 w-3.5" />
+      {formatDuration(Math.max(0, Math.floor((nowMs - startedAt) / 1000)))}
+    </div>
+  );
+}
+
+function normalizeCapabilityTags(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.flatMap((item) => {
+    if (typeof item !== "string") return [];
+    const capability = item.trim().toLowerCase();
+    return capability ? [capability] : [];
+  }))];
+}
+
+function agentMatchesMissionRequirements(agent: Agent, mission: MissionConfig): boolean {
+  const availableCapabilities = new Set(normalizeCapabilityTags(agent.capabilities));
+  if (!normalizeCapabilityTags(mission.required_capabilities).every((capability) => availableCapabilities.has(capability))) return false;
+
+  const requested = mission.transit?.["desired_vehicle_constraints"];
+  if (!requested || typeof requested !== "object" || Array.isArray(requested)) return true;
+  const supported = agent.constraints as Record<string, unknown>;
+  return Object.entries(requested).every(([key, desired]) => {
+    const limit = supported[key];
+    return typeof desired !== "number" || typeof limit !== "number" || desired <= limit;
+  });
+}
+
 function commandLabel(command: "init" | "approve" | "start") {
   if (command === "init") return "Init";
   if (command === "approve") return "Approve";
@@ -4214,7 +4169,7 @@ function emptyMission(name: string, agentId: string): MissionConfig {
   };
 }
 
-function coverageDistancesForVehicles(vehicleIds: string[], agents: Agent[]): number[] | undefined {
+function coverageSwathsForVehicles(vehicleIds: string[], agents: Agent[]): number[] | undefined {
   if (!vehicleIds.length) return undefined;
   const agentsById = new Map(agents.map((agent) => [normalizeUuidish(agent.agent_id), agent]));
   const widths = vehicleIds.map((vehicleId) => agentsById.get(normalizeUuidish(vehicleId))?.constraints.coverage_width_m);

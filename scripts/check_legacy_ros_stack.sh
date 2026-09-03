@@ -8,7 +8,7 @@ ROS_CONTAINER="${ROS_CONTAINER:-${STACK_PREFIX}-centralized-coordination}"
 CHECK_MAPDB_SEED="${CHECK_MAPDB_SEED:-1}"
 MONGO_CONTAINER="${MONGO_CONTAINER:-${STACK_PREFIX}-mongodb}"
 MAPDB_SEED_CONTAINER="${MAPDB_SEED_CONTAINER:-${STACK_PREFIX}-mapdb-seed}"
-ACTIVE_SCENARIO_FILE="${ACTIVE_SCENARIO_FILE:-data/runtime/active_scenario.json}"
+ACTIVE_WORLD_FILE="${ACTIVE_WORLD_FILE:-data/runtime/active_world.json}"
 
 required_containers=(
   "${STACK_PREFIX}-mongodb"
@@ -28,15 +28,15 @@ required_nodes=(
 )
 
 active_collection=""
-if [ -f "$ACTIVE_SCENARIO_FILE" ] && [ "$(jq -r '.status // ""' "$ACTIVE_SCENARIO_FILE")" = "ready" ]; then
-  active_collection="$(jq -r '.map_collection' "$ACTIVE_SCENARIO_FILE")"
+if [ -f "$ACTIVE_WORLD_FILE" ] && [ "$(jq -r '.status // ""' "$ACTIVE_WORLD_FILE")" = "ready" ]; then
+  active_collection="$(jq -r '.map_collection' "$ACTIVE_WORLD_FILE")"
   while IFS= read -r container; do
     [ -n "$container" ] && required_containers+=("$container")
-  done < <(jq -r '.containers[]?.container_name' "$ACTIVE_SCENARIO_FILE")
+  done < <(jq -r '.containers[]?.container_name' "$ACTIVE_WORLD_FILE")
   while IFS=$'\t' read -r agent_id topic_prefix; do
     [ -n "$agent_id" ] && required_nodes+=("/agent_${agent_id//-/_}")
     [ -n "$topic_prefix" ] && required_nodes+=("/autonomy_test_node_${topic_prefix}")
-  done < <(jq -r '.containers[]? | [.agent_id, .topic_prefix] | @tsv' "$ACTIVE_SCENARIO_FILE")
+  done < <(jq -r '.containers[]? | [.agent_id, .topic_prefix] | @tsv' "$ACTIVE_WORLD_FILE")
 else
   required_containers+=("${STACK_PREFIX}-edge-agent-sim-1")
   required_nodes+=(/agent_f9992bb3_9871_451f_90a0_9207eb9fe6c5 /autonomy_test_node_Themis_Fr)
@@ -110,7 +110,7 @@ if [ "$CHECK_MAPDB_SEED" = "1" ]; then
   check "MapDB.rma contains the three baseline features" mapdb_seed_is_valid
 fi
 if [ -n "$active_collection" ]; then
-  check "active scenario MapDB.$active_collection is non-empty" active_mapdb_is_valid
+  check "active world MapDB.$active_collection is non-empty" active_mapdb_is_valid
 fi
 
 nodes="$(docker exec "$ROS_CONTAINER" bash -lc 'source /opt/ros/humble/setup.bash && source /app/centralized_coordination/install/setup.bash && ros2 node list' 2>/dev/null || true)"

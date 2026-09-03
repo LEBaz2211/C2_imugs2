@@ -7,7 +7,7 @@ agent_id_key:
     # Autonomy Connection management:
     autonomy_connection_timeout: 5
     # Task management:
-    use_start_time: False
+    use_start_time: True
     # Waypoint management:
     objective_distance_tolerance: 3.0
     # Speed control:

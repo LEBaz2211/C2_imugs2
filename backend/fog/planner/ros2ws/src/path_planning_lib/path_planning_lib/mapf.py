@@ -6,6 +6,7 @@ AStar search
 from cmath import sqrt
 from math import dist, fabs
 import itertools
+import math
 import time
 
 import matplotlib.pyplot as plt# for plotting cost map
@@ -25,6 +26,8 @@ class AStar():
         risk_polygons=None,
         start_node=None,
         destination_node=None,
+        optimization=None,
+        constraints=None,
     ):
         # Associated with a specific graph and a specific agent
         self.graph = graph
@@ -33,6 +36,8 @@ class AStar():
         self.risk_polygons = list(risk_polygons or [])
         self.start_node = start_node
         self.destination_node = destination_node
+        self.optimization = dict(optimization or {})
+        self.constraints = dict(constraints or {})
 
     # def set_preferred_start_direction(self,initial_state,preferred_start_direction):
     #     if preferred_start_direction:
@@ -48,15 +53,44 @@ class AStar():
         edge = self.best_routable_edge(current_node, neighbor_node)
         if edge is None:
             return float("inf")
-        return edge['length']
+        return self.edge_cost(edge)
+
+    def edge_cost(self, edge):
+        """Apply the ICD's normalized road/exposure/energy preferences."""
+        length = float(edge.get('length', float('inf')))
+        surface = edge.get('surface', 'road' if edge.get('highway') else 'offroad')
+        road_usage = float(self.optimization.get('road_usage', 0.5))
+        if road_usage >= 0.999 and surface == 'offroad':
+            return float('inf')
+        road_factor = (
+            1.5 - road_usage
+            if surface == 'road'
+            else 0.5 + road_usage
+        )
+        visibility_weight = 1.0 - float(self.optimization.get('visibility', 1.0))
+        energy_weight = float(self.optimization.get('energy', 0.0))
+        exposure = float(edge.get('visibility_cost', 0.0))
+        energy = float(edge.get('energy_cost', 0.0))
+
+        straight_slope = abs(float(edge.get('straight_slope', 0.0)))
+        side_slope = abs(float(edge.get('side_slope', 0.0)))
+        if straight_slope > float(self.constraints.get('max_straight_slope', float('inf'))):
+            return float('inf')
+        if side_slope > float(self.constraints.get('max_side_slope', float('inf'))):
+            return float('inf')
+        return length * max(0.05, road_factor + visibility_weight * exposure + energy_weight * energy)
 
     def best_routable_edge(self, current_node, neighbor_node):
         """Select the shortest non-risk parallel edge between two nodes."""
         edge_data = self.graph.get_edge_data(current_node, neighbor_node) or {}
-        candidates = [data for data in edge_data.values() if not data.get('risk', False)]
+        candidates = [
+            data
+            for data in edge_data.values()
+            if not data.get('risk', False) and math.isfinite(self.edge_cost(data))
+        ]
         if not candidates:
             return None
-        return min(candidates, key=lambda data: float(data.get('length', float('inf'))))
+        return min(candidates, key=self.edge_cost)
 
     def heuristic_cost(self, current_node, destination_node):
         current_x = self.graph.nodes[current_node]['x']

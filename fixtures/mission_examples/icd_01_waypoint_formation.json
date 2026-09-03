@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "10000000-0000-4000-8000-000000000001",
+  "phase": 1,
+  "name": "ICD 1 — road navigation and Vee deployment",
+  "behavior": 0,
+  "vehicles": [
+    "f17d27fc-50f6-11ec-bf63-0242ac130002",
+    "fcee3176-50f6-11ec-bf63-0242ac130002",
+    "a18d27fc-50f6-11ec-bf63-0242ac130055"
+  ],
+  "start": {
+    "geometry": {"geometry_type": "Point", "coordinates": [4.3900, 50.8440]},
+    "start_time": {"earliest": "1991-03-26T22:13:00Z", "target": "1991-03-26T22:15:00Z", "latest": "1991-03-26T22:16:00Z"}
+  },
+  "transit": {
+    "geofence": {"geometry_type": "Polygon", "coordinates": [[4.3890, 50.8420], [4.4000, 50.8420], [4.4000, 50.8490], [4.3890, 50.8490], [4.3890, 50.8420]]},
+    "vehicle_formation": 1,
+    "vehicle_formation_distances": 5,
+    "optimalization": {"energy": 1, "road_usage": 1},
+    "desired_speed": 10
+  },
+  "objective": {
+    "geometry": {
+      "geometry_type": "Polygon",
+      "coordinates": [[4.3950, 50.8465], [4.3965, 50.8465], [4.3965, 50.8474], [4.3950, 50.8474], [4.3950, 50.8465]]
+    },
+    "vehicle_formation": 4,
+    "vehicle_formation_distances": 5,
+    "vehicle_orientation": [-45, 90, 45],
+    "maximize_coverage": true
+  }
+}

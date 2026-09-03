@@ -1,4 +1,4 @@
-# GET /api/scenarios/active
+# GET /api/worlds/active
 
 > **Documentation label: GENERATED**
 > Static discovery from the editable `backend/`, adapter, frontend, and schemas;
@@ -11,16 +11,16 @@ FastAPI handler `active`
 |---|---|
 | Kind | `http_endpoint` |
 | Method | `GET` |
-| Path | `/api/scenarios/active` |
+| Path | `/api/worlds/active` |
 | Handler | `active` |
 
 ## Source usages
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getActiveScenario | `—` | [`frontend/src/api.ts:582`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L582) |
-| handled by active | `—` | [`src/c2_imugs2/api/routers.py:255`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L255) |
+| getActiveWorld | `—` | [`frontend/src/api.ts:585`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L585) |
+| handled by active | `—` | [`src/c2_imugs2/api/routers.py:273`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L273) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:255`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L255)
+- [`src/c2_imugs2/api/routers.py:273`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L273)

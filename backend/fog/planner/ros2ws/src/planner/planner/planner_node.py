@@ -67,7 +67,7 @@ class PlannerNode(Node):
                                     ('map_folder',rclpy.Parameter.Type.STRING),
                                     ('mongodb_url',rclpy.Parameter.Type.STRING),
                                     ('map_feature_collection',rclpy.Parameter.Type.STRING),
-                                    ('scenario_activation_token',rclpy.Parameter.Type.STRING),
+                                    ('map_snapshot_token',rclpy.Parameter.Type.STRING),
                                     ('load_osm_from_network',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_database',rclpy.Parameter.Type.BOOL),
                                     ('load_map_from_local_folder',rclpy.Parameter.Type.BOOL),
@@ -97,7 +97,7 @@ class PlannerNode(Node):
         self.mongo_client = MongoClient(self.mongodb_url, read_preference=ReadPreference.PRIMARY)  # Set read preference
         self.map_database = self.mongo_client["MapDB"]
         map_feature_collection = self.get_parameter("map_feature_collection").value
-        self.scenario_activation_token = self.get_parameter("scenario_activation_token").value
+        self.map_snapshot_token = self.get_parameter("map_snapshot_token").value
         self.map_feature_collection = self.map_database[map_feature_collection]
         self.mongodb_features_count = 0
         # Start a MongoDB watcher in a separate thread
@@ -233,17 +233,25 @@ class PlannerNode(Node):
         try:
             mission_agents = self.mr_path_planner.get_mission_agents(mission_id)
 
-            # Consider agents that are detected and included in the mission.
-            agents_to_plan = [
-                agent
+            # A multi-vehicle mission is not executable until every selected
+            # robot has published a live profile/location. Planning a subset
+            # would cache a permanently partial task plan for 3/4/6-vehicle
+            # examples, depending only on ROS discovery timing.
+            live_agents = {
+                agent.agent_id: agent
                 for agent in self.agents.values()
                 if agent.agent_id in mission_agents
+            }
+            missing_agents = [
+                agent_id for agent_id in mission_agents if agent_id not in live_agents
             ]
-            if not agents_to_plan:
+            if missing_agents:
                 self.get_logger().warning(
-                    f"Waiting for live agent state before planning mission {mission_id}"
+                    f"Waiting for live agent state before planning mission {mission_id}; "
+                    f"missing: {', '.join(missing_agents)}"
                 )
                 return
+            agents_to_plan = [live_agents[agent_id] for agent_id in mission_agents]
 
             print("Agents to plan for:")
             print(mission_agents)
@@ -287,7 +295,7 @@ class PlannerNode(Node):
             )
             return
 
-        # Graph rendering is intentionally not performed here.  Large scenario
+        # Graph rendering is intentionally not performed here.  Large map snapshot
         # graphs can take minutes to annotate and this callback runs on the ROS
         # executor, so rendering here would block planner state and services.
 
@@ -334,6 +342,9 @@ class PlannerNode(Node):
             task_id = str(uuid.uuid4())  # Unique task ID for each agent
             primitives = []
             objectives = []
+            mission_semantics = self.mr_path_planner.get_path_metadata(
+                mission_id, agent_id
+            )
 
             primitive_id = str(uuid.uuid4())  # Unique ID for waypoint primitive
             waypoint_primitive = {
@@ -353,9 +364,48 @@ class PlannerNode(Node):
             
             primitives.append(waypoint_primitive)
 
-            for waypoint in path:
+            for waypoint_index, waypoint in enumerate(path):
                 
                 objective_id = str(uuid.uuid4())  # Unique ID for each objective
+                parameters = {
+                    "coordinates": waypoint,
+                    "speed": self.mr_path_planner.get_max_speed(mission_id),
+                    "max_speed": self.mr_path_planner.get_max_speed(mission_id),
+                    "mobility_profile": 0,
+                    "wait_time": 0,
+                }
+                parameters.update(
+                    mission_semantics.get("desired_vehicle_constraints") or {}
+                )
+                if waypoint_index == len(path) - 1:
+                    if mission_semantics.get("desired_heading_deg") is not None:
+                        parameters["desired_heading_deg"] = mission_semantics[
+                            "desired_heading_deg"
+                        ]
+                    if mission_semantics.get("arrival_time"):
+                        parameters["arrival_time"] = mission_semantics["arrival_time"]
+                    if mission_semantics.get("line_of_sight_target"):
+                        parameters["line_of_sight_target"] = mission_semantics[
+                            "line_of_sight_target"
+                        ]
+                    parameters["line_of_sight_propagation"] = mission_semantics.get(
+                        "line_of_sight_propagation", False
+                    )
+                    parameters["vehicle_formation"] = mission_semantics.get(
+                        "vehicle_formation"
+                    )
+                    parameters["vehicle_formation_distance"] = mission_semantics.get(
+                        "vehicle_formation_distance"
+                    )
+                    parameters["mission_end_time"] = mission_semantics.get(
+                        "mission_end_time"
+                    )
+                    parameters["coverage_action"] = mission_semantics.get(
+                        "coverage_action"
+                    )
+                    parameters["payload_action"] = mission_semantics.get(
+                        "payload_action"
+                    )
                 objective = {
                     "objective_id": objective_id,
                     "objective_type": "combined_primitives",
@@ -363,13 +413,7 @@ class PlannerNode(Node):
                     "primitives": [
                         {
                             "primitive_id": primitive_id,
-                            "parameters": {
-                                "coordinates": waypoint,
-                                "speed": self.mr_path_planner.get_max_speed(mission_id),
-                                "max_speed": self.mr_path_planner.get_max_speed(mission_id),
-                                "mobility_profile": 0,
-                                "wait_time": 0
-                            }
+                            "parameters": parameters
                         }
                     ]
                 }
@@ -378,7 +422,10 @@ class PlannerNode(Node):
             tasks[agent_id] = {
                 "task_id": task_id,
                 "primitives": primitives,
-                "objectives": objectives
+                "objectives": objectives,
+                "mission_semantics": mission_semantics,
+                "start_time": mission_semantics.get("start_time"),
+                "mission_end_time": mission_semantics.get("mission_end_time"),
             }
 
         mission = {"mission_id": mission_id, "tasks": tasks}
@@ -462,7 +509,7 @@ class PlannerNode(Node):
     # Methods
     def initialize_map(self):
 
-        # A failed reload must never leave the previous scenario's planner
+        # A failed reload must never leave the previous map snapshot's planner
         # object looking ready.
         self.init = False
         self.mr_path_planner = None
@@ -525,7 +572,7 @@ class PlannerNode(Node):
 
         if self.load_osm_from_network:
             self.get_logger().warn(
-                "Live OSM download is enabled. This mode is non-reproducible and is not used by scenario activation."
+                "Live OSM download is enabled. This mode is non-reproducible and is not used by snapshot deployment."
             )
             self.G = ox.graph_from_point(
                 (central_point.y, central_point.x),
@@ -575,7 +622,7 @@ class PlannerNode(Node):
         
         # Rename nodes for consistent naming (1, 2, 3, ... N)
         self.G=recalculate_node_ids(self.G)
-        # Frozen scenarios may intentionally retain only downloaded road
+        # Frozen map snapshots may intentionally retain only downloaded road
         # LineStrings after their temporary selection polygon is deleted.
         # OSMnx projection still requires explicit CRS metadata in that case.
         self.G.graph['crs'] = self.epsg
@@ -597,7 +644,7 @@ class PlannerNode(Node):
             )
 
         # Initialize the mission planner before publishing the readiness marker.
-        # Scenario activation treats this exact marker as the point at which
+        # Map snapshot loading treats this exact marker as the point at which
         # CreatePlanner can safely be accepted.
         risk_polygons = [
             geometry
@@ -615,7 +662,7 @@ class PlannerNode(Node):
         self.init = True
         self.get_logger().info(
             f"MAP IS LOADED collection=MapDB.{self.map_feature_collection.name} "
-            f"activation={self.scenario_activation_token} "
+            f"snapshot={self.map_snapshot_token} "
             f"nodes={self.G.number_of_nodes()} edges={self.G.number_of_edges()}"
         )
         # Keep diagnostic rendering out of initialization.  This method runs on
@@ -751,7 +798,7 @@ class PlannerNode(Node):
         if feature_count == 0:
             raise RuntimeError(
                 f"MapDB.{self.map_feature_collection.name} is empty; "
-                "the active scenario snapshot is missing or empty; reactivate the scenario before CreatePlanner"
+                "the active map snapshot snapshot is missing or empty; relaunch the map snapshot before CreatePlanner"
             )
 
         self.get_logger().info(

@@ -46,7 +46,7 @@ The fork was resynchronized on 2026-08-10 with the tracked runtime files in
 upstream resynchronization and repository-local runtime fixes: deterministic
 `MapDB.rma` seeding, guarded map readiness and error state `4`, explicit
 no-route handling, stale-path prevention, bidirectional local roads, the RMA
-graph-connection thresholds, and scenario-specific planner activation.
+graph-connection thresholds, and map-snapshot-specific planner loading.
 
 The directory-specific README/provenance files intentionally differ, and
 `docker-compose.backend.yml` keeps backend-specific container names and data
@@ -82,7 +82,7 @@ data/backend-planresults/
 
 These are runtime data and should not be treated as source.
 
-The FastAPI map reader and experimental Scenario Lab launcher still default to
+The FastAPI map reader and experimental Map snapshot Lab launcher still default to
 paths and an edge image named for `legacy_ros/`. Those dependencies must
 become configurable before later backend changes to maps, launch scripts, or
 the edge image are selected as the default UI runtime.

@@ -18,8 +18,8 @@ FastAPI handler `init_mission`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by init_mission | `—` | [`src/c2_imugs2/api/routers.py:209`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L209) |
-| initMission | `—` | [`frontend/src/api.ts:627`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L627) |
+| handled by init_mission | `—` | [`src/c2_imugs2/api/routers.py:220`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L220) |
+| initMission | `—` | [`frontend/src/api.ts:686`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L686) |
 
 ## Verified one-robot navigation data
 
@@ -67,4 +67,4 @@ Example evidence: [`fixtures/verified_runs/single_robot_point_navigation.json:1`
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:209`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L209)
+- [`src/c2_imugs2/api/routers.py:220`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L220)

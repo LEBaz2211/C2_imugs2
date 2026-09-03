@@ -18,9 +18,9 @@ reference, generated, and historical material.
 |---|---|---|
 | `backend/` | Editable ROS backend used for new backend work | [Backend README](backend/README.md) |
 | `legacy_ros/` | Frozen compatibility/reference copy | [Legacy ROS README](legacy_ros/README.md) |
-| `frontend/` | React mission and scenario UI | UI structure is described in [UI/backend adapter](docs/UI_BACKEND_LEGACY_ADAPTER.md) |
+| `frontend/` | React mission and world UI | UI structure is described in [UI/backend adapter](docs/UI_BACKEND_LEGACY_ADAPTER.md) |
 | `src/c2_imugs2/` | FastAPI adapter and Python modules | [Architecture](docs/ARCHITECTURE.md) |
-| `schemas/` | JSON contracts for missions, plans, agents, and map features | [Generated contract reference](docs/generated/index.md) |
+| `schemas/` | JSON contracts for missions, plans, agents, map features, worlds, and vehicle models | [Generated contract reference](docs/generated/index.md) |
 | `docs/legacy_nodes/` | Per-node ROS inputs, outputs, and examples | [ROS node README](docs/legacy_nodes/README.md) |
 
 More specific backend package notes are available for:
@@ -101,9 +101,10 @@ one in-flight generation, receives a fresh revisioned operational picture each
 time, and can only stage validated drafts for operator review. Valid proposals
 are retained in the browser conversation, added to the mission list, and can be
 opened on the map or advanced with explicit operator controls. Active named
-map features come from the exact activated MapDB collection. The model sees
+map features come from the exact launched MapDB snapshot plus current-deployment
+live overlays. The model sees
 this as the current environment and does not receive internal
-scenario-management identity. It has no mission-command or
+world-management identity. It has no mission-command or
 infrastructure-write tools.
 
 ## MongoDB maintenance
@@ -122,6 +123,21 @@ Compaction is dry-run by default. Deletion requires the explicit
 also refuses to load more than 100,000 feedback documents unless the operator
 scopes it with `--feedback-mission-id` or explicitly raises
 `--feedback-max-documents` after a memory-capacity review.
+
+The one-time world-domain migration is deliberately isolated from normal API
+startup and refuses to modify MongoDB until `mongodump` completes:
+
+```bash
+.venv/bin/python -m c2_imugs2.migrations.world_domain_v1 \
+  --mongodb-url mongodb://localhost:27017 \
+  --repo-root "$PWD" \
+  --backup-dir data/migrations/world-domain-v1-backup
+```
+
+It is idempotent, verifies migrated snapshot counts and hashes, imports mutable
+GeoJSON authoring features, and records its version in `WorldDB.Migrations`.
+Source collections are retained until post-deployment verification and an
+explicit cleanup decision.
 
 To run the frozen legacy stack instead, follow the
 [legacy ROS instructions](legacy_ros/README.md).

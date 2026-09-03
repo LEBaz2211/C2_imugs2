@@ -29,9 +29,20 @@ def to_legacy_mission_config(mission_config: dict[str, Any]) -> dict[str, Any]:
     """Translate canonical adapter fields back to the old REST/ROS ICD spellings."""
     legacy = deepcopy(mission_config)
     transit = legacy.get("transit")
-    if isinstance(transit, dict) and "optimization" in transit:
-        transit["optimalization"] = deepcopy(transit["optimization"])
-        transit.pop("optimization", None)
+    if isinstance(transit, dict):
+        if "optimization" in transit:
+            transit["optimalization"] = deepcopy(transit["optimization"])
+            transit.pop("optimization", None)
+        if "geofence_maximize_coverage" in transit:
+            transit["geofence_maximum_coverage"] = transit.pop(
+                "geofence_maximize_coverage"
+            )
+    start = legacy.get("start")
+    if isinstance(start, dict) and "vehicle_formation_distance" in start:
+        # The inherited C++ start parser alone expects the plural spelling.
+        start["vehicle_formation_distances"] = start.pop(
+            "vehicle_formation_distance"
+        )
     objective = legacy.get("objective")
     if isinstance(objective, dict) and "maximum_coverage_distances" in objective:
         objective["maximize_coverage_distances"] = deepcopy(

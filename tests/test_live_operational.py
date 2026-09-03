@@ -94,15 +94,15 @@ class FakeDatabase:
         return self.collections[(self.database, collection)]
 
 
-class Scenario:
+class World:
     def validated_active(self) -> dict[str, Any]:
         return {
-            "scenario_id": "rma-demo",
-            "version": "1",
+            "world_id": "rma-demo",
+            "world_version": "1",
             "status": "ready",
             "ready": True,
             "map": "rma",
-            "map_collection": "scenario_rma_demo_v1",
+            "map_collection": "world_rma_demo_v1",
             "feature_count": 2,
             "road_count": 1,
             "feature_ids": ["parade-area"],
@@ -206,7 +206,7 @@ def _fixture() -> tuple[
                 }
             ]
         ),
-        ("MapDB", "scenario_rma_demo_v1"): FakeCollection(
+        ("MapDB", "world_rma_demo_v1"): FakeCollection(
             [
                 {
                     "type": "Feature",
@@ -236,7 +236,7 @@ def _fixture() -> tuple[
     client = FakeClient(collections)
     provider = LiveOperationalReadModelProvider(
         runtime,
-        Scenario(),
+        World(),
         "mongodb://unused",
         mongo_timeout_ms=125,
         mission_limit=8,
@@ -271,8 +271,8 @@ def test_live_picture_merges_adapter_and_backend_truth_without_payload_arrays() 
     }
     assert mission.data["effective_status_source"] == "RuntimeDB.MissionFeedback"
     assert mission.data["backend_planning"]["has_paths"] is True
-    scenario = next(iter(picture.sections["scenario"].items.values()))
-    assert scenario.data["map_features"] == [
+    world = next(iter(picture.sections["world"].items.values()))
+    assert world.data["map_features"] == [
         {
             "feature_id": "parade-area",
             "name": "parade",
@@ -297,7 +297,7 @@ def test_live_picture_merges_adapter_and_backend_truth_without_payload_arrays() 
             "source_id": "MapDB.active",
         }
     ]
-    assert scenario.source_ids == ("MapDB.active", "scenario-runtime")
+    assert world.source_ids == ("MapDB.active", "world-runtime")
 
     encoded = json.dumps(mission.data, sort_keys=True)
     assert "coordinates" not in encoded.lower()
@@ -316,7 +316,7 @@ def test_live_picture_merges_adapter_and_backend_truth_without_payload_arrays() 
             {"objective", "geometry", "tasks", "Tasks", "waypoints", "Waypoints"}
         )
     map_pipeline, map_kwargs = collections[
-        ("MapDB", "scenario_rma_demo_v1")
+        ("MapDB", "world_rma_demo_v1")
     ].aggregate_calls[0]
     assert map_pipeline[0]["$match"] == {
         "properties.feature_type": {
@@ -335,7 +335,7 @@ def test_live_picture_merges_adapter_and_backend_truth_without_payload_arrays() 
     assert map_kwargs == {"maxTimeMS": 125, "allowDiskUse": False}
 
 
-def test_operator_authored_point_objectives_are_a_separate_inline_only_overlay() -> None:
+def test_global_operator_objective_library_is_never_joined_into_active_world() -> None:
     provider, _, _ = _fixture()
     provider.operator_objective_provider = lambda map_name: {
         "type": "FeatureCollection",
@@ -367,44 +367,24 @@ def test_operator_authored_point_objectives_are_a_separate_inline_only_overlay()
     }
 
     picture = provider.read_operational_model()
-    scenario = next(iter(picture.sections["scenario"].items.values()))
+    world = next(iter(picture.sections["world"].items.values()))
 
-    assert scenario.data["operator_objectives"] == [
-        {
-            "feature_id": "entry-1",
-            "name": "Entry 1",
-            "feature_type": "objective",
-            "geometry": {
-                "geometry_type": "Point",
-                "coordinates": [4.3932479, 50.8445956],
-            },
-            "coordinate_count": 2,
-            "freshness": "fresh",
-            "provenance": "operator-authored map objective",
-            "source_id": "adapter.operator_objectives",
-            "active_map_asset": False,
-            "usage": "inline_geometry_only",
-        }
-    ]
-    assert scenario.data["operator_objective_observation"]["returned_count"] == 1
-    assert scenario.source_ids == (
-        "MapDB.active",
-        "adapter.operator_objectives",
-        "scenario-runtime",
-    )
+    assert "operator_objectives" not in world.data
+    assert "operator_objective_observation" not in world.data
+    assert "adapter.operator_objectives" not in world.source_ids
 
 
 def test_oversized_active_map_geometry_is_summarized_without_coordinates() -> None:
     provider, _, collections = _fixture()
     ring = [[4.0 + index / 10_000, 50.0] for index in range(129)]
     ring.append(ring[0])
-    collections[("MapDB", "scenario_rma_demo_v1")].rows[0]["geometry"][
+    collections[("MapDB", "world_rma_demo_v1")].rows[0]["geometry"][
         "coordinates"
     ] = [ring]
 
     picture = provider.read_operational_model()
-    scenario = next(iter(picture.sections["scenario"].items.values()))
-    feature = scenario.data["map_features"][0]
+    world = next(iter(picture.sections["world"].items.values()))
+    feature = world.data["map_features"][0]
 
     assert feature["geometry_status"] == "omitted_coordinate_limit"
     assert feature["coordinate_count"] == 130
@@ -414,13 +394,13 @@ def test_oversized_active_map_geometry_is_summarized_without_coordinates() -> No
 
 def test_invalid_active_map_geometry_is_retained_as_a_stale_named_fact() -> None:
     provider, _, collections = _fixture()
-    collections[("MapDB", "scenario_rma_demo_v1")].rows[0]["geometry"][
+    collections[("MapDB", "world_rma_demo_v1")].rows[0]["geometry"][
         "coordinates"
     ] = [[[4.0, 50.0], [4.1, 50.0], [4.1, 50.1], [4.0, 50.1]]]
 
     picture = provider.read_operational_model()
-    scenario = next(iter(picture.sections["scenario"].items.values()))
-    feature = scenario.data["map_features"][0]
+    world = next(iter(picture.sections["world"].items.values()))
+    feature = world.data["map_features"][0]
 
     assert feature["feature_id"] == "parade-area"
     assert feature["geometry_status"] == "invalid"
@@ -434,7 +414,7 @@ def test_active_map_feature_observation_is_strictly_limited_and_explicit() -> No
     provider, _, collections = _fixture()
     provider.map_feature_limit = 3
     provider.map_total_coordinate_limit = 4
-    collections[("MapDB", "scenario_rma_demo_v1")].rows = [
+    collections[("MapDB", "world_rma_demo_v1")].rows = [
         {
             "id": f"objective-{index}",
             "properties": {
@@ -452,19 +432,19 @@ def test_active_map_feature_observation_is_strictly_limited_and_explicit() -> No
     ]
 
     picture = provider.read_operational_model()
-    scenario = next(iter(picture.sections["scenario"].items.values()))
+    world = next(iter(picture.sections["world"].items.values()))
 
-    assert [feature["feature_id"] for feature in scenario.data["map_features"]] == [
+    assert [feature["feature_id"] for feature in world.data["map_features"]] == [
         "objective-0",
         "objective-1",
         "objective-2",
     ]
     assert [
-        feature["geometry_status"] for feature in scenario.data["map_features"]
+        feature["geometry_status"] for feature in world.data["map_features"]
     ] == ["exact", "exact", "omitted_picture_budget"]
-    assert "geometry" not in scenario.data["map_features"][2]
-    assert scenario.data["map_feature_observation"]["truncated"] is True
-    assert scenario.data["map_feature_observation"]["observed_row_count"] == 4
+    assert "geometry" not in world.data["map_features"][2]
+    assert world.data["map_feature_observation"]["truncated"] is True
+    assert world.data["map_feature_observation"]["observed_row_count"] == 4
     assert picture.sources["MapDB.active"].details["feature_limit"] == 3
     assert (
         picture.sources["MapDB.active"].details[
@@ -473,21 +453,21 @@ def test_active_map_feature_observation_is_strictly_limited_and_explicit() -> No
         == 4
     )
     assert "active-map-features-truncated" in picture.sections["warnings"].items
-    pipeline = collections[("MapDB", "scenario_rma_demo_v1")].aggregate_calls[0][0]
+    pipeline = collections[("MapDB", "world_rma_demo_v1")].aggregate_calls[0][0]
     assert pipeline[2] == {"$limit": 4}
 
 
 def test_active_map_failure_preserves_binding_and_marks_feature_facts_missing() -> None:
     provider, _, collections = _fixture()
-    collections[("MapDB", "scenario_rma_demo_v1")] = FailingAggregateCollection([])
+    collections[("MapDB", "world_rma_demo_v1")] = FailingAggregateCollection([])
 
     picture = provider.read_operational_model()
-    scenario = next(iter(picture.sections["scenario"].items.values()))
+    world = next(iter(picture.sections["world"].items.values()))
 
-    assert scenario.data["map_collection"] == "scenario_rma_demo_v1"
-    assert scenario.data["map_features"] == []
-    assert scenario.data["map_feature_observation"]["freshness"] == "missing"
-    assert scenario.freshness is Freshness.STALE
+    assert world.data["map_collection"] == "world_rma_demo_v1"
+    assert world.data["map_features"] == []
+    assert world.data["map_feature_observation"]["freshness"] == "missing"
+    assert world.freshness is Freshness.STALE
     assert picture.sources["MapDB.active"].freshness is Freshness.MISSING
     assert "source-unavailable:mapdb-active" in picture.sections["warnings"].items
 
@@ -647,7 +627,7 @@ def test_mongo_failure_keeps_adapter_fact_but_marks_backend_sources_missing() ->
 
     provider = LiveOperationalReadModelProvider(
         runtime,
-        Scenario(),
+        World(),
         "mongodb://unused",
         mongo_client_factory=unavailable,
     )
@@ -673,7 +653,7 @@ def test_mongo_failure_redacts_uri_credentials_from_operational_warnings() -> No
 
     provider = LiveOperationalReadModelProvider(
         runtime,
-        Scenario(),
+        World(),
         "mongodb://unused",
         mongo_client_factory=unavailable,
     )

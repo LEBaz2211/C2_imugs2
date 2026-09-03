@@ -88,7 +88,7 @@ services:
       - ./backend/config/data/map:/data/map:ro
       - ./data/runtime:/runtime:ro
       - ./data/backend-planresults:/app/data/.planresults
-    command: bash -lc 'if [ -f /runtime/active_planner.yaml ]; then exec ros2 run planner planner_node --ros-args --params-file /runtime/active_planner.yaml; else exec ros2 run planner planner_node --ros-args --params-file /app/config.yaml; fi'
+    command: bash -lc 'if [ -f /runtime/active_planner.yaml ] && grep -q "^[[:space:]]*map_snapshot_token:" /runtime/active_planner.yaml; then exec ros2 run planner planner_node --ros-args --params-file /runtime/active_planner.yaml; else exec ros2 run planner planner_node --ros-args --params-file /app/config.yaml; fi'
     depends_on:
       mongodb:
         condition: service_healthy

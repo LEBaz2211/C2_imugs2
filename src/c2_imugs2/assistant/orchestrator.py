@@ -18,7 +18,7 @@ from c2_imugs2.operations.models import OperationalPicture
 from .config import AssistantSettings
 from .models import (
     AssistantResponse,
-    AssistantScenarioBinding,
+    AssistantWorldBinding,
     AssistantStructuredOutput,
     ConversationTurn,
     ModelInvocationResult,
@@ -107,12 +107,12 @@ class _PreparedTurn:
 
 
 _INTERNAL_ENVIRONMENT_KEY = re.compile(
-    r"(?:scenario|activation|collection|(?:^|_)version$|(?:^|_)hash$|"
+    r"(?:world|deployment|launch|snapshot|collection|(?:^|_)version$|(?:^|_)hash$|"
     r"(?:^|_)source(?:_ids?)?$|^sources?$)",
     re.IGNORECASE,
 )
 _INTERNAL_ENVIRONMENT_TOKEN = re.compile(
-    r"\b(?:MapDB\.)?scenario(?:s)?(?:[._:/-][A-Za-z0-9_.:/-]+)?\b",
+    r"\b(?:MapDB\.)?world(?:s)?(?:[._:/-][A-Za-z0-9_.:/-]+)?\b",
     re.IGNORECASE,
 )
 _SENSITIVE_DEBUG_KEY = re.compile(
@@ -136,6 +136,110 @@ _MAX_DEBUG_TOOL_CALLS = 128
 _MODEL_OPERATIONAL_SECTIONS = ("agents", "missions", "plans", "health", "warnings")
 _MAX_OPERATOR_MISSIONS = 64
 _MAX_OPERATOR_MISSION_CHARS = 32_000
+_MAX_EXCLUDE_PATHS = 256
+# These top-level keys are consumed by the prompt template itself, so an
+# operator context filter can never remove them.
+_PROTECTED_PICTURE_KEYS = frozenset({"context_schema", "picture_revision", "observed_at"})
+_EXCLUDE_PATH_KEY_SEGMENT = re.compile(r"^[A-Za-z0-9_@:\-]+$")
+
+
+def _compile_exclude_path(path: str) -> tuple[tuple[str, Any], ...]:
+    """Parse ``a.b[*].c`` / ``a.b[2].c`` into typed segments."""
+
+    text = path.strip()
+    if not text or len(text) > 256:
+        raise AssistantInputError("operational picture exclude path is invalid")
+    segments: list[tuple[str, Any]] = []
+    buffer: list[str] = []
+    index = 0
+
+    def flush_key() -> None:
+        name = "".join(buffer)
+        buffer.clear()
+        if not _EXCLUDE_PATH_KEY_SEGMENT.match(name):
+            raise AssistantInputError(
+                f"operational picture exclude path {path!r} has an invalid key"
+            )
+        segments.append(("key", name))
+
+    while index < len(text):
+        char = text[index]
+        if char == ".":
+            if buffer:
+                flush_key()
+            index += 1
+            if index >= len(text):
+                raise AssistantInputError(
+                    f"operational picture exclude path {path!r} ends with a separator"
+                )
+        elif char == "[":
+            flush_key()
+            end = text.find("]", index)
+            if end == -1:
+                raise AssistantInputError(
+                    f"operational picture exclude path {path!r} has an unclosed bracket"
+                )
+            inner = text[index + 1 : end]
+            if inner == "*":
+                segments.append(("all", None))
+            elif inner.isdigit():
+                segments.append(("index", int(inner)))
+            else:
+                raise AssistantInputError(
+                    f"operational picture exclude path {path!r} has an invalid subscript"
+                )
+            index = end + 1
+            if index < len(text) and text[index] not in ".[":
+                raise AssistantInputError(
+                    f"operational picture exclude path {path!r} has a missing separator"
+                )
+        else:
+            buffer.append(char)
+            index += 1
+    if buffer:
+        flush_key()
+    if not segments:
+        raise AssistantInputError("operational picture exclude path is empty")
+    return tuple(segments)
+
+
+def _prune_excluded(
+    value: Any, segments: tuple[tuple[str, Any], ...]
+) -> tuple[Any, bool]:
+    """Remove the subtree addressed by compiled segments; report changes."""
+
+    if not segments:
+        return value, False
+    head, rest = segments[0], segments[1:]
+    kind, name = head
+    if isinstance(value, dict):
+        if kind != "key" or name not in value:
+            return value, False
+        if not rest:
+            return {k: v for k, v in value.items() if k != name}, True
+        child, changed = _prune_excluded(value[name], rest)
+        if not changed:
+            return value, False
+        return {**value, name: child}, True
+    if isinstance(value, list):
+        if kind == "all":
+            indices = list(range(len(value)))
+        elif kind == "index" and name < len(value):
+            indices = [name]
+        else:
+            return value, False
+        if not rest:
+            dropped = set(indices)
+            return [v for i, v in enumerate(value) if i not in dropped], True
+        changed_any = False
+        items = list(value)
+        for position in indices:
+            child, changed = _prune_excluded(items[position], rest)
+            if changed:
+                items[position] = child
+                changed_any = True
+        return (items if changed_any else value), changed_any
+    return value, False
 
 
 class AssistantOrchestrator:
@@ -212,6 +316,7 @@ class AssistantOrchestrator:
         available_options["sections"] = list(_MODEL_OPERATIONAL_SECTIONS)
         available_options["mission_ids"] = None
         available_options["item_ids"] = {}
+        available_options["exclude_paths"] = []
         available = self._model_operational_picture(picture, available_options)
         redacted_selected = self._redact_sensitive_value(selected)
         redacted_available = self._redact_sensitive_value(available)
@@ -322,7 +427,7 @@ class AssistantOrchestrator:
             answer=answer,
             picture_revision=turn.picture.picture_revision,
             picture_observed_at=turn.picture_dict["observed_at"],
-            picture_scenario_binding=self._picture_scenario_binding(turn.picture),
+            picture_world_binding=self._picture_world_binding(turn.picture),
             prompt_version=self._prompt_bundle.version,
             assumptions=list(structured.assumptions) if structured else [],
             warnings=list(structured.warnings) if structured else [],
@@ -371,11 +476,15 @@ class AssistantOrchestrator:
     ) -> dict[str, Any]:
         """Project internal runtime state into the model-facing environment view."""
 
-        selected_sections, selected_mission_ids, operator_missions, item_ids = (
-            self._operational_picture_selection(options)
-        )
+        (
+            selected_sections,
+            selected_mission_ids,
+            operator_missions,
+            item_ids,
+            exclude_paths,
+        ) = self._operational_picture_selection(options)
 
-        environment_section = picture.sections["scenario"]
+        environment_section = picture.sections["world"]
         environment_item = (
             next(iter(environment_section.items.values()))
             if environment_section.items
@@ -396,16 +505,8 @@ class AssistantOrchestrator:
         )
         if not isinstance(map_features, list):
             map_features = []
-        operator_objectives = self._environment_safe_value(
-            environment_data.get("operator_objectives", [])
-        )
-        if not isinstance(operator_objectives, list):
-            operator_objectives = []
         observation = self._environment_safe_value(
             environment_data.get("map_feature_observation", {})
-        )
-        operator_objective_observation = self._environment_safe_value(
-            environment_data.get("operator_objective_observation", {})
         )
         readiness = self._environment_safe_value(
             {
@@ -425,17 +526,9 @@ class AssistantOrchestrator:
             "readiness": readiness,
             "map": map_facts,
             "map_features": map_features,
-            "operator_objectives": operator_objectives,
         }
         if isinstance(observation, dict) and observation:
             current_environment["map_feature_observation"] = observation
-        if (
-            isinstance(operator_objective_observation, dict)
-            and operator_objective_observation
-        ):
-            current_environment["operator_objective_observation"] = (
-                operator_objective_observation
-            )
 
         picture_dict = picture.to_dict()
         projected: dict[str, Any] = {
@@ -485,7 +578,6 @@ class AssistantOrchestrator:
             )
         if options is not None:
             projected["context_selection"] = {
-                "always_included": ["current_environment"],
                 "included_sections": [
                     section
                     for section in _MODEL_OPERATIONAL_SECTIONS
@@ -500,7 +592,12 @@ class AssistantOrchestrator:
                     section: sorted(section_ids)
                     for section, section_ids in sorted(item_ids.items())
                 },
+                "excluded_paths": list(exclude_paths),
             }
+        # Operator context filters are applied last so they can trim any
+        # projection output, including the selection manifest itself.
+        for path in exclude_paths:
+            projected, _ = _prune_excluded(projected, _compile_exclude_path(path))
         return projected
 
     def _operational_picture_selection(
@@ -510,9 +607,10 @@ class AssistantOrchestrator:
         set[str] | None,
         list[dict[str, Any]],
         dict[str, set[str]],
+        list[str],
     ]:
         if options is None:
-            return set(_MODEL_OPERATIONAL_SECTIONS), None, [], {}
+            return set(_MODEL_OPERATIONAL_SECTIONS), None, [], {}, []
 
         raw_sections = options.get("sections")
         if not isinstance(raw_sections, list):
@@ -577,7 +675,29 @@ class AssistantOrchestrator:
                 for item_id in raw_ids[:256]
                 if isinstance(item_id, str) and item_id.strip()
             }
-        return selected_sections, selected_mission_ids, operator_missions, item_ids
+
+        raw_exclude_paths = options.get("exclude_paths", [])
+        if not isinstance(raw_exclude_paths, list):
+            raise AssistantInputError("operational picture exclude_paths must be a list")
+        exclude_paths: list[str] = []
+        for raw_path in raw_exclude_paths[:_MAX_EXCLUDE_PATHS]:
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                continue
+            segments = _compile_exclude_path(raw_path)
+            if segments[0][0] == "key" and segments[0][1] in _PROTECTED_PICTURE_KEYS:
+                # The prompt template requires these keys; ignore operator
+                # attempts to filter them instead of failing the request.
+                continue
+            normalized = self._model_safe_text(raw_path.strip())
+            if normalized not in exclude_paths:
+                exclude_paths.append(normalized)
+        return (
+            selected_sections,
+            selected_mission_ids,
+            operator_missions,
+            item_ids,
+            exclude_paths,
+        )
 
     def _merge_operator_missions(
         self,
@@ -854,9 +974,9 @@ class AssistantOrchestrator:
         # Backend labels may use underscored or compound forms, so word-boundary
         # replacement alone is not sufficient to keep that identity vocabulary
         # out of the serialized model context.
-        text = re.sub("scenario", "environment", text, flags=re.IGNORECASE)
+        text = re.sub("world", "environment", text, flags=re.IGNORECASE)
         text = re.sub(
-            r"(?i)\bactivation(?:[_ -]?(?:id|token|phase))?\b(?:\s*[:=]\s*\S+)?",
+            r"(?i)\b(?:deployment|launch|snapshot)(?:[_ -]?(?:id|token|phase))?\b(?:\s*[:=]\s*\S+)?",
             "environment readiness",
             text,
         )
@@ -881,14 +1001,14 @@ class AssistantOrchestrator:
         return messages
 
     @staticmethod
-    def _picture_scenario_binding(
+    def _picture_world_binding(
         picture: OperationalPicture,
-    ) -> AssistantScenarioBinding | None:
-        items = picture.sections["scenario"].items
+    ) -> AssistantWorldBinding | None:
+        items = picture.sections["world"].items
         if not items:
             return None
         item = next(iter(items.values()))
-        return AssistantScenarioBinding.from_mapping(item.data)
+        return AssistantWorldBinding.from_mapping(item.data)
 
     @staticmethod
     def _history_answer(response: AssistantResponse) -> str:

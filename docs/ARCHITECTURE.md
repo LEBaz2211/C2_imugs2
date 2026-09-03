@@ -22,10 +22,10 @@ record current behavior without presenting it as permanent architecture.
 ```text
 React/Vite/Leaflet UI
   -> FastAPI JSON + SSE adapter
-     -> thin mission, scenario, and assistant routers over application services
+     -> thin mission, world, and assistant routers over application services
      -> legacy REST client for mission commands
      -> rosbridge client for ROS diagnostics and live reads
-     -> scenario activation + immutable MapDB snapshots
+     -> world launch + immutable MapDB snapshots
      -> revisioned OperationalPicture read model
      -> LangChain chat adapter -> LM Studio OpenAI-compatible API
   -> Dockerized editable ROS backend (`docker-compose.backend.yml`)
@@ -41,6 +41,12 @@ proposals pass through the same deterministic schema/semantic validator,
 including finite coordinate/range and Point, LineString, or closed single-ring
 Polygon checks, and remain editable drafts until an operator explicitly
 initializes them.
+
+The canonical mission layer also accepts MultiPoint geometry. It normalizes
+the documented legacy aliases, defaults a missing behavior to `NAVIGATE`,
+defaults an omitted Coverage `maximize_coverage` flag to true, validates
+ordered timezone-qualified time windows, and keeps sensor swath separate from
+inter-vehicle separation.
 
 ## Frontend UI Conventions
 
@@ -88,11 +94,12 @@ mission_config + selected agents -> validated task_plan
 | Area | Main files | Responsibility |
 | --- | --- | --- |
 | UI | `frontend/src/App.tsx`, `MapView.tsx`, `api.ts` | Operator workflow, map rendering, API/SSE consumption |
-| Compatibility API | `src/c2_imugs2/api/` | Composition, stable UI endpoints, and mission/scenario command orchestration |
+| Compatibility API | `src/c2_imugs2/api/` | Composition, stable UI endpoints, and mission/world command orchestration |
 | Assistant | `src/c2_imugs2/assistant/` | Versioned prompts and one-shot LangChain model calls |
 | Operational read side | `src/c2_imugs2/operations/` | Typed pictures, live-source projection, revisions, diffs, and recovery |
 | Infrastructure | `src/c2_imugs2/infrastructure/` | Mongo maintenance, file repositories, rosbridge, planner, map, and legacy REST adapters |
-| Scenario runtime | `src/c2_imugs2/scenarios/` | Freeze a scenario version, switch the planner, replace and verify robot containers |
+| World service | `src/c2_imugs2/worlds/` | Persist revisioned definitions, freeze immutable snapshots, record launches, and expose the active world |
+| Deployment manager | `src/c2_imugs2/runtime/` | Start and stop generic agent deployments without receiving world lifecycle identity |
 | Domain and application core | `src/c2_imugs2/core/`, `schemas/` | Enums, ports, mission/task validation, services, and replaceable planning |
 | Contract tooling | `src/c2_imugs2/contracts/` | Contract graph, curated evidence, inventory, and generated documentation |
 | Editable ROS runtime | `backend/` | Writable ROS nodes, planner, edge runtime, configuration, and embedded interfaces |
@@ -108,32 +115,45 @@ canonical transit.optimization
   -> legacy transit.optimalization
 ```
 
-Runtime user features are also converted at this boundary: the UI may refer to
-a saved feature, but the adapter sends inline geometry when the editable
-backend planner's inherited compatibility path cannot resolve that runtime
-`feature_id`.
+Current-deployment live overlays are also converted at this boundary: the UI
+may refer to one by ID, but the adapter sends inline geometry because those
+overlays deliberately do not mutate the immutable planner graph.
 
 The canonical schema permits missions without `transit`. The inherited planner
 does not, so mission initialization adds a conservative `max_speed` only to the
 backend-bound copy: the minimum positive speed declared by the selected active
-scenario agents, or `1.0 m/s` when none is available. Explicit mission speed
+world agents, or `1.0 m/s` when none is available. Explicit mission speed
 wins, and the canonical mission stored by the adapter remains unchanged. The
 editable planner also defaults safely for direct ROS clients that bypass the
 adapter.
+
+For maximizing Polygon coverage, the compatibility copy obtains
+`objective.coverage_swath_widths` from the selected active-world agents'
+`constraints.coverage_width_m` when the mission does not provide explicit
+swaths. `objective.maximum_coverage_distances` is an inter-vehicle separation
+constraint, not a sensor width. The old interpretation remains only as a
+temporary fallback for existing payloads that have no usable world-profile
+swath.
+
+Before forwarding Init, the application layer checks active-world vehicle and
+feature membership, declared required capabilities,
+requested limits against declared vehicle constraints, and the simple span
+feasibility of an ordered LineString communication relay. These checks catch
+known impossible inputs early; they are not a general route, collision,
+visibility, schedule, or multi-agent feasibility solver.
 
 World roads are not mission geometry. The mission carries objectives and constraints; the active world's roads live in its launched MapDB snapshot.
 
 ## World Definitions And The Active World
 
-The user-facing term is **world definition**. Existing API paths, JSON fields,
-MongoDB collections, and Python/TypeScript symbols still use `scenario` for
-compatibility; that internal name does not give the stored definition runtime
-authority.
+The control-plane term is **world definition** throughout API paths, JSON
+fields, MongoDB collections, Python/TypeScript symbols, and operator UI. A
+stored definition still has no runtime authority until it is launched.
 
 | Concept | Meaning |
 | --- | --- |
 | World definition | A saved authoring object containing the features, imported roads, vehicles, starting positions, and map view needed to create a world. It is a launch recipe, not live state. |
-| Launch | The boundary that validates and freezes one definition, creates the runtime snapshot, starts its robots, and installs the planner graph. The existing endpoint remains `POST /api/scenarios/activate`. |
+| Launch | The boundary that validates and freezes the last acknowledged definition revision, creates the runtime snapshot, starts its robots, and installs the planner graph through `POST /api/worlds/{world_id}/launch`. |
 | Active world | The launched snapshot plus live robot, feature, risk, graph, mission, and telemetry state. |
 | Mission | An operation executed by vehicles inside the active world. It does not own the world. |
 
@@ -141,40 +161,42 @@ After launch, runtime consumers must not read the mutable browser world
 definition. C2, mission validation, the planner, and robot processes use only
 the launched snapshot and subsequent live-world revisions. Editing, selecting,
 renaming, or deleting a stored definition cannot change the running world.
-`scenario_id` and the content hash remain attached to runtime state only as
-provenance and as inputs for an explicit later relaunch.
+`world_id` and the content hash remain attached to control-plane records as
+provenance. Runtime launch helpers receive only a deployment ID, map snapshot
+identity, and agents.
 
 Launching a world definition is the transaction boundary that changes simulated reality:
 
 ```mermaid
 flowchart LR
-    UI[World Builder] -->|polygon OSM download| Draft[Browser world definition]
-    Draft -->|POST /api/scenarios/activate| API[World launcher]
+    UI[World Builder] -->|revision CAS autosave| Draft[(WorldDB.WorldDefinitions)]
+    Draft -->|POST /api/worlds/id/launch + revision| API[World service]
     API --> Hash[Hash complete definition]
-    Hash --> Authority[(Activation record + active singleton)]
-    Authority -->|ACTIVATING + phase updates| Map[(MapDB.scenario_id_version)]
+    Hash --> Authority[(WorldDB.WorldLaunches + ActiveWorld)]
+    Authority -->|launching + phase updates| Map[(MapDB.snapshot_hash)]
     Authority --> Config[Write active planner config]
     Config --> Restart[Restart coordination, planner, REST bridge, and rosbridge]
-    API --> Robots[Replace robot containers]
+    API --> Deploy[Generic deployment manager]
+    Deploy --> Robots[Replace deployment robot containers]
     Restart --> Verify{Planner loaded exact collection?}
     Robots --> Verify2{All robot IDs registered?}
     Verify --> Ready[Publish READY phase]
     Verify2 --> Ready
     Ready --> Authority
-    Authority --> Cache[Generated active_scenario.json cache]
+    Authority --> Cache[Generated active_world.json cache]
     Ready --> World[Active world independent of definition]
     World --> Init[Mission Init allowed]
 ```
 
-Only one world may be active. MongoDB's legacy-named `MapDB._active_scenario` singleton
-is the durable authority; `data/runtime/active_scenario.json` is a generated
-cache. Each activation has an idempotency/content hash, durable activation ID
-and phase record in `MapDB._scenario_activations`, and creates or reuses a
-content-addressed, immutable collection named
-`MapDB.scenario_<id>_<version>`. Re-activating the same verified content is a
-no-op. Old version collections are retained for reproducibility; they are not
-merged into the active graph. `MapDB.rma` remains the legacy seed and World
-Builder authoring library, not the planner's source after launch. Central
+Only one world may be active. `WorldDB.ActiveWorld` is the durable authority;
+`data/runtime/active_world.json` is a generated degraded cache. Each launch has
+an idempotency/content hash, durable launch ID and phase record in
+`WorldDB.WorldLaunches`, and creates or reuses a content-addressed immutable
+`MapDB.snapshot_<hash>` collection recorded by `WorldDB.WorldVersions`.
+Re-launching the same verified content is a no-op. Old snapshots are retained
+for reproducibility; they are never merged into the active graph. Static base
+GeoJSON and `MapDB.AuthoringFeatures` remain World Builder authoring sources,
+not planner input after launch. Central
 coordination and both ROS gateways are restarted during a real switch so
 mission nodes or DDS participants from the previous reality cannot survive
 into the new one. Because the editable simulation runs every ROS participant
@@ -189,15 +211,27 @@ and count. MongoDB does not yet deny a privileged same-count mutation. Use
 write-once database permissions or a recurring digest proof before treating
 the stored map hash as continuous tamper evidence.
 
-Activation serialization is currently process-local and Compose runs one API
+Launch serialization is currently process-local and Compose runs one API
 worker. The phase and singleton writes are durable diagnostics, but they are
 not a MongoDB transaction, distributed lock, or automatic restart-resume
 protocol. Multi-worker deployment therefore requires database-backed fencing
 and explicit resume/rollback recovery before it is safe.
 
-OSM has one operational path: the operator explicitly downloads roads inside a World Builder polygon, the browser keeps those GeoJSON LineStrings in the world definition, and launch freezes them as `road` features in the versioned MapDB collection. The deployed planner has `load_osm_from_network: false`; it does not make a second live OSMnx download.
+OSM has one operational path: the operator explicitly queries roads inside a
+World Builder polygon, `WorldDB.WorldRoadFeatures` persists them for that
+definition, and launch freezes them as `road` features in the snapshot. The
+deployed planner has `load_osm_from_network: false`; it does not make a second
+live OSMnx download.
 
 Mission endpoints may fall between graph junctions. The planner projects those endpoints onto risk-safe edges and splits the selected edges only in a request-local graph copy. These virtual endpoint nodes must never be written to, or reused to mutate, the active world's immutable MapDB snapshot or its base routing graph.
+
+Canonical `MissionConfig` remains independent of world lifecycle metadata for
+ROS compatibility. The adapter mission record separately captures the exact
+`world_binding` (`world_id`, version, deployment, launch, snapshot hashes,
+collection, and token) at Init. Approve and Start must reject a mission when
+that identity differs from the active deployment, and ROS feedback without a
+known adapter binding must never be adopted into the active world's mission
+list.
 
 ### Navigation And Coverage Graph Views
 
@@ -206,45 +240,61 @@ feature does not have to produce the same traversable edges for every behavior.
 The world graph is the authoritative feature/topology model; behavior- and
 vehicle-specific graph views are derived from the same world revision.
 
-The current planner always samples `geofence` and `workspace` polygons on a
-`5 m` lattice, Delaunay-triangulates them, and connects that mesh to the road
-graph. Ordinary `NAVIGATE` A* therefore enters the polygon mesh and can emit
-the angular lattice route visible in the UI. This is current behavior, not the
-target navigation policy.
+The current world routing graph contains active roads plus the free-space mesh
+derived from active geofence/workspace polygons. Coverage lanes are generated
+per task and are not inserted into that shared graph. Risk-marked graph edges
+are hard-blocked, and active risk polygons are subtracted from Polygon coverage
+before lane generation.
 
-The target projections are:
+Planner behavior dispatch is explicit:
 
-- **Navigation view:** roads plus a navigation-quality free-space/navmesh
-  representation where needed. Geofences and workspaces constrain permitted
-  space; a coverage sweep lattice must not leak into ordinary point routing.
-- **Coverage view:** a task-local lawnmower/coverage subgraph generated from
-  the objective polygon and vehicle swath. Transit to its entry uses the
-  navigation view.
-- **Risk overlay:** the same active risk features annotate or block affected
-  edges in both views according to the vehicle policy.
+- `NAVIGATE=0` routes Point/MultiPoint destinations. A LineString or Polygon is
+  interpreted as a spatial deployment geometry, including formations,
+  standoff bands, requested headings, ordered placement, or wide separation.
+  `maximize_coverage` in this behavior never means lawnmower coverage.
+- `COVERAGE=1` performs a sensor-swath lawnmower sweep for a Polygon, follows a
+  LineString as a patrol path, or, for a Polygon with `road_usage=1`, walks the
+  active-world road subgraph inside it. Explicit `maximize_coverage=false`
+  requests reach-only behavior.
+- `NAVIGATE_NO_PLANNING=2` currently fails clearly because no raw objective
+  executor exists behind that inherited enum.
 
-This is not two independently stored worlds or two full recomputations. Both
-views share stable feature IDs, source fragments, spatial indexes, and world
-revision; only the behavior-specific derived edges differ.
+Transit A* derives a query-local graph view for endpoint snapping, geofence
+restriction, hard risk blocking, and optimization/vehicle-constraint costs.
+It never mutates the active world's frozen MapDB collection or base graph.
+Planning waits until the live ROS cache contains every selected mission
+vehicle, preventing discovery timing from producing a cached partial plan.
+Area lanes and road-patrol walks are divided among selected vehicles and each
+vehicle receives a routed transit prefix to its assigned work segment.
+
+This still is not full joint multi-agent planning. Vehicles are routed
+independently after allocation; no collision/time reservation, dynamic
+replanning, or continuous formation controller coordinates their transit.
+Road patrol requires one connected eligible road component, Eulerizes a
+request-local copy, and walks every eligible edge; disconnected eligible road
+components fail instead of being silently skipped.
+Line-of-sight requests, mission-end deadlines, and formation fields are
+preserved in task semantics, but the current runtime does not prove visibility,
+enforce a mission-end cutoff, or maintain formation throughout transit.
 
 Diagnostic graph-image rendering is not run synchronously during map
 initialization or mission planning. Both are ROS executor callbacks, so a large
 render would prevent planner state, services, and mission feedback from making
 progress even after the map-ready marker was logged.
 
-Activation stays non-ready unless all checks pass:
+Launch stays non-ready unless all checks pass:
 
 - the planner logs that it loaded the exact versioned MapDB collection and produced a non-empty graph;
 - coordination, the planner, the C2 REST bridge, and rosbridge containers are running;
 - every configured robot container is running and its canonical ID appears in `RuntimeDB.ConnectedVehicles`.
 
-The exact planner collection/token marker is captured during activation. Large
+The exact planner collection/token marker is captured during launch. Large
 plan JSON logs may later move that startup line beyond Docker's bounded log
 tail; readiness therefore retains the verified proof only while Docker reports
 the same planner process `StartedAt`. A planner process started after
 verification must emit the exact marker again.
 
-Mission Init is rejected with HTTP `409` while no scenario is ready or when a mission names a robot outside the active scenario.
+Mission Init is rejected with HTTP `409` while no world is ready or when a mission names a robot outside the active world.
 
 The old REST status command is stateful: its body has no mission id and `/c2_node` targets the last mission it initialized. FastAPI's mission-specific approve/start URLs do not remove that legacy limitation. Likewise, an HTTP success is only command acceptance; ROS mission feedback is the authoritative state.
 
@@ -270,19 +320,19 @@ provider builds bounded internal runtime, agent, mission, plan, health, and
 warning sections with stable IDs, freshness and provenance. It also reads
 mission-relevant Point and single-ring Polygon facts from the exact active
 MapDB collection, within strict feature and coordinate budgets. Mutable
-operator-authored Point objectives are projected separately as inline-only
-mission inputs; they are never presented as active map assets. Other mutable
-map authoring features remain excluded until activation. The first message receives a
+current-deployment live overlays are projected with the active snapshot and
+inlined into missions when referenced; global authoring features remain
+excluded until a later launch. The first message receives a
 full `OperationalPicture`; later messages request a checksum-bound keyed diff
 from the conversation's previous revision. The orchestrator materializes and
 validates the new full picture before including it in that message's prompt.
 Every answer reports the revision it used.
 
-Internal scenario/version/collection/hash/activation identity is retained for
+Internal world/version/collection/hash/launch identity is retained for
 post-generation stale-proposal checks but projected out of model messages. The
 LLM sees a `current_environment` abstraction containing readiness, map
 summary, bounded active features, fleet, missions, plans, health, and warnings;
-it does not know the scenario-management mechanism.
+it does not know the world-management mechanism.
 
 The UI may narrow the model-facing fleet, mission, runtime-plan, health, and
 warning sections and their keyed items for each turn; active-world grounding
@@ -325,8 +375,8 @@ and operational-picture state remain bounded and in process, so model-side
 continuity after an API restart is best-effort even though browser transcripts
 remain available.
 
-The assistant is proposal-only. It has no Init, Approve, Start, scenario
-activation, Docker, or database-write tool. A proposal must pass canonical
+The assistant is proposal-only. It has no Init, Approve, Start, world
+launch, Docker, or database-write tool. A proposal must pass canonical
 schema, inline-geometry semantics, environment vehicle-membership validation,
 and an exact comparison between the environment binding in the picture used
 for generation and the current post-generation binding. Proposal editability
@@ -354,7 +404,7 @@ for a trusted operator network. The assistant's one-in-flight guard is load
 protection, not access control or a complete rate limiter.
 
 Mongo indexes are bootstrapped safely at API startup in the normal Compose
-deployment and whenever a new immutable scenario collection is created.
+deployment and whenever a new immutable snapshot collection is created.
 Feedback compaction is a separate maintenance operation and is dry-run by
 default; applying deletions requires an explicit CLI flag. The command also has
 a default 100,000-document memory guard and requires explicit mission scoping

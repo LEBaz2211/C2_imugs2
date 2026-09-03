@@ -1,0 +1,77 @@
+{
+  "retired_fields": [
+    "scenario_id",
+    "activation_id",
+    "activation_token",
+    "activation_phase",
+    "activated_at"
+  ],
+  "databases": {
+    "MapDB": {
+      "_scenario_versions": [
+        {
+          "scenario_id": "scenario-alpha",
+          "version": "version-1",
+          "name": "Alpha",
+          "map": "rma",
+          "feature_ids": ["road-a"],
+          "agents": [{"agent_id": "robot-a"}],
+          "map_collection": "scenario_alpha_version_1",
+          "created_at": "2026-08-01T00:00:00Z"
+        }
+      ],
+      "_scenario_activations": [
+        {
+          "scenario_id": "scenario-alpha",
+          "version": "version-1",
+          "activation_id": "activation-alpha",
+          "activation_token": "token-alpha",
+          "activation_phase": "ready",
+          "activated_at": "2026-08-01T00:01:00Z",
+          "map_collection": "scenario_alpha_version_1",
+          "status": "ready"
+        }
+      ],
+      "_active_scenario": [
+        {
+          "singleton": "active",
+          "scenario_id": "scenario-alpha",
+          "version": "version-1",
+          "activation_id": "activation-alpha",
+          "activation_token": "token-alpha",
+          "map_collection": "scenario_alpha_active_only",
+          "status": "ready",
+          "ready": true
+        }
+      ],
+      "scenario_alpha_version_1": [
+        {
+          "type": "Feature",
+          "id": "road-a",
+          "properties": {"feature_id": "road-a", "feature_type": "road"},
+          "geometry": {"type": "LineString", "coordinates": [[4.0, 50.0], [4.1, 50.1]]}
+        },
+        {
+          "type": "Feature",
+          "id": "legacy-osm-road",
+          "properties": {
+            "feature_id": "legacy-osm-road",
+            "feature_type": "road",
+            "source": "frozen_openstreetmap",
+            "source_tool": "scenario_lab_osm_polygon",
+            "scenario_road_import_id": "import-a"
+          },
+          "geometry": {"type": "LineString", "coordinates": [[4.1, 50.1], [4.2, 50.2]]}
+        }
+      ],
+      "scenario_alpha_active_only": [
+        {
+          "type": "Feature",
+          "id": "risk-active",
+          "properties": {"feature_id": "risk-active", "feature_type": "risk"},
+          "geometry": {"type": "Polygon", "coordinates": []}
+        }
+      ]
+    }
+  }
+}

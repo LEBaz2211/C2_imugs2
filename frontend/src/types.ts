@@ -18,6 +18,8 @@ export type MissionConfig = {
   mission_id: string;
   phase?: number;
   name?: string;
+  required_capabilities?: string[];
+  payload_action?: { type: "pickup" | "dropoff"; payload: string };
   behavior: 0 | 1 | 2;
   vehicles: string[];
   start?: Record<string, unknown>;
@@ -35,6 +37,7 @@ export type MissionConfig = {
     line_of_sight_propagation?: boolean;
     maximize_coverage?: boolean;
     maximum_coverage_distances?: number[];
+    coverage_swath_widths?: number[];
     arrival_time?: {
       earliest: string;
       target: string;

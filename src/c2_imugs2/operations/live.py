@@ -33,7 +33,6 @@ RUNTIME_MONGO_SOURCES = (
     "RuntimeDB.Planning",
 )
 ACTIVE_MAP_SOURCE = "MapDB.active"
-OPERATOR_OBJECTIVES_SOURCE = "adapter.operator_objectives"
 MISSION_RELEVANT_MAP_FEATURE_TYPES = (
     "objective",
     "geofence",
@@ -59,7 +58,7 @@ class AdapterRuntime(Protocol):
     storage_bootstrap: Mapping[str, Any]
 
 
-class ScenarioRuntime(Protocol):
+class WorldRuntime(Protocol):
     def validated_active(self) -> dict[str, Any] | None: ...
 
 
@@ -81,18 +80,6 @@ class MongoOperationalSnapshot:
     errors: Mapping[str, str] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class OperatorObjectiveSnapshot:
-    """Bounded mutable Point objectives authored through the map UI."""
-
-    enabled: bool = False
-    objectives: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    rows: int = 0
-    invalid_rows: int = 0
-    truncated: bool = False
-    error: str | None = None
-
-
 class LiveOperationalReadModelProvider:
     """Build the bounded read model injected into every assistant invocation.
 
@@ -106,7 +93,7 @@ class LiveOperationalReadModelProvider:
     def __init__(
         self,
         runtime: AdapterRuntime,
-        scenario_runtime: ScenarioRuntime,
+        world_runtime: WorldRuntime,
         mongodb_url: str,
         *,
         mongo_timeout_ms: int = 400,
@@ -116,11 +103,10 @@ class LiveOperationalReadModelProvider:
         map_feature_limit: int = DEFAULT_MAP_FEATURE_LIMIT,
         map_coordinate_limit: int = DEFAULT_MAP_COORDINATE_LIMIT,
         map_total_coordinate_limit: int = DEFAULT_MAP_TOTAL_COORDINATE_LIMIT,
-        operator_objective_provider: Callable[[str], Mapping[str, Any]] | None = None,
         mongo_client_factory: Callable[..., Any] = MongoClient,
     ) -> None:
         self.runtime = runtime
-        self.scenario_runtime = scenario_runtime
+        self.world_runtime = world_runtime
         self.mongodb_url = mongodb_url
         self.mongo_timeout_ms = max(50, min(int(mongo_timeout_ms), 5_000))
         self.mission_limit = max(1, min(int(mission_limit), 256))
@@ -133,47 +119,28 @@ class LiveOperationalReadModelProvider:
         self.map_total_coordinate_limit = max(
             4, min(int(map_total_coordinate_limit), 4_096)
         )
-        self.operator_objective_provider = operator_objective_provider
         self.mongo_client_factory = mongo_client_factory
         self._stability_lock = threading.Lock()
         self._boundary_observations: dict[str, tuple[str, datetime]] = {}
 
     def read_operational_model(self) -> OperationalReadModel:
         observed_at = datetime.now(timezone.utc)
-        active = self.scenario_runtime.validated_active()
+        active = self.world_runtime.validated_active()
         mongo = self._read_mongo_snapshot(active)
-        operator_objectives = self._read_operator_objectives(active)
         model = OperationalReadModel(
             schema_version="1.0",
             observed_at=observed_at,
             sections={
-                "scenario": self._scenario_section(
-                    observed_at, active, mongo, operator_objectives
-                ),
+                "world": self._world_section(observed_at, active, mongo),
                 "agents": self._agents_section(observed_at, active, mongo),
                 "missions": self._missions_section(observed_at, mongo),
                 "plans": self._plans_section(observed_at, mongo),
                 "health": self._health_section(observed_at, active, mongo),
-                "warnings": self._warning_section(
-                    observed_at, active, mongo, operator_objectives
-                ),
+                "warnings": self._warning_section(observed_at, active, mongo),
             },
-            sources=self._sources(observed_at, active, mongo, operator_objectives),
+            sources=self._sources(observed_at, active, mongo),
         )
         return self._with_stable_boundary_timestamps(model)
-
-    def _read_operator_objectives(
-        self, active: Mapping[str, Any] | None
-    ) -> OperatorObjectiveSnapshot:
-        provider = self.operator_objective_provider
-        map_name = str((active or {}).get("map") or "").strip()
-        if provider is None or not map_name:
-            return OperatorObjectiveSnapshot()
-        try:
-            collection = provider(map_name)
-        except (OSError, TypeError, ValueError) as exc:
-            return OperatorObjectiveSnapshot(enabled=True, error=_bounded_error(exc))
-        return _summarize_operator_objectives(collection, self.map_feature_limit)
 
     def _read_mongo_snapshot(
         self, active: Mapping[str, Any] | None
@@ -328,7 +295,6 @@ class LiveOperationalReadModelProvider:
         observed_at: datetime,
         active: dict[str, Any] | None,
         mongo: MongoOperationalSnapshot,
-        operator_objectives: OperatorObjectiveSnapshot,
     ) -> dict[str, SourceReference]:
         counts = {
             "RuntimeDB.ConnectedVehicles": sum(mongo.registration_counts.values()),
@@ -341,11 +307,11 @@ class LiveOperationalReadModelProvider:
             "adapter-runtime": SourceReference(
                 "adapter-runtime", "fastapi_state", observed_at, Freshness.FRESH
             ),
-            "scenario-runtime": SourceReference(
-                "scenario-runtime",
-                "validated_scenario_runtime",
+            "world-runtime": SourceReference(
+                "world-runtime",
+                "validated_world_runtime",
                 observed_at,
-                _scenario_freshness(active),
+                _world_freshness(active),
                 {"status": str((active or {}).get("status") or "inactive")},
             ),
             "planner-runtime": SourceReference(
@@ -430,43 +396,15 @@ class LiveOperationalReadModelProvider:
             map_freshness,
             map_details,
         )
-        if operator_objectives.enabled:
-            objective_freshness = (
-                Freshness.MISSING
-                if operator_objectives.error
-                else Freshness.STALE
-                if operator_objectives.invalid_rows
-                else Freshness.FRESH
-            )
-            sources[OPERATOR_OBJECTIVES_SOURCE] = SourceReference(
-                OPERATOR_OBJECTIVES_SOURCE,
-                "adapter_operator_objective_projection",
-                observed_at,
-                objective_freshness,
-                _without_none(
-                    {
-                        "map": str((active or {}).get("map") or "") or None,
-                        "error": operator_objectives.error,
-                        "bounded_rows": operator_objectives.rows,
-                        "returned_objectives": len(operator_objectives.objectives),
-                        "invalid_rows": operator_objectives.invalid_rows,
-                        "feature_limit": self.map_feature_limit,
-                        "truncated": operator_objectives.truncated,
-                        "usage": "inline Point mission geometry only",
-                    }
-                ),
-            )
         return sources
 
-    def _scenario_section(
+    def _world_section(
         self,
         observed_at: datetime,
         active: dict[str, Any] | None,
         mongo: MongoOperationalSnapshot,
-        operator_objectives: OperatorObjectiveSnapshot | None = None,
     ) -> OperationalSection:
-        operator_objectives = operator_objectives or OperatorObjectiveSnapshot()
-        binding_freshness = _scenario_freshness(active)
+        binding_freshness = _world_freshness(active)
         map_expected = active is not None
         map_error = bool(
             map_expected
@@ -482,39 +420,32 @@ class LiveOperationalReadModelProvider:
             else binding_freshness
         )
         section_sources = (
-            (
-                "scenario-runtime",
-                ACTIVE_MAP_SOURCE,
-                *(
-                    (OPERATOR_OBJECTIVES_SOURCE,)
-                    if operator_objectives.enabled
-                    else ()
-                ),
-            )
+            ("world-runtime", ACTIVE_MAP_SOURCE)
             if map_expected
-            else ("scenario-runtime",)
+            else ("world-runtime",)
         )
         items: dict[str, OperationalItem] = {}
         if active:
-            scenario_id = str(active.get("scenario_id") or "active")
-            version = str(active["version"]) if active.get("version") is not None else ""
-            item_id = f"{scenario_id}@{version}" if version else scenario_id
+            world_id = str(active.get("world_id") or "active")
+            version = str(active["world_version"]) if active.get("world_version") is not None else ""
+            item_id = f"{world_id}@{version}" if version else world_id
             agents = active.get("agents") if isinstance(active.get("agents"), list) else []
             data = {
-                "scenario_id": scenario_id,
+                "world_id": world_id,
                 "name": active.get("name"),
                 "status": active.get("status"),
                 "ready": bool(active.get("ready")),
-                "version": active.get("version"),
+                "world_version": active.get("world_version"),
                 "content_hash": active.get("content_hash"),
                 "map": active.get("map"),
                 "map_collection": active.get("map_collection"),
                 "map_feature_hash": active.get("map_feature_hash"),
                 "feature_count": active.get("feature_count"),
                 "road_count": active.get("road_count"),
-                "activation_id": active.get("activation_id"),
-                "activation_token": active.get("activation_token"),
-                "activation_phase": active.get("activation_phase"),
+                "launch_id": active.get("launch_id"),
+                "deployment_id": active.get("deployment_id"),
+                "map_snapshot_token": active.get("map_snapshot_token"),
+                "launch_phase": active.get("launch_phase"),
                 "agent_ids": [
                     str(agent.get("agent_id"))
                     for agent in agents
@@ -522,7 +453,12 @@ class LiveOperationalReadModelProvider:
                 ],
                 "message": active.get("message"),
                 "error": active.get("error"),
-                "map_features": list(mongo.map_features.values()),
+                "map_features": _active_picture_features(
+                    mongo.map_features,
+                    active,
+                    self.map_feature_limit,
+                    self.map_coordinate_limit,
+                ),
                 "map_feature_observation": {
                     "freshness": (
                         Freshness.MISSING.value
@@ -540,28 +476,9 @@ class LiveOperationalReadModelProvider:
                     "truncated": mongo.map_features_truncated,
                 },
             }
-            if operator_objectives.enabled:
-                data["operator_objectives"] = list(
-                    operator_objectives.objectives.values()
-                )
-                data["operator_objective_observation"] = {
-                    "freshness": (
-                        Freshness.MISSING.value
-                        if operator_objectives.error
-                        else Freshness.STALE.value
-                        if operator_objectives.invalid_rows
-                        else Freshness.FRESH.value
-                    ),
-                    "returned_count": len(operator_objectives.objectives),
-                    "observed_row_count": operator_objectives.rows,
-                    "invalid_row_count": operator_objectives.invalid_rows,
-                    "feature_limit": self.map_feature_limit,
-                    "truncated": operator_objectives.truncated,
-                    "usage": "inline Point mission geometry only",
-                }
             items[item_id] = OperationalItem(
                 item_id,
-                "active_scenario",
+                "active_world",
                 observed_at,
                 freshness,
                 _without_none(data),
@@ -621,12 +538,12 @@ class LiveOperationalReadModelProvider:
             }
             items[agent_id] = OperationalItem(
                 agent_id,
-                "scenario_agent",
+                "world_agent",
                 observed_at,
                 Freshness.STALE if fleet_incomplete else Freshness.FRESH,
                 _json_mapping(_without_none(data)),
                 (
-                    "scenario-runtime",
+                    "world-runtime",
                     "RuntimeDB.ConnectedVehicles",
                     "VehicleDB.Vehicles",
                     "adapter-runtime",
@@ -644,7 +561,7 @@ class LiveOperationalReadModelProvider:
                 observed_at,
                 freshness,
                 (
-                    "scenario-runtime",
+                    "world-runtime",
                     "RuntimeDB.ConnectedVehicles",
                     "VehicleDB.Vehicles",
                     "adapter-runtime",
@@ -796,16 +713,16 @@ class LiveOperationalReadModelProvider:
     ) -> OperationalSection:
         mongo_ok = not mongo.errors
         items = {
-            "scenario": OperationalItem(
-                "scenario",
+            "world": OperationalItem(
+                "world",
                 "health_check",
                 observed_at,
-                _scenario_freshness(active),
+                _world_freshness(active),
                 {
                     "ok": bool(active and active.get("ready")),
                     "status": str((active or {}).get("status") or "inactive"),
                 },
-                ("scenario-runtime",),
+                ("world-runtime",),
             ),
             "mongodb": OperationalItem(
                 "mongodb",
@@ -828,7 +745,7 @@ class LiveOperationalReadModelProvider:
             SectionMetadata(
                 observed_at,
                 Freshness.FRESH if mongo_ok else Freshness.STALE,
-                ("scenario-runtime", *RUNTIME_MONGO_SOURCES, "storage-bootstrap"),
+                ("world-runtime", *RUNTIME_MONGO_SOURCES, "storage-bootstrap"),
             ),
             items,
         )
@@ -838,19 +755,18 @@ class LiveOperationalReadModelProvider:
         observed_at: datetime,
         active: dict[str, Any] | None,
         mongo: MongoOperationalSnapshot,
-        operator_objectives: OperatorObjectiveSnapshot,
     ) -> OperationalSection:
         items: dict[str, OperationalItem] = {}
         if not active or not active.get("ready"):
-            items["scenario-not-ready"] = _warning(
-                "scenario-not-ready",
+            items["world-not-ready"] = _warning(
+                "world-not-ready",
                 observed_at,
                 str(
                     (active or {}).get("error")
                     or (active or {}).get("message")
                     or "The current operating environment is not ready"
                 ),
-                ("scenario-runtime",),
+                ("world-runtime",),
             )
         for source_id, error in sorted(mongo.errors.items()):
             slug = source_id.lower().replace(".", "-")
@@ -881,33 +797,6 @@ class LiveOperationalReadModelProvider:
                 ),
                 (ACTIVE_MAP_SOURCE,),
             )
-        if operator_objectives.enabled and operator_objectives.error:
-            items["operator-objectives-unavailable"] = _warning(
-                "operator-objectives-unavailable",
-                observed_at,
-                f"Operator-authored objectives are unavailable: {operator_objectives.error}",
-                (OPERATOR_OBJECTIVES_SOURCE,),
-            )
-        if operator_objectives.enabled and operator_objectives.truncated:
-            items["operator-objectives-truncated"] = _warning(
-                "operator-objectives-truncated",
-                observed_at,
-                (
-                    "Operator-authored objectives reached the configured limit "
-                    f"of {self.map_feature_limit}; additional objectives are omitted"
-                ),
-                (OPERATOR_OBJECTIVES_SOURCE,),
-            )
-        if operator_objectives.enabled and operator_objectives.invalid_rows:
-            items["operator-objectives-invalid"] = _warning(
-                "operator-objectives-invalid",
-                observed_at,
-                (
-                    f"{operator_objectives.invalid_rows} operator-authored objective "
-                    "record(s) had invalid Point geometry"
-                ),
-                (OPERATOR_OBJECTIVES_SOURCE,),
-            )
         connectivity_error = "RuntimeDB.ConnectedVehicles" in mongo.errors
         if not connectivity_error:
             for agent_id, registration_count in sorted(
@@ -937,7 +826,7 @@ class LiveOperationalReadModelProvider:
                     "agents-not-registered",
                     observed_at,
                     f"Configured agents are not registered: {', '.join(missing)}",
-                    ("scenario-runtime", "RuntimeDB.ConnectedVehicles"),
+                    ("world-runtime", "RuntimeDB.ConnectedVehicles"),
                 )
         adapter = {
             _normalize_mission_id(mission_id): mission
@@ -1485,6 +1374,33 @@ def _active_map_collection(active: Mapping[str, Any] | None) -> str | None:
     return collection
 
 
+def _active_picture_features(
+    stored: Mapping[str, Mapping[str, Any]],
+    active: Mapping[str, Any],
+    limit: int,
+    coordinate_limit: int,
+) -> list[dict[str, Any]]:
+    """Project only the immutable active snapshot and this deployment's overlays."""
+    merged = {str(key): dict(value) for key, value in stored.items()}
+    deployment_id = str(active.get("deployment_id") or "")
+    live_features = [
+        row
+        for row in (active.get("live_features") or {}).get("features") or []
+        if isinstance(row, Mapping)
+        and str((row.get("properties") or {}).get("deployment_id") or "") == deployment_id
+    ]
+    sources = [(active.get("snapshot") or {}).get("features") or [], live_features]
+    for rows in sources:
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            summary, _valid = _summarize_active_map_feature(row, coordinate_limit)
+            if summary is None:
+                continue
+            merged[str(summary["feature_id"])] = summary
+    return [merged[key] for key in sorted(merged)[:limit]]
+
+
 def _summarize_active_map_features(
     rows: Iterable[Mapping[str, Any]],
     limit: int,
@@ -1598,81 +1514,6 @@ def _summarize_active_map_feature(
             }
         ),
         valid,
-    )
-
-
-def _summarize_operator_objectives(
-    collection: Mapping[str, Any], limit: int
-) -> OperatorObjectiveSnapshot:
-    """Project mutable UI objectives without treating them as active-map assets."""
-
-    features = collection.get("features")
-    if collection.get("type") != "FeatureCollection" or not isinstance(features, list):
-        return OperatorObjectiveSnapshot(
-            enabled=True,
-            error="operator objective provider returned an invalid FeatureCollection"
-        )
-
-    objectives: dict[str, dict[str, Any]] = {}
-    rows = 0
-    invalid_rows = 0
-    truncated = False
-    for document in features:
-        if not isinstance(document, Mapping):
-            continue
-        properties = (
-            document.get("properties")
-            if isinstance(document.get("properties"), Mapping)
-            else {}
-        )
-        if str(properties.get("feature_type") or "").strip().lower() != "objective":
-            continue
-        rows += 1
-        if rows > limit:
-            truncated = True
-            break
-
-        raw_id = properties.get("feature_id") or document.get("id")
-        feature_id = str(raw_id or "").strip()
-        geometry = (
-            document.get("geometry")
-            if isinstance(document.get("geometry"), Mapping)
-            else {}
-        )
-        exact_geometry, coordinate_count = _canonical_map_geometry(
-            "objective",
-            geometry.get("type"),
-            geometry.get("coordinates"),
-            2,
-        )
-        if (
-            not feature_id
-            or len(feature_id) > 256
-            or exact_geometry is None
-            or feature_id in objectives
-        ):
-            invalid_rows += 1
-            continue
-        raw_name = properties.get("name") or feature_id
-        name = str(raw_name).strip()[:160] or feature_id
-        objectives[feature_id] = {
-            "feature_id": feature_id,
-            "name": name,
-            "feature_type": "objective",
-            "geometry": exact_geometry,
-            "coordinate_count": coordinate_count,
-            "freshness": Freshness.FRESH.value,
-            "provenance": "operator-authored map objective",
-            "source_id": OPERATOR_OBJECTIVES_SOURCE,
-            "active_map_asset": False,
-            "usage": "inline_geometry_only",
-        }
-    return OperatorObjectiveSnapshot(
-        enabled=True,
-        objectives={key: objectives[key] for key in sorted(objectives)},
-        rows=rows,
-        invalid_rows=invalid_rows,
-        truncated=truncated,
     )
 
 
@@ -2041,9 +1882,13 @@ def _adapter_mission_summary(mission: Mapping[str, Any] | None) -> dict[str, Any
             "path_status": mission.get("path_status"),
             "issue": mission.get("issue"),
             "issue_name": mission.get("issue_name"),
-            "scenario_id": mission.get("scenario_id"),
-            "scenario_version": mission.get("scenario_version"),
+            "world_id": mission.get("world_id"),
+            "world_version": mission.get("world_version"),
+            "deployment_id": mission.get("deployment_id"),
             "map_collection": mission.get("map_collection"),
+            "launch_id": mission.get("launch_id"),
+            "map_snapshot_token": mission.get("map_snapshot_token"),
+            "world_binding": mission.get("world_binding"),
             "backend_command": _backend_command_summary(mission),
             "updated_at": mission.get("updated_at"),
         }
@@ -2187,7 +2032,7 @@ def _warning(
     )
 
 
-def _scenario_freshness(active: dict[str, Any] | None) -> Freshness:
+def _world_freshness(active: dict[str, Any] | None) -> Freshness:
     if not active:
         return Freshness.MISSING
     return (

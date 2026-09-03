@@ -882,7 +882,7 @@ def _overview(model: dict[str, Any], nodes_by_kind: dict[str, list[dict[str, Any
             "This site contains only contracts obtained by static extraction from checked-in software and schema files.",
             "",
             "!!! info \"Extraction scope\"",
-            "    FastAPI decorators and frontend calls are parsed from Python/TypeScript. ROS declarations and types are parsed from C++/Python plus `.msg`/`.srv` files. Enums and supported state transitions are parsed from source. Manually curated workflows, components, scenarios, and UI activities are not included.",
+            "    FastAPI decorators and frontend calls are parsed from Python/TypeScript. ROS declarations and types are parsed from C++/Python plus `.msg`/`.srv` files. Enums and supported state transitions are parsed from source. Manually curated workflows, components, workflows, and UI activities are not included.",
             "",
             f"Source digest: `{model['source_digest']}`",
             "",

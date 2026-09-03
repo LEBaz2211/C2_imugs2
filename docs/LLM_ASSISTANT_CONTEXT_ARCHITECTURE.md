@@ -13,7 +13,7 @@ is defined by [ARCHITECTURE.md](ARCHITECTURE.md), and project constraints by
 ```text
 Browser UI
   -> FastAPI adapter and assistant API
-     -> bounded reads from current adapter state, scenario runtime, and MongoDB
+     -> bounded reads from current adapter state, world runtime, and MongoDB
      -> LangChain request to LM Studio
      -> deterministic mission validation
      -> explicit operator commands through the legacy-compatible REST protocol
@@ -98,9 +98,8 @@ valid sequence arrows.
 
 The model-facing picture contains:
 
-- `current_environment`: readiness, map summary, bounded active Point or Polygon
-  features, and `operator_objectives` drawn in the map UI. Operator objectives
-  are marked mutable, non-active, and inline-only;
+- `current_environment`: readiness, map summary, and bounded features from the
+  exact active snapshot plus current-deployment live overlays;
 - `agents`: declared, registered, connected, and profile facts without silently
   treating those categories as equivalent;
 - `missions`: bounded runtime configuration, feedback, and status summaries,
@@ -111,16 +110,22 @@ The model-facing picture contains:
   issue a second, independent plan ID;
 - `health` and `warnings`: source failures, freshness, and adapter diagnostics.
 
-The assistant header exposes an **Operational picture** selector shaped like
-the model-facing object. The active `current_environment` key is always
-included for safe grounding. Each optional top-level section shows its current
-freshness, available/sent item counts, full item IDs, and per-item checkboxes;
-mission and plan scope is shared because plan items are keyed by mission ID.
-The selector also renders the exact redacted JSON projection for the next
-turn. Its read-only preview endpoint runs the same projection code as Send but
-does not invoke the model. Runtime state is read again on Send, so the preview
-is an accurate live representation rather than a frozen command payload. These
-choices do not mutate the revisioned backend read model or runtime records.
+The workspace exposes a full-screen **Context** page (opened from the assistant
+header or the workspace tabs) where the operator curates the model input field
+by field. It renders the live model-facing projection as a checkable JSON tree;
+un-ticking any key, array element, or nested field adds that path to the
+request's `exclude_paths`. Field paths inside array items use `[*]` and apply
+to every item of that array, while a list-row tick removes one item position.
+The `context_schema`, `picture_revision`, and `observed_at` keys are required
+by the prompt template and cannot be filtered. The backend applies
+`exclude_paths` as a final prune of the projected context, including the
+`context_selection` manifest itself, so the operator's removed paths travel
+with every chat request unchanged. The page's right pane shows the exact
+redacted JSON that will be sent. Its read-only preview endpoint runs the same
+projection code as Send but does not invoke the model. Runtime state is read
+again on Send, so the preview is an accurate live representation rather than a
+frozen command payload. These choices do not mutate the revisioned backend read
+model or runtime records.
 
 The former C2 **Plan** tab displayed `createTaskPlan()` output generated in the
 browser from the current mission definition. That preview is not planner
@@ -131,15 +136,15 @@ status, diagnostics, and the assistant's optional `plans` section.
 Current database inputs are bounded reads from
 `RuntimeDB.ConnectedVehicles`, `VehicleDB.Vehicles`,
 `RuntimeDB.MissionConfig`, `RuntimeDB.MissionFeedback`,
-`RuntimeDB.Planning`, and the active versioned MapDB collection. The separate
-operator-objective projection reads only Point objectives from the current
-map's bounded user-feature file. Full road
+`RuntimeDB.Planning`, the active `MapDB.snapshot_<hash>` collection, and
+current-deployment `WorldDB.LiveFeatures`. Global `MapDB.AuthoringFeatures`
+never enter operational context. Full road
 geometry, full paths, log bodies, credentials, Mongo document IDs, and internal
 environment identifiers do not enter the model prompt.
 
 The backend retains internal identity fields for the post-generation race
-check. The LLM sees a neutral `current_environment`, not scenario-management
-concepts or scenario IDs.
+check. The LLM sees a neutral `current_environment`, not world-management
+concepts or world IDs.
 
 ## Mission Draft And Command Lifecycle
 

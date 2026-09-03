@@ -86,32 +86,32 @@ def test_index_plan_covers_runtime_catalog_and_versioned_map_queries() -> None:
     assert specs[("RuntimeDB", "Planning", "planning_mission")].unique is False
     assert specs[("RuntimeDB", "ConnectedVehicles", "connected_vehicles_agent")].unique is False
     assert specs[("VehicleDB", "Vehicles", "vehicles_agent")].unique is False
-    assert specs[("MapDB", "_scenario_versions", "scenario_versions_collection_unique")].unique
-    assert specs[("MapDB", "_scenario_versions", "scenario_versions_identity_unique")].unique
-    assert specs[("MapDB", "_active_scenario", "active_scenario_singleton_unique")].unique
-    assert specs[("MapDB", "_scenario_activations", "scenario_activation_id_unique")].unique
-    assert specs[("MapDB", "_scenario_activations", "scenario_activations_status_recorded")].keys == (
+    assert specs[("WorldDB", "WorldDefinitions", "world_definitions_id_unique")].unique
+    assert specs[("WorldDB", "WorldVersions", "world_versions_identity_unique")].unique
+    assert specs[("WorldDB", "ActiveWorld", "active_world_singleton_unique")].unique
+    assert specs[("WorldDB", "WorldLaunches", "world_launches_id_unique")].unique
+    assert specs[("WorldDB", "WorldLaunches", "world_launches_status_recorded")].keys == (
         ("status", 1),
         ("recorded_at", -1),
     )
 
-    map_specs = {spec.name: spec for spec in map_feature_index_specs("scenario_alpha_v1")}
-    assert map_specs["scenario_feature_id_unique"].unique
-    assert map_specs["scenario_feature_type"].keys == (("properties.feature_type", 1),)
-    assert map_specs["scenario_feature_geometry_2dsphere"].keys == (("geometry", "2dsphere"),)
+    map_specs = {spec.name: spec for spec in map_feature_index_specs("world_alpha_v1")}
+    assert map_specs["map_feature_id_unique"].unique
+    assert map_specs["map_feature_type"].keys == (("properties.feature_type", 1),)
+    assert map_specs["map_feature_geometry_2dsphere"].keys == (("geometry", "2dsphere"),)
 
 
 def test_index_manager_is_idempotent_and_never_replaces_conflicts() -> None:
     spec = MongoIndexSpec(
         "MapDB",
-        "_scenario_versions",
+        "_world_versions",
         (("map_collection", 1),),
-        "scenario_versions_collection_unique",
+        "world_versions_collection_unique",
         unique=True,
         partial_filter={"map_collection": {"$type": "string"}},
     )
     collection = FakeCollection()
-    client = FakeClient({("MapDB", "_scenario_versions"): collection})
+    client = FakeClient({("MapDB", "_world_versions"): collection})
 
     created = MongoIndexManager(client).ensure([spec])[0]
 
@@ -120,7 +120,7 @@ def test_index_manager_is_idempotent_and_never_replaces_conflicts() -> None:
         (
             [("map_collection", 1)],
             {
-                "name": "scenario_versions_collection_unique",
+                "name": "world_versions_collection_unique",
                 "unique": True,
                 "partialFilterExpression": {"map_collection": {"$type": "string"}},
             },
@@ -137,7 +137,7 @@ def test_index_manager_is_idempotent_and_never_replaces_conflicts() -> None:
             }
         ]
     )
-    existing_client = FakeClient({("MapDB", "_scenario_versions"): existing_collection})
+    existing_client = FakeClient({("MapDB", "_world_versions"): existing_collection})
     existing = MongoIndexManager(existing_client).ensure([spec])[0]
     assert existing.status == "existing"
     assert existing_collection.created == []
@@ -145,7 +145,7 @@ def test_index_manager_is_idempotent_and_never_replaces_conflicts() -> None:
     conflict_collection = FakeCollection(
         indexes=[{"name": spec.name, "key": {"map_collection": -1}, "unique": True}]
     )
-    conflict_client = FakeClient({("MapDB", "_scenario_versions"): conflict_collection})
+    conflict_client = FakeClient({("MapDB", "_world_versions"): conflict_collection})
     conflict = MongoIndexManager(conflict_client).ensure([spec])[0]
     assert conflict.status == "conflict"
     assert conflict_collection.created == []
@@ -173,9 +173,9 @@ def test_index_manager_is_idempotent_and_never_replaces_conflicts() -> None:
 
 
 def test_index_manager_blocks_unique_index_when_duplicate_data_exists() -> None:
-    spec = map_feature_index_specs("scenario_alpha_v1")[0]
+    spec = map_feature_index_specs("world_alpha_v1")[0]
     collection = FakeCollection(duplicate="road-1")
-    client = FakeClient({("MapDB", "scenario_alpha_v1"): collection})
+    client = FakeClient({("MapDB", "world_alpha_v1"): collection})
 
     outcome = MongoIndexManager(client).ensure([spec])[0]
 

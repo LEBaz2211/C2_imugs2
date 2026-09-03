@@ -68,6 +68,11 @@ private:
   int coordinate_mode;
   autonomy_msgs::msg::AutonomyObjective _current_objective;
   std::vector<float> _current_arrival_point;
+  float _current_speed_mps = 0.0f;
+  float _requested_max_acceleration = 1.0f;
+  float _requested_max_deceleration = 1.0f;
+  float _desired_heading_deg = 0.0f;
+  bool _has_desired_heading = false;
   autonomy_msgs::msg::VehicleProfile vehicle_profile;
   autonomy_msgs::msg::AutonomyStatus _autonomy_status;
   autonomy_msgs::msg::AutonomyPrimitiveStatus _current_primitive_status;

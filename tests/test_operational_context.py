@@ -83,17 +83,17 @@ def model(
         )
         for name in OPERATIONAL_SECTION_NAMES
     }
-    sections["scenario"] = OperationalSection(
-        metadata=sections["scenario"].metadata,
+    sections["world"] = OperationalSection(
+        metadata=sections["world"].metadata,
         items={
-            "scenario-a@v1": item(
-                "scenario-a@v1",
-                "active_scenario",
+            "world-a@v1": item(
+                "world-a@v1",
+                "active_world",
                 {
-                    "scenario_id": "scenario-a",
-                    "version": "v1",
+                    "world_id": "world-a",
+                    "world_version": "v1",
                     "status": "ready",
-                    "map_collection": "scenario_a_v1",
+                    "map_collection": "world_a_v1",
                 },
             )
         },
@@ -355,10 +355,10 @@ def test_read_model_rejects_unknown_sources_and_non_json_payloads() -> None:
         )
 
 
-def test_live_scenario_item_key_includes_immutable_version() -> None:
+def test_live_world_item_key_includes_immutable_version() -> None:
     active = {
-        "scenario_id": "scenario-a",
-        "version": "7f2c",
+        "world_id": "world-a",
+        "world_version": "7f2c",
         "status": "ready",
         "ready": True,
         "agents": [],
@@ -368,11 +368,11 @@ def test_live_scenario_item_key_includes_immutable_version() -> None:
     provider.map_feature_limit = 64
     provider.map_coordinate_limit = 128
     provider.map_total_coordinate_limit = 512
-    section = provider._scenario_section(NOW, active, MongoOperationalSnapshot())
+    section = provider._world_section(NOW, active, MongoOperationalSnapshot())
 
-    assert list(section.items) == ["scenario-a@7f2c"]
-    scenario = section.items["scenario-a@7f2c"]
-    assert scenario.data["scenario_id"] == "scenario-a"
-    assert scenario.data["version"] == "7f2c"
-    assert scenario.data["map_feature_observation"]["freshness"] == "missing"
-    assert scenario.freshness is Freshness.STALE
+    assert list(section.items) == ["world-a@7f2c"]
+    world = section.items["world-a@7f2c"]
+    assert world.data["world_id"] == "world-a"
+    assert world.data["world_version"] == "7f2c"
+    assert world.data["map_feature_observation"]["freshness"] == "missing"
+    assert world.freshness is Freshness.STALE

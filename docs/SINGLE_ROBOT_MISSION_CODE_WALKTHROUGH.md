@@ -2,7 +2,7 @@
 
 > **Documentation label: NEEDS REVIEW**
 > This walkthrough contains implementation details that have not yet been
-> revalidated against the evolving scenario-based planner. Do not use it as
+> revalidated against the evolving world-based planner. Do not use it as
 > current implementation authority; start with [Architecture](ARCHITECTURE.md).
 
 This walkthrough follows one real backend use case from beginning to end:

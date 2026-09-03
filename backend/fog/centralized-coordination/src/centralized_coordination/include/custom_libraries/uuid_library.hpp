@@ -62,7 +62,7 @@ inline unique_identifier_msgs::msg::UUID convertStringUuidtoRosUuid(std::string 
     std::vector<uint8_t> uint8_vector_from_string = convertStringUuidtoUint8vector(string_uuid);
  
 	std::array<uint8_t, 16> arr;
-	for (int i = 0; i <= 16; i++) {
+	for (int i = 0; i < 16; i++) {
         arr[i] = uint8_vector_from_string[i];
     }
 

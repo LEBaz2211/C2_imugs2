@@ -40,11 +40,11 @@ NODE_IDs=-1
 
 
 class EdgeSnapIndex:
-    """Metric lookup from mission endpoints to active-scenario graph edges.
+    """Metric lookup from mission endpoints to active-map snapshot graph edges.
 
-    The projected graph is a read-only derivative of the exact active scenario
+    The projected graph is a read-only derivative of the exact active map snapshot
     graph.  It retains the base graph's ``(u, v, key)`` identifiers so a snap
-    can be applied to a temporary query graph without changing the scenario.
+    can be applied to a temporary query graph without changing the map snapshot.
     """
 
     def __init__(self, graph, projected_graph=None):
@@ -387,6 +387,18 @@ def generate_graph_from_linestring(linestring):
         cords.append((float(i[0]),float(i[1]))) 
 
     graph= nx.MultiDiGraph()
+    source_properties = {}
+    if len(linestring.index) > 0:
+        row = linestring.iloc[0]
+        for key in (
+            "visibility_cost",
+            "energy_cost",
+            "straight_slope",
+            "side_slope",
+        ):
+            value = row.get(key)
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                source_properties[key] = float(value)
 #     i=-150
     NODE_IDs=NODE_IDs-1
     for k in range(len(cords)):
@@ -395,11 +407,21 @@ def generate_graph_from_linestring(linestring):
         graph.nodes[NODE_IDs]['y']= float(cords[k][1])
         graph.nodes[NODE_IDs]['x']= float(cords[k][0])
         if(k>0):
-            graph.add_edge(NODE_IDs+1,NODE_IDs)
+            graph.add_edge(
+                NODE_IDs + 1,
+                NODE_IDs,
+                surface="road",
+                **source_properties,
+            )
             # A free road LineString describes traversable geometry, not a
             # one-way traffic rule.  Keep both directions so a robot snapped
             # near the final coordinate can still route back along the road.
-            graph.add_edge(NODE_IDs,NODE_IDs+1)
+            graph.add_edge(
+                NODE_IDs,
+                NODE_IDs + 1,
+                surface="road",
+                **source_properties,
+            )
 #         i=i-1
         NODE_IDs=NODE_IDs-1
                     
@@ -510,6 +532,8 @@ def generate_delaunay_graph_from_points_in_polygon(points,crs="epsg:4326"):
 #     ox.distance.add_edge_lengths(G)
     G.graph['crs']=crs
     G= add_edge_lengths(G)
+    for _, _, _, data in G.edges(keys=True, data=True):
+        data["surface"] = "offroad"
     return G
 
 
@@ -654,12 +678,12 @@ def connect_graphs(g1,g2,maximum_distance,projected_graph=False):
             )
             if not within_threshold:
                 continue
-            forward_key = out.add_edge(node1, node2)
-            reverse_key = out.add_edge(node2, node1)
+            forward_key = out.add_edge(node1, node2, surface="connector")
+            reverse_key = out.add_edge(node2, node1, surface="connector")
             new_edges.extend(((node1, node2, forward_key), (node2, node1, reverse_key)))
 
     # Existing edges already have lengths. Recomputing every accumulated edge
-    # for every imported LineString was the dominant scenario activation cost.
+    # for every imported LineString was the dominant snapshot-loading cost.
     if new_edges:
         out = add_edge_lengths(out, edges=tuple(new_edges))
     return out
@@ -724,8 +748,8 @@ def connect_graph_collection(base_graph, graphs, maximum_distance, projected_gra
         )
         if not within_threshold:
             continue
-        forward_key = out.add_edge(node1, node2)
-        reverse_key = out.add_edge(node2, node1)
+        forward_key = out.add_edge(node1, node2, surface="connector")
+        reverse_key = out.add_edge(node2, node1, surface="connector")
         new_edges.extend(((node1, node2, forward_key), (node2, node1, reverse_key)))
 
     if new_edges:

@@ -1,11 +1,11 @@
 import { BoxSelect, Check, Hexagon, Layers, MousePointer2, Pencil, Target, Trash2, Undo2, X } from "lucide-react";
 import type { Feature, FeatureCollection } from "geojson";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Pane, Polygon, Polyline, Popup, TileLayer, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
-import type { PlannerUpdateEvent, PlanningScenario } from "./api";
+import type { PlannerUpdateEvent, PlanningVariant } from "./api";
 import type { Agent, LonLat, MapFeature, MissionConfig, TaskPlan } from "./types";
 import { missionDestinationPoints } from "./mission";
 
@@ -14,11 +14,11 @@ type MapViewProps = {
   features: MapFeature[];
   geojson?: FeatureCollection;
   osmRoads?: FeatureCollection;
-  scenarioRoads?: FeatureCollection;
+  worldRoads?: FeatureCollection;
   mission?: MissionConfig;
   taskPlan?: TaskPlan;
   plannerState?: PlannerUpdateEvent;
-  planningScenario?: PlanningScenario;
+  planningVariant?: PlanningVariant;
   selectedFeatureId?: string;
   focusFeatureIds?: string[];
   focusPoints?: LonLat[];
@@ -69,22 +69,23 @@ const OSM_ROAD_STYLE = {
   minorColor: "#90adb3",
   opacity: 0.38,
   importedOpacity: 0.92,
-  scenarioOpacity: 0.82,
+  worldOpacity: 0.82,
   haloColor: "#0f172a",
   haloOpacity: 0.16,
 };
 const OSM_ROAD_STYLE_KEY = Object.values(OSM_ROAD_STYLE).join("-");
+const DEFAULT_AGENT_ICON = agentIcon("#1f2937");
 
 export function MapView({
   agents,
   features,
   geojson,
   osmRoads,
-  scenarioRoads,
+  worldRoads,
   mission,
   taskPlan,
   plannerState,
-  planningScenario,
+  planningVariant,
   selectedFeatureId,
   focusFeatureIds,
   focusPoints,
@@ -112,23 +113,25 @@ export function MapView({
   const [redrawFeatureId, setRedrawFeatureId] = useState<string | undefined>();
   const [showOsmRoads, setShowOsmRoads] = useState(true);
   const [featurePicker, setFeaturePicker] = useState<{ position: L.LatLng; features: MapFeature[] } | undefined>();
-  const osmRoadCount = osmRoads?.features.length ?? 0;
-  const scenarioRoadCount = scenarioRoads?.features.length ?? 0;
   const geometryType = geometryByFeatureType[featureType];
   const selectedFeature = features.find((feature) => feature.feature_id === selectedFeatureId);
-  const selectedIsUser = selectedFeature?.properties?.source === "user";
+  const selectedIsUser = ["user", "authoring", "live_overlay"].includes(String(selectedFeature?.properties?.source ?? ""));
   const placingVehicle = Boolean(onPlaceAgent);
   const rectangleDrawing = drawing && geometryType === "Polygon" && drawingMode === "rectangle";
 
   const trajectories = useMemo(() => plannedTrajectories(agents, taskPlan, plannerState, mission?.mission_id), [agents, taskPlan, plannerState, mission?.mission_id]);
-  const scenarioRoute = useMemo(() => (planningScenario?.route ?? []).filter(isLonLat), [planningScenario]);
+  const variantRoute = useMemo(() => (planningVariant?.route ?? []).filter(isLonLat), [planningVariant]);
   const objectivePoints = useMemo(() => (mission ? missionDestinationPoints(mission, features) : []), [features, mission]);
   const roadGeojson = useMemo(() => filterGeojsonFeatures(geojson, isRoadFeature), [geojson]);
   const foregroundGeojson = useMemo(() => filterGeojsonFeatures(geojson, (feature) => !isRoadFeature(feature)), [geojson]);
+  const osmRoadCount = osmRoads?.features.length ?? 0;
+  const worldRoadCount = worldRoads?.features.length ?? 0;
+  const mapRoadCount = roadGeojson?.features.length ?? 0;
+  const featureStyle = useCallback((feature?: Feature) => styleFeature(feature, selectedFeatureId), [selectedFeatureId]);
   const geojsonRenderKey = useMemo(() => {
     const ids = geojson?.features.map((feature) => String(feature.properties?.feature_id ?? feature.id ?? "")).join("|") ?? "empty";
-    return `${ids}-${selectedFeatureId ?? "none"}-${OSM_ROAD_STYLE_KEY}`;
-  }, [geojson, selectedFeatureId]);
+    return `${ids}-${OSM_ROAD_STYLE_KEY}`;
+  }, [geojson]);
 
   useEffect(() => {
     if (!selectedFeature) return;
@@ -232,7 +235,7 @@ export function MapView({
           <Button variant={showOsmRoads ? "secondary" : "ghost"} size="sm" onClick={() => setShowOsmRoads((value) => !value)} title="Toggle road overlay">
             <Layers className="h-4 w-4" />
             <span>Roads</span>
-            {(osmRoadCount > 0 || scenarioRoadCount > 0) && <span className="text-[10px] opacity-70">{scenarioRoadCount || osmRoadCount}</span>}
+            {(osmRoadCount > 0 || worldRoadCount > 0 || mapRoadCount > 0) && <span className="text-[10px] opacity-70">{worldRoadCount || mapRoadCount || osmRoadCount}</span>}
           </Button>
         </div>
 
@@ -341,8 +344,8 @@ export function MapView({
               <GeoJSON
                 key={`road-${geojsonRenderKey}`}
                 data={roadGeojson}
-                style={(feature) => styleFeature(feature, selectedFeatureId)}
-                pointToLayer={(feature, latlng) => pointToLayer(feature, latlng, selectedFeatureId)}
+                style={featureStyle}
+                pointToLayer={pointToLayer}
                 onEachFeature={onEachFeature}
               />
             </Pane>
@@ -352,15 +355,15 @@ export function MapView({
               <GeoJSON
                 key={`foreground-${geojsonRenderKey}`}
                 data={foregroundGeojson}
-                style={(feature) => styleFeature(feature, selectedFeatureId)}
-                pointToLayer={(feature, latlng) => pointToLayer(feature, latlng, selectedFeatureId)}
+                style={featureStyle}
+                pointToLayer={pointToLayer}
                 onEachFeature={onEachFeature}
               />
             </Pane>
           )}
-          {showOsmRoads && scenarioRoads && scenarioRoads.features.length > 0 && (
-            <Pane name="scenario-road-section" style={{ zIndex: MAP_ROAD_FEATURE_PANE_Z_INDEX }}>
-              <GeoJSON key={`scenario-roads-${scenarioRoads.features.length}-${OSM_ROAD_STYLE_KEY}`} data={scenarioRoads} style={styleScenarioRoad} onEachFeature={onEachScenarioRoad} />
+          {showOsmRoads && worldRoads && worldRoads.features.length > 0 && (
+            <Pane name="world-road-section" style={{ zIndex: MAP_ROAD_FEATURE_PANE_Z_INDEX }}>
+              <GeoJSON key={`world-roads-${worldRoads.features.length}-${OSM_ROAD_STYLE_KEY}`} data={worldRoads} style={styleWorldRoad} onEachFeature={onEachWorldRoad} />
             </Pane>
           )}
           <MapResizeBridge />
@@ -436,14 +439,14 @@ export function MapView({
             );
           })}
 
-          {planningScenario && scenarioRoute.length > 1 && (
-            <Pane name="planning-scenario-debug" style={{ zIndex: 620 }}>
-              <ScenarioRouteOverlay scenario={planningScenario} route={scenarioRoute} />
+          {planningVariant && variantRoute.length > 1 && (
+            <Pane name="planning-variant-debug" style={{ zIndex: 620 }}>
+              <VariantRouteOverlay variant={planningVariant} route={variantRoute} />
             </Pane>
           )}
 
           {agents.map((agent) => (
-            <Marker key={agent.agent_id} position={toLatLng(agent.current_location)} icon={agentIcon("#1f2937")}>
+            <Marker key={agent.agent_id} position={toLatLng(agent.current_location)} icon={DEFAULT_AGENT_ICON}>
               <Popup>
                 <div className="text-sm">
                   <strong>{agent.name || agent.agent_id}</strong>
@@ -620,12 +623,12 @@ function MapInteractionMode({ drawing, rectangleDrawing, placingVehicle }: { dra
   return null;
 }
 
-function ScenarioRouteOverlay({ scenario, route }: { scenario: PlanningScenario; route: LonLat[] }) {
-  const hasSelectedNodes = Boolean(scenario.selected_nodes) && route.length >= 3;
+function VariantRouteOverlay({ variant, route }: { variant: PlanningVariant; route: LonLat[] }) {
+  const hasSelectedNodes = Boolean(variant.selected_nodes) && route.length >= 3;
   const graphRoute = hasSelectedNodes ? route.slice(1, -1) : route;
   const startSnap = hasSelectedNodes ? route.slice(0, 2) : [];
   const endSnap = hasSelectedNodes ? route.slice(-2) : [];
-  const metrics = scenario.metrics ?? {};
+  const metrics = variant.metrics ?? {};
   return (
     <Fragment>
       {startSnap.length === 2 && (
@@ -635,7 +638,7 @@ function ScenarioRouteOverlay({ scenario, route }: { scenario: PlanningScenario;
       )}
       {graphRoute.length > 1 && (
         <Polyline positions={graphRoute.map(toLatLng)} pathOptions={{ color: "#7c3aed", weight: 6, opacity: 0.82, lineCap: "round", lineJoin: "round" }}>
-          <Tooltip sticky>{`${scenario.label}: graph ${formatDebugMeters(metrics.graph_length_m ?? metrics.visible_length_m)}`}</Tooltip>
+          <Tooltip sticky>{`${variant.label}: graph ${formatDebugMeters(metrics.graph_length_m ?? metrics.visible_length_m)}`}</Tooltip>
         </Polyline>
       )}
       {endSnap.length === 2 && (
@@ -646,8 +649,8 @@ function ScenarioRouteOverlay({ scenario, route }: { scenario: PlanningScenario;
       {route.map((point, index) => {
         const endpoint = index === 0 || index === route.length - 1;
         return (
-          <CircleMarker key={`scenario-${scenario.id}-${index}`} center={toLatLng(point)} radius={endpoint ? 7 : 4} pathOptions={{ color: endpoint ? "#111827" : "#7c3aed", fillColor: endpoint ? "#f97316" : "#ffffff", fillOpacity: 0.95, weight: 2 }}>
-            <Tooltip>{endpoint ? (index === 0 ? "Scenario start" : "Scenario objective") : `Scenario graph node ${index}`}</Tooltip>
+          <CircleMarker key={`variant-${variant.id}-${index}`} center={toLatLng(point)} radius={endpoint ? 7 : 4} pathOptions={{ color: endpoint ? "#111827" : "#7c3aed", fillColor: endpoint ? "#f97316" : "#ffffff", fillOpacity: 0.95, weight: 2 }}>
+            <Tooltip>{endpoint ? (index === 0 ? "Route start" : "Route objective") : `Variant graph node ${index}`}</Tooltip>
           </CircleMarker>
         );
       })}
@@ -816,10 +819,10 @@ function styleOsmRoadHalo(feature?: Feature): L.PathOptions {
   return { color: OSM_ROAD_STYLE.haloColor, weight: major ? 7 : 5, opacity: OSM_ROAD_STYLE.haloOpacity, lineCap: "round", lineJoin: "round" };
 }
 
-function styleScenarioRoad(feature?: Feature): L.PathOptions {
+function styleWorldRoad(feature?: Feature): L.PathOptions {
   const highway = String(feature?.properties?.highway ?? "");
   const major = /primary|secondary|tertiary|trunk/.test(highway);
-  return { color: major ? OSM_ROAD_STYLE.majorColor : OSM_ROAD_STYLE.minorColor, weight: major ? 5 : 4, opacity: OSM_ROAD_STYLE.scenarioOpacity, lineCap: "round", lineJoin: "round" };
+  return { color: major ? OSM_ROAD_STYLE.majorColor : OSM_ROAD_STYLE.minorColor, weight: major ? 5 : 4, opacity: OSM_ROAD_STYLE.worldOpacity, lineCap: "round", lineJoin: "round" };
 }
 
 function pointToLayer(feature: Feature, latlng: L.LatLng, selectedFeatureId?: string) {
@@ -839,7 +842,7 @@ function onEachOsmRoad(feature: Feature, layer: L.Layer) {
   layer.bindTooltip(`OSM ${name}`);
 }
 
-function onEachScenarioRoad(feature: Feature, layer: L.Layer) {
+function onEachWorldRoad(feature: Feature, layer: L.Layer) {
   const name = feature.properties?.name ?? feature.properties?.highway ?? "road";
   layer.bindTooltip(`${name} (world road section)`);
 }

@@ -4,6 +4,7 @@ export function normalizeMission(input: unknown): MissionConfig {
   if (!isObject(input)) throw new Error("Mission must be a JSON object.");
   const data = structuredClone(input) as Record<string, unknown>;
   const objective = ensureObject(data.objective, "objective");
+  if (data.behavior === null || data.behavior === undefined) data.behavior = 0;
 
   if (!Array.isArray(objective.geometries)) {
     if (isObject(objective.geometry)) {
@@ -17,6 +18,9 @@ export function normalizeMission(input: unknown): MissionConfig {
   if (Array.isArray(objective.geometries)) {
     objective.geometries = objective.geometries.map((geometryRef) => (isObject(geometryRef) ? normalizeGeometryRef(geometryRef) : geometryRef));
   }
+  for (const field of ["vehicle_orientation_origin", "line_of_sight"] as const) {
+    if (isObject(objective[field])) objective[field] = normalizeGeometryRef(objective[field]);
+  }
   if (hasOwn(objective, "maximize_area_coverage") && !hasOwn(objective, "maximize_coverage")) {
     objective.maximize_coverage = objective.maximize_area_coverage;
     delete objective.maximize_area_coverage;
@@ -24,8 +28,18 @@ export function normalizeMission(input: unknown): MissionConfig {
   if (typeof objective.vehicle_orientation === "number") {
     objective.vehicle_orientation = [objective.vehicle_orientation];
   }
+  if (Number(data.behavior) === 1 && !hasOwn(objective, "maximize_coverage")) {
+    objective.maximize_coverage = true;
+  }
+
+  const start = isObject(data.start) ? data.start : undefined;
+  if (start && isObject(start.geometry)) start.geometry = normalizeGeometryRef(start.geometry);
 
   const transit = isObject(data.transit) ? data.transit : undefined;
+  if (transit && isObject(transit.geofence)) transit.geofence = normalizeGeometryRef(transit.geofence);
+  if (transit && Array.isArray(transit.roads)) {
+    transit.roads = transit.roads.map((road) => (isObject(road) ? normalizeGeometryRef(road) : road));
+  }
   if (transit && hasOwn(transit, "optimalization") && !hasOwn(transit, "optimization")) {
     transit.optimization = transit.optimalization;
     delete transit.optimalization;
@@ -62,6 +76,58 @@ export function normalizeMission(input: unknown): MissionConfig {
   return data as MissionConfig;
 }
 
+export function relocateMissionInlineGeometry(mission: MissionConfig, target: LonLat, scale = 1): MissionConfig {
+  const relocated = structuredClone(mission);
+  const geometries = inlineMissionGeometries(relocated);
+  const points = geometries.flatMap((geometry) => flattenPoints(geometry.coordinates));
+  if (!points.length) return relocated;
+  const longitudes = points.map((point) => point[0]);
+  const latitudes = points.map((point) => point[1]);
+  const sourceCenter: LonLat = [
+    (Math.min(...longitudes) + Math.max(...longitudes)) / 2,
+    (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
+  ];
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  for (const geometry of geometries) {
+    geometry.coordinates = translateCoordinates(geometry.coordinates, sourceCenter, target, safeScale);
+  }
+  return relocated;
+}
+
+function inlineMissionGeometries(mission: MissionConfig): GeometryLiteral[] {
+  const values: unknown[] = [];
+  const start = isObject(mission.start) ? mission.start : undefined;
+  if (start) values.push(start.geometry);
+  const transit = isObject(mission.transit) ? mission.transit : undefined;
+  if (transit) {
+    values.push(transit.geofence);
+    if (Array.isArray(transit.roads)) values.push(...transit.roads);
+  }
+  values.push(...(mission.objective.geometries ?? []));
+  values.push(mission.objective.vehicle_orientation_origin, mission.objective.line_of_sight);
+  return values.flatMap((value) => {
+    if (!isObject(value)) return [];
+    const literal = isObject(value.geometry) ? value.geometry : value;
+    if (
+      !isObject(literal)
+      || literal.coordinates === undefined
+      || (typeof literal.geometry_type !== "string" && typeof literal.type !== "string")
+    ) return [];
+    return [literal as GeometryLiteral];
+  });
+}
+
+function translateCoordinates(value: unknown, source: LonLat, target: LonLat, scale: number): unknown {
+  if (!Array.isArray(value)) return value;
+  if (isLonLat(value)) {
+    return [
+      Number((target[0] + (value[0] - source[0]) * scale).toFixed(7)),
+      Number((target[1] + (value[1] - source[1]) * scale).toFixed(7)),
+    ];
+  }
+  return value.map((item) => translateCoordinates(item, source, target, scale));
+}
+
 export function validateMission(mission: MissionConfig, agents: Agent[], features: MapFeature[]) {
   const errors: string[] = [];
   const featureIds = new Set(features.map((feature) => feature.feature_id));
@@ -76,6 +142,40 @@ export function validateMission(mission: MissionConfig, agents: Agent[], feature
     for (const vehicle of mission.vehicles) {
       if (typeof vehicle !== "string" || !vehicle) errors.push("vehicles must contain non-empty string ids.");
       else if (!agentIds.has(vehicle)) errors.push(`vehicle '${vehicle}' is not in the agent registry.`);
+    }
+  }
+
+  const requiredCapabilities = mission.required_capabilities;
+  if (requiredCapabilities !== undefined && (
+    !Array.isArray(requiredCapabilities)
+    || requiredCapabilities.some((capability) => typeof capability !== "string" || !capability.trim())
+    || new Set(requiredCapabilities).size !== requiredCapabilities.length
+  )) {
+    errors.push("required_capabilities must contain unique, non-empty capability tags.");
+  } else if (Array.isArray(requiredCapabilities) && requiredCapabilities.length) {
+    const agentsById = new Map(agents.map((agent) => [agent.agent_id, agent]));
+    for (const vehicle of mission.vehicles ?? []) {
+      const agent = agentsById.get(vehicle);
+      if (!agent) continue;
+      const available = new Set(agent.capabilities ?? []);
+      const missing = requiredCapabilities.filter((capability) => !available.has(capability));
+      if (missing.length) errors.push(`vehicle '${vehicle}' lacks required capabilities: ${missing.join(", ")}.`);
+    }
+  }
+
+  const desiredConstraints = mission.transit?.["desired_vehicle_constraints"];
+  if (desiredConstraints && typeof desiredConstraints === "object" && !Array.isArray(desiredConstraints)) {
+    const agentsById = new Map(agents.map((agent) => [agent.agent_id, agent]));
+    for (const vehicle of mission.vehicles ?? []) {
+      const agent = agentsById.get(vehicle);
+      if (!agent) continue;
+      const supported = agent.constraints as Record<string, unknown>;
+      for (const [key, desired] of Object.entries(desiredConstraints)) {
+        const limit = supported[key];
+        if (typeof desired === "number" && typeof limit === "number" && desired > limit) {
+          errors.push(`vehicle '${vehicle}' supports ${key} up to ${limit}, below the requested ${desired}.`);
+        }
+      }
     }
   }
 
@@ -108,23 +208,22 @@ export function validateMission(mission: MissionConfig, agents: Agent[], feature
   if (objective?.vehicle_orientation !== undefined && (!Array.isArray(objective.vehicle_orientation) || !objective.vehicle_orientation.every((value) => typeof value === "number"))) {
     errors.push("objective.vehicle_orientation must be an array of numbers.");
   }
-  if (
-    objective?.maximum_coverage_distances !== undefined &&
-    (!Array.isArray(objective.maximum_coverage_distances) ||
-      objective.maximum_coverage_distances.length === 0 ||
-      !objective.maximum_coverage_distances.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0))
-  ) {
-    errors.push("objective.maximum_coverage_distances must be a non-empty array of positive swath widths in metres.");
-  }
-  if (Number(mission.behavior) === 1 && !objective?.maximum_coverage_distances?.length) {
-    errors.push("coverage behavior requires objective.maximum_coverage_distances (for example [6.0] metres).");
-  }
-  if (
-    objective?.maximum_coverage_distances?.length &&
-    Array.isArray(mission.vehicles) &&
-    ![1, mission.vehicles.length].includes(objective.maximum_coverage_distances.length)
-  ) {
-    errors.push("maximum_coverage_distances must contain one shared width or one width per mission vehicle.");
+  for (const [field, label] of [
+    ["maximum_coverage_distances", "maximum vehicle separation distances"],
+    ["coverage_swath_widths", "coverage swath widths"],
+  ] as const) {
+    const values = objective?.[field];
+    if (
+      values !== undefined &&
+      (!Array.isArray(values) ||
+        values.length === 0 ||
+        !values.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0))
+    ) {
+      errors.push(`objective.${field} must be a non-empty array of positive ${label} in metres.`);
+    }
+    if (Array.isArray(values) && Array.isArray(mission.vehicles) && ![1, mission.vehicles.length].includes(values.length)) {
+      errors.push(`${field} must contain one shared value or one value per mission vehicle.`);
+    }
   }
 
   return errors;
@@ -262,8 +361,36 @@ function hasOwn(value: Record<string, unknown>, key: string) {
 function normalizeGeometryRef(value: Record<string, unknown>): GeometryRef {
   if (typeof value.feature_id === "string" && !isObject(value.geometry)) return { feature_id: value.feature_id };
   if (isObject(value.geometry) && typeof value.geometry.feature_id === "string" && value.geometry.coordinates === undefined) return { feature_id: value.geometry.feature_id };
-  if (typeof value.geometry_type === "string" || value.coordinates !== undefined) return { geometry: value as GeometryLiteral };
+  if (isObject(value.geometry)) return { ...value, geometry: normalizeGeometryLiteral(value.geometry) } as GeometryRef;
+  if (typeof value.geometry_type === "string" || value.coordinates !== undefined) return { geometry: normalizeGeometryLiteral(value) };
   return value as GeometryRef;
+}
+
+function normalizeGeometryLiteral(value: Record<string, unknown>): GeometryLiteral {
+  const normalized = { ...value } as Record<string, unknown>;
+  if (normalized.geometry_type === "Point") {
+    let coordinates = normalized.coordinates;
+    while (Array.isArray(coordinates) && coordinates.length === 1 && Array.isArray(coordinates[0])) coordinates = coordinates[0];
+    normalized.coordinates = coordinates;
+  }
+  if (
+    normalized.geometry_type === "Polygon"
+    && Array.isArray(normalized.coordinates)
+    && normalized.coordinates.length > 0
+    && isLonLat(normalized.coordinates[0])
+  ) {
+    normalized.coordinates = [normalized.coordinates];
+  }
+  return normalized as GeometryLiteral;
+}
+
+function isLonLat(value: unknown): value is LonLat {
+  return Array.isArray(value)
+    && value.length === 2
+    && typeof value[0] === "number"
+    && Number.isFinite(value[0])
+    && typeof value[1] === "number"
+    && Number.isFinite(value[1]);
 }
 
 function ensureObject(value: unknown, name: string): Record<string, unknown> {

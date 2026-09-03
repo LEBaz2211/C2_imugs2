@@ -46,7 +46,7 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
 
     edge_values = sorted(edges.values(), key=lambda item: (item.get("layer", ""), item.get("label", ""), item.get("id", "")))
     node_values = sorted(nodes.values(), key=lambda item: (item.get("layer", ""), item.get("kind", ""), item.get("label", "")))
-    scenarios = _scenario_contracts(repo_root)
+    workflows = _workflow_contracts(repo_root)
     atlas = build_verified_contract_atlas(repo_root, runtime)
 
     return {
@@ -56,7 +56,7 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
         "summary": {
             "nodes": len(node_values),
             "edges": len(edge_values),
-            "scenarios": len(scenarios),
+            "workflows": len(workflows),
             "by_layer": dict(Counter(item.get("layer", "unknown") for item in node_values)),
             "by_kind": dict(Counter(item.get("kind", "unknown") for item in node_values)),
         },
@@ -74,11 +74,11 @@ def build_contract_graph(repo_root: Path, runtime: dict[str, Any] | None = None)
             {"id": "http", "label": "HTTP/API"},
             {"id": "ros", "label": "ROS"},
             {"id": "data", "label": "Data"},
-            {"id": "scenario", "label": "Scenarios"},
+            {"id": "workflow", "label": "Workflows"},
         ],
         "nodes": node_values,
         "edges": edge_values,
-        "scenarios": scenarios,
+        "workflows": workflows,
         "atlas": atlas,
         "runtime": {
             "ros_nodes": runtime.get("nodes", []),
@@ -743,7 +743,7 @@ def _add_system_edges(edges: dict[str, dict[str, Any]]) -> None:
         edges[edge_id] = _edge(edge_id, source, target, label, "system_flow", "system", protocol=protocol)
 
 
-def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
+def _workflow_contracts(repo_root: Path) -> list[dict[str, Any]]:
     planner = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "multi_robot_path_planning.py"
     coverage = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "max_coverage.py"
     mapf = repo_root / "backend" / "fog" / "planner" / "ros2ws" / "src" / "path_planning_lib" / "path_planning_lib" / "mapf.py"
@@ -789,14 +789,15 @@ def _scenario_contracts(repo_root: Path) -> list[dict[str, Any]]:
         },
         {
             "id": "coverage_zone",
-            "label": "Polygon Lawnmower Coverage",
-            "summary": "Behavior 1 produces an in-polygon perimeter plus lawnmower sweep using the configured swath width.",
+            "label": "Coverage and Patrol Dispatch",
+            "summary": "Behavior 1 dispatches Polygon survey, LineString patrol, or road-subgraph patrol according to geometry and road_usage.",
             "stages": [
-                _stage("config", "MissionConfig selects one Polygon and a positive swath width", "schema:mission_config.schema.json", inputs=["behavior=1", "objective.geometries[0].Polygon", "maximize_coverage=true", "maximum_coverage_distances[] metres"]),
-                _stage("sweep", "Planner projects to local UTM and builds perimeter plus boustrophedon passes", "component:planner", source_refs=[_source_ref(coverage, repo_root, 13)], outputs=["continuous exact-coordinate coverage path"], notes=["Pass spacing never exceeds the configured swath width; concave boundaries and holes use in-polygon visibility connectors."]),
-                _stage("entry", "Each agent routes over the scenario graph to an assigned sweep endpoint", "component:planner", source_refs=[_source_ref(planner, repo_root, 182)], outputs=["graph entry path plus exact sweep waypoints"]),
+                _stage("config", "MissionConfig selects COVERAGE geometry and active-world semantics", "schema:mission_config.schema.json", inputs=["behavior=1", "Polygon or LineString", "maximize_coverage defaults true", "coverage_swath_widths[] for area survey"]),
+                _stage("dispatch", "Planner selects area survey, line patrol, or road patrol", "component:planner", source_refs=[_source_ref(planner, repo_root, 491)], outputs=["task-local work path"], notes=["maximum_coverage_distances remains inter-vehicle spacing and is never reused as a sensor swath."]),
+                _stage("sweep", "Area survey projects to local UTM and builds boundary-inset boustrophedon passes", "component:planner", source_refs=[_source_ref(coverage, repo_root, 13)], outputs=["continuous exact-coordinate coverage path"], notes=["Pass spacing never exceeds the sensor-derived swath; risk polygons are subtracted before lane generation."]),
+                _stage("entry", "Each agent routes over the workflow graph to an assigned sweep endpoint", "component:planner", source_refs=[_source_ref(planner, repo_root, 182)], outputs=["graph entry path plus exact sweep waypoints"]),
             ],
-            "risks": ["Only one Polygon objective is accepted per coverage mission; multi-agent coverage partitions one shared pattern using the narrowest selected swath."],
+            "risks": ["Multi-agent area survey partitions one shared pattern using the narrowest selected sensor swath."],
         },
         {
             "id": "mission_roads",

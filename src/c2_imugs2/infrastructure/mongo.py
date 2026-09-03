@@ -18,9 +18,15 @@ from pymongo.errors import PyMongoError
 RUNTIME_DATABASE = "RuntimeDB"
 MAP_DATABASE = "MapDB"
 VEHICLE_DATABASE = "VehicleDB"
-SCENARIO_METADATA_COLLECTION = "_scenario_versions"
-ACTIVE_SCENARIO_COLLECTION = "_active_scenario"
-SCENARIO_ACTIVATION_COLLECTION = "_scenario_activations"
+WORLD_DATABASE = "WorldDB"
+WORLD_DEFINITIONS_COLLECTION = "WorldDefinitions"
+WORLD_VERSIONS_COLLECTION = "WorldVersions"
+WORLD_LAUNCHES_COLLECTION = "WorldLaunches"
+ACTIVE_WORLD_COLLECTION = "ActiveWorld"
+WORLD_ROAD_FEATURES_COLLECTION = "WorldRoadFeatures"
+LIVE_FEATURES_COLLECTION = "LiveFeatures"
+AUTHORING_FEATURES_COLLECTION = "AuthoringFeatures"
+VEHICLE_MODELS_COLLECTION = "VehicleModels"
 DEFAULT_FEEDBACK_COMPACTION_MAX_DOCUMENTS = 100_000
 
 
@@ -138,69 +144,17 @@ def base_index_specs() -> tuple[MongoIndexSpec, ...]:
                 "Non-unique until all backend vehicle-profile writers use an audited atomic upsert."
             ),
         ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            SCENARIO_METADATA_COLLECTION,
-            (("map_collection", ASCENDING),),
-            "scenario_versions_collection_unique",
-            unique=True,
-            partial_filter={"map_collection": {"$type": "string"}},
-            compatibility_note=(
-                "Partial uniqueness leaves incomplete historical metadata visible for audit while preventing "
-                "two valid version records from owning the same immutable collection."
-            ),
-        ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            SCENARIO_METADATA_COLLECTION,
-            (("scenario_id", ASCENDING), ("version", ASCENDING)),
-            "scenario_versions_identity_unique",
-            unique=True,
-            partial_filter={
-                "scenario_id": {"$type": "string"},
-                "version": {"$type": "string"},
-            },
-            compatibility_note=(
-                "Partial uniqueness excludes incomplete historical rows; duplicate valid identities must be "
-                "resolved manually rather than being deleted by bootstrap."
-            ),
-        ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            SCENARIO_METADATA_COLLECTION,
-            (("scenario_id", ASCENDING), ("created_at", DESCENDING)),
-            "scenario_versions_catalog",
-        ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            ACTIVE_SCENARIO_COLLECTION,
-            (("singleton", ASCENDING),),
-            "active_scenario_singleton_unique",
-            unique=True,
-            partial_filter={"singleton": {"$type": "string"}},
-            compatibility_note=(
-                "Enforces the durable active-scenario singleton used by the runtime manager while retaining "
-                "any incomplete historical rows for explicit audit."
-            ),
-        ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            SCENARIO_ACTIVATION_COLLECTION,
-            (("activation_id", ASCENDING),),
-            "scenario_activation_id_unique",
-            unique=True,
-            partial_filter={"activation_id": {"$type": "string"}},
-            compatibility_note=(
-                "Protects idempotent activation transition upserts; duplicate valid activation IDs block "
-                "bootstrap and are never repaired automatically."
-            ),
-        ),
-        MongoIndexSpec(
-            MAP_DATABASE,
-            SCENARIO_ACTIVATION_COLLECTION,
-            (("status", ASCENDING), ("recorded_at", DESCENDING)),
-            "scenario_activations_status_recorded",
-        ),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_DEFINITIONS_COLLECTION, (("world_id", ASCENDING),), "world_definitions_id_unique", unique=True),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_DEFINITIONS_COLLECTION, (("archived", ASCENDING), ("updated_at", DESCENDING)), "world_definitions_catalog"),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_VERSIONS_COLLECTION, (("world_id", ASCENDING), ("world_version", ASCENDING)), "world_versions_identity_unique", unique=True),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_VERSIONS_COLLECTION, (("map_collection", ASCENDING),), "world_versions_snapshot"),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_LAUNCHES_COLLECTION, (("launch_id", ASCENDING),), "world_launches_id_unique", unique=True),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_LAUNCHES_COLLECTION, (("status", ASCENDING), ("recorded_at", DESCENDING)), "world_launches_status_recorded"),
+        MongoIndexSpec(WORLD_DATABASE, ACTIVE_WORLD_COLLECTION, (("singleton", ASCENDING),), "active_world_singleton_unique", unique=True),
+        MongoIndexSpec(WORLD_DATABASE, WORLD_ROAD_FEATURES_COLLECTION, (("world_id", ASCENDING), ("import_id", ASCENDING), ("feature_index", ASCENDING)), "world_road_features_identity_unique", unique=True),
+        MongoIndexSpec(WORLD_DATABASE, LIVE_FEATURES_COLLECTION, (("deployment_id", ASCENDING), ("feature_id", ASCENDING)), "live_features_deployment_identity_unique", unique=True),
+        MongoIndexSpec(MAP_DATABASE, AUTHORING_FEATURES_COLLECTION, (("map", ASCENDING), ("feature_id", ASCENDING)), "authoring_features_map_identity_unique", unique=True),
+        MongoIndexSpec(VEHICLE_DATABASE, VEHICLE_MODELS_COLLECTION, (("model_id", ASCENDING),), "vehicle_models_id_unique", unique=True),
     )
 
 
@@ -211,28 +165,28 @@ def map_feature_index_specs(collection: str) -> tuple[MongoIndexSpec, ...]:
             MAP_DATABASE,
             collection,
             (("properties.feature_id", ASCENDING),),
-            "scenario_feature_id_unique",
+            "map_feature_id_unique",
             unique=True,
             partial_filter={"properties.feature_id": {"$type": "string"}},
             compatibility_note=(
                 "Partial uniqueness preserves legacy features with no string feature_id; duplicate string IDs "
-                "block this index and require a scenario-data repair."
+                "block this index and require a map-data repair."
             ),
         ),
         MongoIndexSpec(
             MAP_DATABASE,
             collection,
             (("properties.feature_type", ASCENDING),),
-            "scenario_feature_type",
+            "map_feature_type",
         ),
         MongoIndexSpec(
             MAP_DATABASE,
             collection,
             (("geometry", GEOSPHERE),),
-            "scenario_feature_geometry_2dsphere",
+            "map_feature_geometry_2dsphere",
             compatibility_note=(
                 "MongoDB validates indexed GeoJSON. Invalid historical geometry blocks this index and is "
-                "reported without modifying the immutable scenario collection."
+                "reported without modifying the immutable snapshot collection."
             ),
         ),
     )
@@ -306,7 +260,7 @@ def bootstrap_mongo_indexes(
     client_factory: Any = MongoClient,
     server_selection_timeout_ms: int = 3000,
 ) -> MongoBootstrapReport:
-    """Idempotently bootstrap runtime and immutable-scenario indexes.
+    """Idempotently bootstrap runtime, world-domain, and snapshot indexes.
 
     This function never drops indexes or edits application documents. A
     uniqueness conflict or invalid GeoJSON is returned as a non-OK outcome for
@@ -317,7 +271,7 @@ def bootstrap_mongo_indexes(
         client.admin.command("ping")
         map_database = client[MAP_DATABASE]
         existing_collections = set(map_database.list_collection_names())
-        metadata = map_database[SCENARIO_METADATA_COLLECTION]
+        metadata = client[WORLD_DATABASE][WORLD_VERSIONS_COLLECTION]
         discovered = {
             str(item["map_collection"])
             for item in metadata.find(

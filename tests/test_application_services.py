@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-import c2_imugs2.scenarios.runtime as scenario_runtime
+import c2_imugs2.worlds.service as world_runtime
 from c2_imugs2.api.services import (
     ApplicationServiceError,
     BackendMissionApplicationService,
-    ScenarioApplicationService,
+    WorldApplicationService,
 )
 from c2_imugs2.core.models import MissionRequest
 from c2_imugs2.infrastructure.legacy.rest import LegacyRestResponse
-from c2_imugs2.scenarios.runtime import ScenarioRuntimeManager, build_scenario_snapshot
+from c2_imugs2.worlds.service import WorldManager, build_world_snapshot
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,32 +39,45 @@ class RestGateway:
         return self.status_response
 
 
-class ReadyScenario:
+class ReadyWorld:
     def __init__(self, agents: list[dict[str, Any]] | None = None) -> None:
         self.agents = deepcopy(agents or [])
 
     def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
         return {
-            "scenario_id": "scenario-a",
-            "version": "version-a",
-            "map_collection": "scenario_a_version_a",
+            "world_id": "world-a",
+            "world_version": "version-a",
+            "deployment_id": "deployment-a",
+            "launch_id": "launch-a",
+            "map_snapshot_token": "snapshot-a",
+            "map_collection": "world_a_version_a",
+            "content_hash": "content-a",
+            "map_feature_hash": "features-a",
             "status": "ready",
+            "ready": True,
             "agents": deepcopy(self.agents),
+            "snapshot": {"type": "FeatureCollection", "features": []},
+            "live_features": {"type": "FeatureCollection", "features": []},
         }
 
     def validated_active(self) -> dict[str, Any]:
         return self.require_ready()
 
-    def list_scenarios(self) -> list[dict[str, Any]]:
+    def list_worlds(self) -> list[dict[str, Any]]:
         return [self.require_ready()]
 
-    def activate(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {**self.require_ready(), "agents": payload.get("agents") or []}
+    def launch(self, world_id: str, revision: int) -> dict[str, Any]:
+        return {
+            **self.require_ready(),
+            "world_id": world_id,
+            "definition_revision": revision,
+            "agents": [{"agent_id": "robot-a"}],
+        }
 
 
 def _service(
     tmp_path: Path,
-    scenario: ReadyScenario | None = None,
+    world: ReadyWorld | None = None,
 ) -> tuple[BackendMissionApplicationService, SimpleNamespace, RestGateway]:
     runtime = SimpleNamespace(
         missions={},
@@ -78,7 +91,7 @@ def _service(
         repo_root=ROOT,
         runtime=runtime,
         rest_client=rest,  # type: ignore[arg-type]
-        scenario_runtime=scenario or ReadyScenario(),
+        world_runtime=world or ReadyWorld(),
         inline_feature_refs=lambda config, root: config,
         normalize_mission_id=lambda value: str(value),
         status_name=lambda value: {0: "NONE", 4: "ACCEPTED", 5: "STARTED"}[int(value)],
@@ -107,7 +120,20 @@ def test_live_mission_application_owns_command_sequence(tmp_path: Path) -> None:
     )
     accepted = service.change_status("mission-a", MissionRequest.APPROVE, 4)
 
-    assert initialized["scenario_version"] == "version-a"
+    assert initialized["world_version"] == "version-a"
+    assert initialized["world_binding"] == {
+        "world_id": "world-a",
+        "world_version": "version-a",
+        "deployment_id": "deployment-a",
+        "map_collection": "world_a_version_a",
+        "content_hash": "content-a",
+        "map_feature_hash": "features-a",
+        "launch_id": "launch-a",
+        "map_snapshot_token": "snapshot-a",
+        "status": "ready",
+        "ready": True,
+    }
+    assert "world_binding" not in rest.initialized[0]
     assert accepted["status_name"] == "ACCEPTED"
     assert rest.initialized[0]["mission_id"] == "mission-a"
     assert rest.requests == [MissionRequest.APPROVE]
@@ -125,17 +151,17 @@ def test_live_mission_application_maps_validation_to_unprocessable(tmp_path: Pat
     assert rest.initialized == []
 
 
-def test_init_adds_backend_only_speed_from_selected_scenario_vehicles(
+def test_init_adds_backend_only_speed_from_selected_world_vehicles(
     tmp_path: Path,
 ) -> None:
-    scenario = ReadyScenario(
+    world = ReadyWorld(
         [
             {"agent_id": "robot-a", "constraints": {"max_speed": 4.5}},
             {"agent_id": "robot_b", "constraints": {"max_speed": 2.5}},
             {"agent_id": "robot-c", "constraints": {"max_speed": 0.5}},
         ]
     )
-    service, runtime, rest = _service(tmp_path, scenario)
+    service, runtime, rest = _service(tmp_path, world)
     mission = {
         "mission_id": "mission-a",
         "behavior": 0,
@@ -161,10 +187,10 @@ def test_init_adds_backend_only_speed_from_selected_scenario_vehicles(
 
 
 def test_init_preserves_explicit_transit_speed(tmp_path: Path) -> None:
-    scenario = ReadyScenario(
+    world = ReadyWorld(
         [{"agent_id": "robot-a", "constraints": {"max_speed": 4.5}}]
     )
-    service, _, rest = _service(tmp_path, scenario)
+    service, _, rest = _service(tmp_path, world)
     mission = {
         "mission_id": "mission-a",
         "behavior": 0,
@@ -187,10 +213,10 @@ def test_init_preserves_explicit_transit_speed(tmp_path: Path) -> None:
     )
 
 
-def test_init_uses_safe_speed_fallback_when_scenario_profiles_have_none(
+def test_init_uses_safe_speed_fallback_when_world_profiles_have_none(
     tmp_path: Path,
 ) -> None:
-    service, _, rest = _service(tmp_path, ReadyScenario([{"agent_id": "robot-a"}]))
+    service, _, rest = _service(tmp_path, ReadyWorld([{"agent_id": "robot-a"}]))
     mission = {
         "mission_id": "mission-a",
         "behavior": 0,
@@ -288,13 +314,13 @@ def test_failed_status_command_preserves_the_previous_mission_status(tmp_path: P
             },
         }
     )
-    runtime.missions["mission-a"] = {
-        "mission_id": "mission-a",
-        "status": 1,
-        "status_name": "PLANNED",
-        "status_source": "mission_feedback",
-        "config": {},
-    }
+    runtime.missions["mission-a"].update(
+        {
+            "status": 1,
+            "status_name": "PLANNED",
+            "status_source": "mission_feedback",
+        }
+    )
     rest.status_response = LegacyRestResponse(False, 503, "unavailable")
 
     with pytest.raises(ApplicationServiceError) as error:
@@ -357,6 +383,49 @@ def test_status_command_cannot_target_an_older_initialized_mission(tmp_path: Pat
     assert rest.requests == [MissionRequest.APPROVE]
 
 
+def test_status_command_rejects_mission_from_previous_world_deployment(
+    tmp_path: Path,
+) -> None:
+    class SwitchedWorld(ReadyWorld):
+        deployment = "deployment-a"
+
+        def require_ready(self, vehicle_ids: list[str] | None = None) -> dict[str, Any]:
+            active = super().require_ready(vehicle_ids)
+            if self.deployment != "deployment-a":
+                active.update(
+                    {
+                        "deployment_id": self.deployment,
+                        "launch_id": "launch-b",
+                        "map_snapshot_token": "snapshot-b",
+                    }
+                )
+            return active
+
+    world = SwitchedWorld()
+    service, runtime, rest = _service(tmp_path, world)
+    service.initialize(
+        {
+            "mission_id": "mission-a",
+            "behavior": 0,
+            "vehicles": ["robot-a"],
+            "objective": {
+                "geometries": [
+                    {"geometry": {"geometry_type": "Point", "coordinates": [4.0, 50.0]}}
+                ]
+            },
+        }
+    )
+    runtime.missions["mission-a"].update({"status": 1, "status_name": "PLANNED"})
+    world.deployment = "deployment-b"
+
+    with pytest.raises(ApplicationServiceError) as error:
+        service.change_status("mission-a", MissionRequest.APPROVE, 4)
+
+    assert error.value.status_code == 409
+    assert "different world deployment" in str(error.value.detail)
+    assert rest.requests == []
+
+
 def test_status_command_requires_reinitialize_after_command_target_is_lost(tmp_path: Path) -> None:
     service, runtime, rest = _service(tmp_path)
     runtime.missions["mission-a"] = {
@@ -406,7 +475,7 @@ def test_status_command_enforces_mission_lifecycle_without_calling_rest(tmp_path
     assert rest.requests == []
 
 
-def test_scenario_application_replaces_adapter_state_after_activation() -> None:
+def test_world_application_replaces_adapter_state_after_launch() -> None:
     runtime = SimpleNamespace(
         missions={"old": {}},
         forgotten_missions=set(),
@@ -414,9 +483,9 @@ def test_scenario_application_replaces_adapter_state_after_activation() -> None:
         planner_state={"state": 2},
         command_target_mission_id="old",
     )
-    service = ScenarioApplicationService(runtime, ReadyScenario())
+    service = WorldApplicationService(runtime, ReadyWorld())
 
-    result = asyncio.run(service.activate({"agents": [{"agent_id": "robot-a"}]}))
+    result = asyncio.run(service.launch("world-a", 1))
 
     assert result["agents"] == [{"agent_id": "robot-a"}]
     assert runtime.missions == {}
@@ -425,7 +494,7 @@ def test_scenario_application_replaces_adapter_state_after_activation() -> None:
     assert runtime.command_target_mission_id is None
 
 
-def test_scenario_application_preserves_adapter_state_on_idempotent_reuse() -> None:
+def test_world_application_preserves_adapter_state_on_idempotent_reuse() -> None:
     runtime = SimpleNamespace(
         missions={"current": {"status": 5}},
         forgotten_missions=set(),
@@ -436,14 +505,14 @@ def test_scenario_application_preserves_adapter_state_on_idempotent_reuse() -> N
     original_missions = runtime.missions
     original_agents = runtime.agent_updates
     original_planner = runtime.planner_state
-    scenario = ReadyScenario()
-    scenario.activate = lambda payload: {  # type: ignore[method-assign]
-        **scenario.require_ready(),
+    world = ReadyWorld()
+    world.launch = lambda world_id, revision: {  # type: ignore[method-assign]
+        **world.require_ready(),
         "idempotent_reuse": True,
     }
-    service = ScenarioApplicationService(runtime, scenario)
+    service = WorldApplicationService(runtime, world)
 
-    result = asyncio.run(service.activate({"scenario_id": "scenario-a"}))
+    result = asyncio.run(service.launch("world-a", 1))
 
     assert result["idempotent_reuse"] is True
     assert runtime.missions is original_missions
@@ -473,7 +542,7 @@ class _FakeMapDatabase:
         self.marker = marker
 
     def __getitem__(self, collection: str) -> _FakeActiveCollection:
-        assert collection == scenario_runtime.ACTIVE_SCENARIO_COLLECTION
+        assert collection == world_runtime.ACTIVE_WORLD_COLLECTION
         return _FakeActiveCollection(self.marker)
 
 
@@ -489,7 +558,7 @@ class _FakeMongoClient:
         return None
 
     def __getitem__(self, database: str) -> _FakeMapDatabase:
-        assert database == "MapDB"
+        assert database == "WorldDB"
         return _FakeMapDatabase(self.marker)
 
 
@@ -499,24 +568,24 @@ def test_reachable_mongo_without_active_marker_ignores_ready_file_cache(
     runtime_dir = tmp_path / "data" / "runtime"
     runtime_dir.mkdir(parents=True)
     cached = {
-        "scenario_id": "cached-only",
+        "world_id": "cached-only",
         "status": "ready",
         "ready": True,
-        "map_collection": "scenario_cached_only_v1",
+        "map_collection": "world_cached_only_v1",
     }
-    (runtime_dir / scenario_runtime.ACTIVE_STATE_FILE).write_text(
+    (runtime_dir / world_runtime.ACTIVE_STATE_FILE).write_text(
         json.dumps(cached), encoding="utf-8"
     )
     monkeypatch.setattr(
-        scenario_runtime,
+        world_runtime,
         "MongoClient",
         lambda *args, **kwargs: _FakeMongoClient(None),
     )
-    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://reachable")
+    manager = WorldManager(tmp_path, tmp_path, "mongodb://reachable")
 
     assert manager.active() is None
     assert manager.validated_active() is None
-    with pytest.raises(scenario_runtime.ScenarioNotReadyError):
+    with pytest.raises(world_runtime.WorldNotReadyError):
         manager.require_ready()
 
 
@@ -526,19 +595,19 @@ def test_unavailable_mongo_exposes_cache_as_non_authoritative_stale_diagnostic(
     runtime_dir = tmp_path / "data" / "runtime"
     runtime_dir.mkdir(parents=True)
     cached = {
-        "scenario_id": "cached-only",
+        "world_id": "cached-only",
         "status": "ready",
         "ready": True,
-        "map_collection": "scenario_cached_only_v1",
+        "map_collection": "world_cached_only_v1",
     }
-    cache_path = runtime_dir / scenario_runtime.ACTIVE_STATE_FILE
+    cache_path = runtime_dir / world_runtime.ACTIVE_STATE_FILE
     cache_path.write_text(json.dumps(cached), encoding="utf-8")
 
     def unavailable(*args: Any, **kwargs: Any) -> Any:
-        raise scenario_runtime.PyMongoError("database offline")
+        raise world_runtime.PyMongoError("database offline")
 
-    monkeypatch.setattr(scenario_runtime, "MongoClient", unavailable)
-    manager = ScenarioRuntimeManager(tmp_path, tmp_path, "mongodb://offline")
+    monkeypatch.setattr(world_runtime, "MongoClient", unavailable)
+    manager = WorldManager(tmp_path, tmp_path, "mongodb://offline")
     manager._active_runtime_issues = lambda state: []  # type: ignore[method-assign]
     manager._planner_readiness_issue = lambda state: None  # type: ignore[method-assign]
 
@@ -552,31 +621,33 @@ def test_unavailable_mongo_exposes_cache_as_non_authoritative_stale_diagnostic(
     assert diagnostic["durable_authority"] == "unavailable"
     assert "database offline" in diagnostic["error"]
     assert json.loads(cache_path.read_text(encoding="utf-8")) == cached
-    with pytest.raises(scenario_runtime.ScenarioNotReadyError):
+    with pytest.raises(world_runtime.WorldNotReadyError):
         manager.require_ready()
 
 
-def test_identical_healthy_scenario_activation_is_idempotent() -> None:
+def test_identical_healthy_world_launch_is_idempotent() -> None:
     payload = {
-        "scenario_id": "same-scenario",
-        "name": "Same scenario",
+        "world_id": "same-world",
+        "name": "Same world",
         "map": "rma",
         "agents": [{"agent_id": "robot-a"}],
         "feature_ids": ["60bae762-6c7a-4b11-8803-556fdfee4425"],
         "road_imports": [],
     }
-    snapshot = build_scenario_snapshot(ROOT, payload)
+    snapshot = build_world_snapshot(ROOT, payload)
     current = {
         **{key: value for key, value in snapshot.items() if key != "features"},
         "status": "ready",
         "ready": True,
     }
-    manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
+    manager = WorldManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
     manager.active = lambda: current  # type: ignore[method-assign]
     manager._active_runtime_issues = lambda state: []  # type: ignore[method-assign]
     manager._planner_readiness_issue = lambda state: None  # type: ignore[method-assign]
+    manager.get_world = lambda world_id: {**payload, "revision": 1}  # type: ignore[method-assign]
+    manager._authoring_features = lambda map_name: world_runtime.load_static_geojson_map(ROOT, map_name).get("features", [])  # type: ignore[method-assign]
 
-    result = manager.activate(payload)
+    result = manager.launch("same-world", 1)
 
     assert result["idempotent_reuse"] is True
     assert result["map_collection"] == snapshot["map_collection"]
@@ -585,10 +656,10 @@ def test_identical_healthy_scenario_activation_is_idempotent() -> None:
 def test_planner_readiness_survives_marker_log_rollout_for_same_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
+    manager = WorldManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
     state = {
-        "map_collection": "scenario_a_v1",
-        "activation_token": "token-a",
+        "map_collection": "world_a_v1",
+        "map_snapshot_token": "token-a",
         "verified_at": "2026-08-27T12:30:56+00:00",
     }
     planner_started_at = "2026-08-27T12:30:11Z"
@@ -602,7 +673,7 @@ def test_planner_readiness_survives_marker_log_rollout_for_same_process(
             }
         raise AssertionError(path)
 
-    monkeypatch.setattr(scenario_runtime, "_docker_request", docker_request)
+    monkeypatch.setattr(world_runtime, "_docker_request", docker_request)
 
     assert manager._planner_readiness_issue(state) is None  # noqa: SLF001
 
@@ -610,51 +681,53 @@ def test_planner_readiness_survives_marker_log_rollout_for_same_process(
     assert "has not reported" in manager._planner_readiness_issue(state)  # type: ignore[operator]  # noqa: SLF001
 
 
-def test_identical_scenario_activation_does_not_reuse_wrong_planner_token(
+def test_identical_world_launch_does_not_reuse_wrong_planner_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
-        "scenario_id": "same-scenario",
-        "name": "Same scenario",
+        "world_id": "same-world",
+        "name": "Same world",
         "map": "rma",
         "agents": [{"agent_id": "robot-a"}],
         "feature_ids": ["60bae762-6c7a-4b11-8803-556fdfee4425"],
         "road_imports": [],
     }
-    snapshot = build_scenario_snapshot(ROOT, payload)
+    snapshot = build_world_snapshot(ROOT, payload)
     current = {
         **{key: value for key, value in snapshot.items() if key != "features"},
         "status": "ready",
         "ready": True,
-        "activation_token": "activation-1",
+        "map_snapshot_token": "launch-1",
     }
-    manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
+    manager = WorldManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
     transitions: list[dict[str, Any]] = []
     planner_requests: list[tuple[str, str, str]] = []
     manager.active = lambda: current  # type: ignore[method-assign]
     manager._active_runtime_issues = lambda state: []  # type: ignore[method-assign]
     manager._publish_transition = lambda state: transitions.append(deepcopy(state))  # type: ignore[method-assign]
     manager._persist_immutable_snapshot = lambda state: (_ for _ in ()).throw(  # type: ignore[method-assign]
-        RuntimeError("full activation started")
+        RuntimeError("full launch started")
     )
-    manager._record_activation_best_effort = lambda state: None  # type: ignore[method-assign]
+    manager._record_launch_best_effort = lambda state: None  # type: ignore[method-assign]
     manager._publish_observed_state = lambda state: None  # type: ignore[method-assign]
+    manager.get_world = lambda world_id: {**payload, "revision": 1}  # type: ignore[method-assign]
+    manager._authoring_features = lambda map_name: world_runtime.load_static_geojson_map(ROOT, map_name).get("features", [])  # type: ignore[method-assign]
 
     def wrong_planner_token(socket: str, method: str, path: str) -> tuple[int, str]:
         planner_requests.append((socket, method, path))
         return (
             200,
             f"MAP IS LOADED collection=MapDB.{snapshot['map_collection']} "
-            "activation=wrong-token",
+            "snapshot=wrong-token",
         )
 
-    monkeypatch.setattr(scenario_runtime, "_docker_request", wrong_planner_token)
+    monkeypatch.setattr(world_runtime, "_docker_request", wrong_planner_token)
 
     with pytest.raises(
-        scenario_runtime.ScenarioNotReadyError,
-        match="full activation started",
+        world_runtime.WorldNotReadyError,
+        match="full launch started",
     ):
-        manager.activate(payload)
+        manager.launch("same-world", 1)
 
     assert planner_requests == [
         (
@@ -663,22 +736,21 @@ def test_identical_scenario_activation_does_not_reuse_wrong_planner_token(
             "/containers/c2-imugs2-backend-planner/logs?stdout=1&stderr=1&tail=1000",
         )
     ]
-    assert len(transitions) == 1
-    assert transitions[0]["status"] == "activating"
+    assert transitions == []
 
 
-def test_scenario_activation_publishes_durable_phases_before_ready(
+def test_world_launch_publishes_durable_phases_before_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     payload = {
-        "scenario_id": "phase-scenario",
-        "name": "Phase scenario",
+        "world_id": "phase-world",
+        "name": "Phase world",
         "map": "rma",
         "agents": [{"agent_id": "robot-a"}],
         "feature_ids": ["60bae762-6c7a-4b11-8803-556fdfee4425"],
         "road_imports": [],
     }
-    manager = ScenarioRuntimeManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
+    manager = WorldManager(ROOT, ROOT, "mongodb://unused", docker_socket="/missing")
     transitions: list[dict[str, Any]] = []
     restarted: list[tuple[str, str]] = []
     manager.active = lambda: None  # type: ignore[method-assign]
@@ -686,27 +758,29 @@ def test_scenario_activation_publishes_durable_phases_before_ready(
     manager._persist_immutable_snapshot = lambda snapshot: None  # type: ignore[method-assign]
     manager._write_planner_config = lambda collection, token: None  # type: ignore[method-assign]
     manager._replace_previous_runtime = lambda previous: None  # type: ignore[method-assign]
-    manager._clear_scenario_runtime_records = lambda: None  # type: ignore[method-assign]
+    manager._clear_world_runtime_records = lambda: None  # type: ignore[method-assign]
     manager._restart_container = lambda container, label: restarted.append(  # type: ignore[method-assign]
         (container, label)
     )
     manager._restart_planner = lambda: restarted.append(  # type: ignore[method-assign]
-        (scenario_runtime.PLANNER_CONTAINER, "planner")
+        (world_runtime.PLANNER_CONTAINER, "planner")
     )
     manager._wait_until_ready = lambda snapshot, containers, token: None  # type: ignore[method-assign]
     manager._clear_mission_runtime_records = lambda: None  # type: ignore[method-assign]
+    manager.get_world = lambda world_id: {**payload, "revision": 1}  # type: ignore[method-assign]
+    manager._authoring_features = lambda map_name: world_runtime.load_static_geojson_map(ROOT, map_name).get("features", [])  # type: ignore[method-assign]
     monkeypatch.setattr(
-        scenario_runtime,
-        "launch_scenario",
+        world_runtime,
+        "launch_deployment",
         lambda *args, **kwargs: {
             "docker_started": True,
-            "containers": [{"container_name": "scenario-robot-a"}],
+            "containers": [{"container_name": "world-robot-a"}],
         },
     )
 
-    ready = manager.activate(payload)
+    ready = manager.launch("phase-world", 1)
 
-    phases = [transition["activation_phase"] for transition in transitions]
+    phases = [transition["launch_phase"] for transition in transitions]
     assert phases == [
         "validated",
         "snapshot_persisted",
@@ -718,13 +792,13 @@ def test_scenario_activation_publishes_durable_phases_before_ready(
         "runtime_verified",
         "ready",
     ]
-    assert len({transition["activation_id"] for transition in transitions}) == 1
+    assert len({transition["launch_id"] for transition in transitions}) == 1
     assert all(transition["ready"] is False for transition in transitions[:-1])
     assert ready["ready"] is True
     assert [entry["phase"] for entry in ready["phase_history"]] == phases
     assert restarted == [
-        (scenario_runtime.COORDINATION_CONTAINER, "centralized coordination"),
-        (scenario_runtime.PLANNER_CONTAINER, "planner"),
-        (scenario_runtime.C2_REST_CONTAINER, "C2 REST bridge"),
-        (scenario_runtime.ROSBRIDGE_CONTAINER, "rosbridge"),
+        (world_runtime.COORDINATION_CONTAINER, "centralized coordination"),
+        (world_runtime.PLANNER_CONTAINER, "planner"),
+        (world_runtime.C2_REST_CONTAINER, "C2 REST bridge"),
+        (world_runtime.ROSBRIDGE_CONTAINER, "rosbridge"),
     ]

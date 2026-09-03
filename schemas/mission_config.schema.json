@@ -14,8 +14,60 @@
       "items": {"type": "string"},
       "minItems": 1
     },
-    "start": {"type": "object"},
-    "transit": {"type": "object"},
+    "required_capabilities": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "payload_action": {
+      "type": "object",
+      "required": ["type", "payload"],
+      "properties": {
+        "type": {"type": "string", "enum": ["pickup", "dropoff"]},
+        "payload": {"type": "string"}
+      }
+    },
+    "start": {
+      "type": "object",
+      "properties": {
+        "geometry": {"$ref": "#/$defs/geometryRef"},
+        "tolerance_distance": {"type": "number", "minimum": 0},
+        "vehicle_formation": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6]},
+        "vehicle_formation_distance": {"type": "number", "exclusiveMinimum": 0},
+        "vehicle_orientation": {"type": "array", "items": {"type": "number"}, "minItems": 1},
+        "maximize_coverage": {"type": "boolean"},
+        "start_time": {"$ref": "#/$defs/timeWindow"}
+      }
+    },
+    "transit": {
+      "type": "object",
+      "properties": {
+        "geofence": {"$ref": "#/$defs/geometryRef"},
+        "geofence_maximize_coverage": {"type": "boolean"},
+        "roads": {"type": "array", "items": {"$ref": "#/$defs/geometryRef"}},
+        "vehicle_formation": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6]},
+        "vehicle_formation_distance": {"type": "number", "exclusiveMinimum": 0},
+        "optimization": {
+          "type": "object",
+          "properties": {
+            "visibility": {"type": "number", "minimum": 0, "maximum": 1},
+            "energy": {"type": "number", "minimum": 0, "maximum": 1},
+            "road_usage": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "desired_vehicle_constraints": {
+          "type": "object",
+          "properties": {
+            "max_speed": {"type": "number", "exclusiveMinimum": 0},
+            "max_acceleration": {"type": "number", "minimum": 0},
+            "max_jerk": {"type": "number", "minimum": 0},
+            "max_deceleration": {"type": "number", "minimum": 0},
+            "max_straight_slope": {"type": "number", "minimum": 0},
+            "max_side_slope": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
     "objective": {
       "type": "object",
       "required": ["geometries"],
@@ -37,7 +89,13 @@
         "maximize_coverage": {"type": "boolean"},
         "maximum_coverage_distances": {
           "type": "array",
-          "description": "Coverage swath widths in metres: one shared value or one value per mission vehicle.",
+          "description": "Maximum separation in metres between vehicles distributed over the objective: one shared value or one value per mission vehicle.",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "minItems": 1
+        },
+        "coverage_swath_widths": {
+          "type": "array",
+          "description": "Sensor-derived coverage swath widths in metres. Normally injected from the selected world vehicle profiles.",
           "items": {"type": "number", "exclusiveMinimum": 0},
           "minItems": 1
         },
@@ -76,6 +134,16 @@
           "properties": {
             "geometry_type": {"const": "Point"},
             "coordinates": {"$ref": "#/$defs/position"}
+          }
+        },
+        {
+          "properties": {
+            "geometry_type": {"const": "MultiPoint"},
+            "coordinates": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/position"},
+              "minItems": 1
+            }
           }
         },
         {

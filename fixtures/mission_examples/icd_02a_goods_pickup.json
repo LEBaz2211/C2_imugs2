@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "20000000-0000-4000-8000-000000000001",
+  "required_capabilities": ["cargo"],
+  "phase": 1,
+  "name": "ICD 2.1 — goods pickup",
+  "behavior": 0,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002", "fcee3176-50f6-11ec-bf63-0242ac130002", "a18d27fc-50f6-11ec-bf63-0242ac130055", "ee81c8fc-50f6-11ec-bf63-0242ac130056"],
+  "transit": {"optimalization": {"energy": 1, "road_usage": 1}},
+  "objective": {
+    "geometry": {"geometry_type": "MultiPoint", "coordinates": [[4.3920, 50.8440], [4.3945, 50.8440], [4.3970, 50.8440], [4.3945, 50.8470]]},
+    "vehicle_orientation": [71, 21, 38, 87],
+    "arrival_time": {"earliest": "1991-03-26T06:55:00Z", "target": "1991-03-26T07:00:00Z", "latest": "1991-03-26T07:05:00Z"}
+  },
+  "payload_action": {"type": "pickup", "payload": "goods"}
+}

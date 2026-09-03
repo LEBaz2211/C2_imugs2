@@ -18,9 +18,9 @@ FastAPI handler `contracts`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getContracts | `—` | [`frontend/src/api.ts:611`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L611) |
-| handled by contracts | `—` | [`src/c2_imugs2/api/app.py:212`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L212) |
+| getContracts | `—` | [`frontend/src/api.ts:670`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L670) |
+| handled by contracts | `—` | [`src/c2_imugs2/api/app.py:210`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L210) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/app.py:212`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L212)
+- [`src/c2_imugs2/api/app.py:210`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L210)

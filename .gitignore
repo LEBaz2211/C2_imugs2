@@ -9,6 +9,7 @@ data/legacy-mongo/
 data/legacy-planresults/
 data/backend-mongo/
 data/backend-planresults/
+data/backups/
 
 frontend/node_modules/
 frontend/dist/

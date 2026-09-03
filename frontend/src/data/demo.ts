@@ -69,7 +69,7 @@ export const missionExamples: { id: string; name: string; behavior: number; vehi
       objective: {
         geometries: [{ feature_id: "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e" }],
         maximize_coverage: true,
-        maximum_coverage_distances: [6.0],
+        coverage_swath_widths: [6.0],
       },
     },
   },

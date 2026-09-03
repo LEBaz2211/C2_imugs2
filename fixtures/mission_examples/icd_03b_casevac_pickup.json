@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "30000000-0000-4000-8000-000000000002",
+  "required_capabilities": ["casualty_transport"],
+  "phase": 2,
+  "name": "ICD 3.2 — closest-vehicle CASEVAC pickup",
+  "behavior": 0,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002", "fcee3176-50f6-11ec-bf63-0242ac130002", "a18d27fc-50f6-11ec-bf63-0242ac130055", "ee81c8fc-50f6-11ec-bf63-0242ac130056"],
+  "objective": {
+    "geometry": {"geometry_type": "Point", "coordinates": [[[4.3910, 50.8440]]]},
+    "line_of_sight": {"geometry_type": "Point", "coordinates": [[[4.3910, 50.8440]]]},
+    "vehicle_orientation_origin": {"geometry_type": "Polygon", "coordinates": [[4.3975, 50.8455], [4.3985, 50.8455], [4.3985, 50.8465], [4.3975, 50.8465], [4.3975, 50.8455]]},
+    "vehicle_orientation": [90]
+  },
+  "payload_action": {"type": "pickup", "payload": "casualty"}
+}

@@ -19,7 +19,7 @@ planner_node:
             load_map_from_local_folder: False
             mongodb_url: "mongodb://localhost:27017/"
             map_feature_collection: "rma"
-            scenario_activation_token: "startup"
-            # Scenario activation freezes OSM roads into MapDB. The deployed
+            map_snapshot_token: "startup"
+            # Map snapshot freezing stores OSM roads into MapDB. The deployed
             # planner must never download a second, different graph at runtime.
             load_osm_from_network: False

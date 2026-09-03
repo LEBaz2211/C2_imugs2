@@ -22,9 +22,31 @@ namespace c2_msgs::json
     class MissionGeometry
     {
     public:
+        picojson::object Raw;
         std::optional<std::vector<GPSCoordinate>> Coordinates;
         std::optional<std::string> FeatureId;
         std::optional<std::string> GeometryType;
+
+        static bool AppendCoordinates(
+            const picojson::value &value,
+            std::vector<GPSCoordinate> &coordinates)
+        {
+            if (!value.is<picojson::array>())
+                return false;
+
+            const auto &items = value.get<picojson::array>();
+            if (items.size() >= 2 && items[0].is<double>() && items[1].is<double>())
+            {
+                coordinates.push_back(
+                    {items[0].get<double>(), items[1].get<double>()});
+                return true;
+            }
+
+            bool found_coordinate = false;
+            for (const auto &item : items)
+                found_coordinate = AppendCoordinates(item, coordinates) || found_coordinate;
+            return found_coordinate;
+        }
 
         // Parse from JSON object
         static JsonResult<MissionGeometry> FromJson(picojson::object &obj)
@@ -32,6 +54,7 @@ namespace c2_msgs::json
             MissionGeometry result;
             if (obj.empty())
                 return {"Geometry is empty"};
+            result.Raw = obj;
 
             // If feature_id exists, use it and skip geometry data
             if (obj.count("feature_id") > 0 && obj["feature_id"].is<std::string>())
@@ -56,30 +79,9 @@ namespace c2_msgs::json
                 if (!geometryObj["coordinates"].is<picojson::array>())
                     return {"Coordinates property is missing or not an array!"};
 
-                picojson::array coordArray = geometryObj["coordinates"].get<picojson::array>();
                 std::vector<GPSCoordinate> coordinates;
-
-                if (!coordArray.empty() && coordArray[0].is<picojson::array>())
-                {
-                    for (const auto &c : coordArray)
-                    {
-                        if (!c.is<picojson::array>())
-                            return {"Some coordinates are not arrays!"};
-
-                        auto &cc = c.get<picojson::array>();
-                        if (cc.size() < 2)
-                            return {"Some coordinates contain fewer than 2 values!"};
-
-                        if (!cc[0].is<double>() || !cc[1].is<double>())
-                            return {"Longitude or latitude is not a double!"};
-
-                        coordinates.push_back({cc[0].get<double>(), cc[1].get<double>()});
-                    }
-                }
-                else if (coordArray.size() >= 2 && coordArray[0].is<double>())
-                {
-                    coordinates.push_back({coordArray[0].get<double>(), coordArray[1].get<double>()});
-                }
+                if (!AppendCoordinates(geometryObj["coordinates"], coordinates))
+                    return {"Coordinates contain no longitude/latitude pair!"};
 
                 result.Coordinates = coordinates;
             }
@@ -90,6 +92,8 @@ namespace c2_msgs::json
         // Convert to JSON object
         picojson::object ToJson() const
         {
+            if (!this->Raw.empty())
+                return this->Raw;
             picojson::object result;
 
             if (FeatureId.has_value())
@@ -190,6 +194,7 @@ namespace c2_msgs::json
     class VehicleOrientationOrigin
     {
     public:
+        picojson::object Raw;
         std::optional<std::string> FeatureId;
         std::optional<std::string> GeometryType;
         std::optional<Orientation> Coordinates;
@@ -200,6 +205,7 @@ namespace c2_msgs::json
             VehicleOrientationOrigin result;
             if (obj.empty())
                 return {"Error in 'vehicle_orientation_origin' property is empty"};
+            result.Raw = obj;
 
             // feature_id
             if (!obj["feature_id"].is<picojson::null>())
@@ -211,32 +217,13 @@ namespace c2_msgs::json
             }
             else
             {
-                // Geometry_type
-                if (obj["geometry_type"].is<picojson::null>())
-                    return {"'geometry_type property is empty"};
-
-                if (obj["geometry_type"].is<std::string>())
-                    return {"'geometry_type' is not defined as a string"};
-                result.GeometryType = obj["geometry_type"].get<std::string>();
-
-                // Coordinates
-                if (!obj["coordinates"].is<picojson::null>())
-                {
-                    if (!obj["coodinates"].is<picojson::array>())
-                        return {"'coordinates is not define as an array"};
-                    auto ori = obj["coordinates"].get<picojson::array>();
-                    std::vector<double> tmp;
-                    tmp.resize(3);
-                    if (ori.size() < 3 || ori.size() > 3)
-                        return {"'coordinates' property does not match orientation size"};
-                    for (auto &&c : ori)
-                    {
-                        tmp.push_back(c.get<double>());
-                    }
-                    Orientation orientation(tmp.at(0), tmp.at(1), tmp.at(2));
-
-                    result.Coordinates = orientation;
-                }
+                // Canonical inline orientation origins are geometry references,
+                // not Euler-angle triples. Preserve either the nested
+                // {geometry:{...}} form or the old flat literal verbatim; the
+                // editable Python planner resolves and interprets it.
+                if (!obj["geometry"].is<picojson::object>() &&
+                    !obj["geometry_type"].is<std::string>())
+                    return {"vehicle_orientation_origin must contain feature_id or inline geometry"};
             }
             return {result};
         };
@@ -244,6 +231,8 @@ namespace c2_msgs::json
         // From cpp objects to Json
         picojson::object ToJson() const
         {
+            if (!this->Raw.empty())
+                return this->Raw;
             picojson::object result;
             std::string err;
             // Feature_id
@@ -284,7 +273,7 @@ namespace c2_msgs::json
     class MissionStart
     {
     public:
-        MissionGeometry Geometry;
+        std::optional<MissionGeometry> Geometry;
         std::optional<double> ToleranceDistance;
         std::optional<json::enums::VehicleFormation> VehicleFormation;
         std::optional<double> VehicleFormationDistance;
@@ -299,15 +288,17 @@ namespace c2_msgs::json
             if (obj.empty())
                 return {"start property is empty"};
 
-            // Geometry
-            if (!obj["geometry"].is<picojson::object>())
-                return {"geometry property is empty!"};
-
-            auto geometry = MissionGeometry::FromJson(obj["geometry"].get<picojson::object>());
-            if (!geometry.Success)
-                return {"error in 'start.geometry' property: " + geometry.Log};
-
-            result.Geometry = geometry.Result.value();
+            // Geometry is optional: a start containing only start_time means
+            // the vehicles' current positions, as specified by the ICD.
+            if (!obj["geometry"].is<picojson::null>())
+            {
+                if (!obj["geometry"].is<picojson::object>())
+                    return {"start.geometry property is not an object"};
+                auto geometry = MissionGeometry::FromJson(obj["geometry"].get<picojson::object>());
+                if (!geometry.Success)
+                    return {"error in 'start.geometry' property: " + geometry.Log};
+                result.Geometry = geometry.Result.value();
+            }
 
             // Tolerance distance
             if (!obj["tolerance_distance"].is<picojson::null>()) // optional parameter
@@ -379,7 +370,8 @@ namespace c2_msgs::json
             std::string err;
 
             // Geometry
-            result["geometry"] = picojson::value(this->Geometry.ToJson());
+            if (this->Geometry.has_value())
+                result["geometry"] = picojson::value(this->Geometry.value().ToJson());
 
             if (this->ToleranceDistance.has_value())
             {
@@ -466,7 +458,7 @@ namespace c2_msgs::json
             {
                 if (!obj["minimum_distance"].is<double>())
                     return {"'minimum_distance' property not defined as a double"};
-                result.MinimumDistance.value() = obj["minimum_distance"].get<double>();
+                result.MinimumDistance = obj["minimum_distance"].get<double>();
             }
 
             // Max distance - Optional
@@ -474,7 +466,7 @@ namespace c2_msgs::json
             {
                 if (!obj["maximum_distance"].is<double>())
                     return {"'maximum_distance' property not defined as a double"};
-                result.MaximumDistance.value() = obj["maximum_distance"].get<double>();
+                result.MaximumDistance = obj["maximum_distance"].get<double>();
             }
 
             // Vehicle formation - Optional
@@ -490,7 +482,7 @@ namespace c2_msgs::json
             {
                 if (!obj["vehicle_formation_distance"].is<double>())
                     return {"'vehicle_formation_distance' property not defined as a double"};
-                result.VehicleFormationDistance.value() = obj["vehicle_formation_distance"].get<double>();
+                result.VehicleFormationDistance = obj["vehicle_formation_distance"].get<double>();
             }
 
             // vehicle orientation - array of three number
@@ -516,6 +508,8 @@ namespace c2_msgs::json
                 if (!obj["vehicle_orientation_origin"].is<picojson::object>())
                     return {"'vehicle_orientation_origin' property is not define as an object"};
                 auto vehicle_orientation_origin = VehicleOrientationOrigin::FromJson(obj["vehicle_orientation_origin"].get<picojson::object>());
+                if (!vehicle_orientation_origin.Success)
+                    return {"Error in 'vehicle_orientation_origin' property: " + vehicle_orientation_origin.Log};
                 result.VehicleOrientationOri = vehicle_orientation_origin.Result.value();
             }
 
@@ -671,7 +665,7 @@ namespace c2_msgs::json
                 {
                     distances.push_back(picojson::value(dist));
                 }
-                result["MaximizeCoverageDistances"] = picojson::value(distances);
+                result["maximize_coverage_distances"] = picojson::value(distances);
             }
             return result;
         };
@@ -974,6 +968,7 @@ namespace c2_msgs::json
     class MissionConfig
     {
     public:
+        picojson::object Original;
         std::string MissionId;
         json::enums::Behavior Behavior;
         std::vector<std::string> Vehicles;
@@ -998,6 +993,7 @@ namespace c2_msgs::json
 
             if (obj.empty())
                 return {"Config is empty"};
+            result.Original = obj;
 
             // Mission Id property
             if (!obj["mission_id"].is<picojson::null>())
@@ -1011,10 +1007,10 @@ namespace c2_msgs::json
             // Behavior property
             if (obj["behavior"].is<picojson::null>())
                 result.Behavior = json::enums::Behavior::NAVIGATE;
-            // return {"'behavior' property is empty!"};
-            if (!obj["behavior"].is<double>())
+            else if (!obj["behavior"].is<double>())
                 return {"'behavior is not defined as a number"};
-            result.Behavior = json::enums::Behavior(obj["behavior"].get<double>());
+            else
+                result.Behavior = json::enums::Behavior(obj["behavior"].get<double>());
 
             // Vehicle property
             if (!obj["vehicles"].is<picojson::array>())
@@ -1063,7 +1059,11 @@ namespace c2_msgs::json
 
         picojson::object ToJson() const
         {
-            picojson::object result;
+            // Keep all adapter-normalized mission intent across the inherited
+            // C++ validation hop. ROS message layouts remain unchanged; only
+            // the JSON stored in MongoDB and sent to Planner retains fields
+            // such as phase, swath hints, timing, formation and LOS metadata.
+            picojson::object result = this->Original;
 
             picojson::array vehiclesJson;
             for (auto &&vehicle : this->Vehicles)
@@ -1073,11 +1073,14 @@ namespace c2_msgs::json
             result["vehicles"] = picojson::value(vehiclesJson);
             result["mission_id"] = picojson::value(this->MissionId);
             result["behavior"] = picojson::value(static_cast<double>(this->Behavior));
-            result["objective"] = picojson::value(this->Objective.ToJson());
-            if (this->Start.has_value())
-                result["start"] = picojson::value(this->Start.value().ToJson());
-            if (this->Transit.has_value())
-                result["transit"] = picojson::value(this->Transit.value().ToJson());
+            if (this->Original.empty())
+            {
+                result["objective"] = picojson::value(this->Objective.ToJson());
+                if (this->Start.has_value())
+                    result["start"] = picojson::value(this->Start.value().ToJson());
+                if (this->Transit.has_value())
+                    result["transit"] = picojson::value(this->Transit.value().ToJson());
+            }
 
             return result;
         };

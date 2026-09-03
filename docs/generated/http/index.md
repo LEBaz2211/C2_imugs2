@@ -9,7 +9,7 @@ FastAPI routes and matching frontend calls found in source, grouped by HTTP meth
 
 | Extracted group | Contracts |
 |---|---:|
-| [DELETE](methods/delete.md) | 3 |
-| [GET](methods/get.md) | 16 |
-| [POST](methods/post.md) | 10 |
-| [PUT](methods/put.md) | 1 |
+| [DELETE](methods/delete.md) | 7 |
+| [GET](methods/get.md) | 19 |
+| [POST](methods/post.md) | 12 |
+| [PUT](methods/put.md) | 4 |

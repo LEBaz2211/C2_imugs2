@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "30000000-0000-4000-8000-000000000003",
+  "required_capabilities": ["casualty_transport"],
+  "phase": 3,
+  "name": "ICD 3.3 — CASEVAC to safe location",
+  "behavior": 0,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002"],
+  "transit": {"optimalization": {"visibility": 0}, "vehicle_constraints": {"max_speed": 2, "max_acceleration": 0.5, "max_jerk": 0.3, "max_deceleration": 0.3, "max_straight_slope": 30, "max_side_slope": 10}},
+  "objective": {"geometry": {"geometry_type": "Point", "coordinates": [4.3985, 50.8440]}},
+  "payload_action": {"type": "dropoff", "payload": "casualty"}
+}

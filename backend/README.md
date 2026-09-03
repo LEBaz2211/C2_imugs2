@@ -11,7 +11,7 @@ target.
 
 The fork started from the tracked runtime source in `legacy_ros/`, including
 its MapDB startup seed, planner readiness/error handling, route-failure
-safeguards, bidirectional local roads, scenario activation parameters, and
+safeguards, bidirectional local roads, map-snapshot parameters, and
 graph-connection settings. That relationship is historical provenance, not an
 ongoing synchronization contract. `backend/` is now the only writable ROS
 backend source; `legacy_ros/` must remain unchanged. See

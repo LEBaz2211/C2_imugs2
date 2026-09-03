@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "60000000-0000-4000-8000-000000000001",
+  "phase": 1,
+  "name": "ICD 6 — patrol roads inside mission area",
+  "behavior": 1,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002", "fcee3176-50f6-11ec-bf63-0242ac130002", "a18d27fc-50f6-11ec-bf63-0242ac130055", "5caeb16f-58d6-4346-b198-ad16e32d11ca"],
+  "transit": {"optimalization": {"road_usage": 1}},
+  "objective": {"geometry": {"geometry_type": "Polygon", "coordinates": [[4.3920, 50.8445], [4.3970, 50.8445], [4.3970, 50.8475], [4.3920, 50.8475], [4.3920, 50.8445]]}}
+}

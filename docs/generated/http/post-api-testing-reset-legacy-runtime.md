@@ -18,9 +18,9 @@ FastAPI handler `reset_legacy_runtime`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by reset_legacy_runtime | `—` | [`src/c2_imugs2/api/app.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L256) |
-| resetLegacyRuntime | `—` | [`frontend/src/api.ts:623`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L623) |
+| handled by reset_legacy_runtime | `—` | [`src/c2_imugs2/api/app.py:254`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L254) |
+| resetLegacyRuntime | `—` | [`frontend/src/api.ts:682`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L682) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/app.py:256`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L256)
+- [`src/c2_imugs2/api/app.py:254`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L254)

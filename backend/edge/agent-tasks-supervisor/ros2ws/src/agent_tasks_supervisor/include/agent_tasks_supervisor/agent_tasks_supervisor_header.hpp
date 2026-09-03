@@ -15,6 +15,7 @@
 #include <rclcpp/callback_group.hpp>
 
 #include <chrono> // to use sleep_for
+#include <cmath>
 #include <unistd.h> // to use sleep
  #include <numeric> // to use accumulate and reduce function (compute average)
 #include <cctype> // to use lowercase transformation
@@ -218,8 +219,8 @@ private:
   float _current_speed = 0;
   nlohmann::json agent_profile;
   float _max_speed_limit = 10;
-  float _distance_to_objective;
-  float _remaining_time_to_objective;
+  float _distance_to_objective = 0;
+  float _remaining_time_to_objective = 0;
 
 
   // Task Management
@@ -246,8 +247,8 @@ private:
 
   
   // Speed control
-  float _target_average_speed;
-  float _required_speed;
+  float _target_average_speed = 0;
+  float _required_speed = 0;
   int _count_of_previous_speeds = 0;
   float _sum_of_previous_speeds = 0;
   std::vector<float> previous_speeds_list;

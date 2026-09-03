@@ -18,9 +18,9 @@ FastAPI handler `forget`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| forgetMission | `—` | [`frontend/src/api.ts:643`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L643) |
-| handled by forget | `—` | [`src/c2_imugs2/api/routers.py:238`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L238) |
+| forgetMission | `—` | [`frontend/src/api.ts:702`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L702) |
+| handled by forget | `—` | [`src/c2_imugs2/api/routers.py:249`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L249) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:238`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L238)
+- [`src/c2_imugs2/api/routers.py:249`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L249)

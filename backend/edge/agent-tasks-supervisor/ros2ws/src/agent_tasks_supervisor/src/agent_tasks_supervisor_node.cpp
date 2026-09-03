@@ -442,7 +442,7 @@ void AgentTaskSupervisorNode::_objectiveControl_timer_callback()
 bool AgentTaskSupervisorNode::_check_if_primitive_completed(Primitive* prim, bool is_last_objective)
 {
   bool primitive_completed = prim->status == autonomy_msgs::msg::AutonomyPrimitiveStatus::COMPLETED;
-  if (!primitive_completed && prim->type == "waypoint") 
+  if (prim->type == "waypoint")
   { 
     // Check if parsing valid
     bool valid_waypoint = prim->parameters.contains("coordinates") && prim->parameters["coordinates"].is_array() && prim->parameters["coordinates"].size() >= 2;
@@ -488,6 +488,27 @@ bool AgentTaskSupervisorNode::_check_if_primitive_completed(Primitive* prim, boo
             }
             break;
     }
+    // A robot that reaches the final coordinate early waits there until the
+    // canonical arrival window opens.  Expired ICD example timestamps remain
+    // immediately executable.
+    if (primitive_completed && is_last_objective &&
+        prim->parameters.contains("arrival_time") &&
+        prim->parameters["arrival_time"].is_object())
+    {
+      const auto& arrival_time = prim->parameters["arrival_time"];
+      if (arrival_time.contains("earliest") && arrival_time["earliest"].is_string())
+      {
+        const time_t earliest = Isotime::FromIso8601(
+          arrival_time["earliest"].get<std::string>());
+        const time_t now = std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::now());
+        if (difftime(earliest, now) > 0)
+        {
+          primitive_completed = false;
+          prim->status = autonomy_msgs::msg::AutonomyPrimitiveStatus::ACTIVE;
+        }
+      }
+    }
     // Force primitive status to be completed
     if (primitive_completed){prim->status = autonomy_msgs::msg::AutonomyPrimitiveStatus::COMPLETED;};
   }
@@ -516,6 +537,44 @@ void AgentTaskSupervisorNode::_switch_to_next_objective()
 void AgentTaskSupervisorNode::_task_completed()
 {
   RCLCPP_WARN(this->get_logger(), "TASK COMPLETED");
+  if (!this->_current_task.objectives.empty())
+  {
+    Objective& objective = this->_current_task.objectives.back();
+    GoalNode* goal = objective.current_goal;
+    if (goal != nullptr)
+    {
+      for (const auto& [primitive_id, primitive] : goal->primitives)
+      {
+        (void)primitive_id;
+        if (!primitive->parameters.contains("payload_action") ||
+            !primitive->parameters["payload_action"].is_object())
+        {
+          continue;
+        }
+        const auto& action = primitive->parameters["payload_action"];
+        const std::string action_type = action.value("type", "");
+        const std::string payload = action.value("payload", "");
+        if (action_type == "pickup")
+        {
+          this->agent_profile["payload_state"] = {
+            {"loaded", true},
+            {"payload", payload}
+          };
+        }
+        else if (action_type == "dropoff")
+        {
+          this->agent_profile["last_delivery"] = {
+            {"payload", payload},
+            {"completed", true}
+          };
+          this->agent_profile["payload_state"] = {
+            {"loaded", false},
+            {"payload", ""}
+          };
+        }
+      }
+    }
+  }
   this->_current_task.task_state = 3; // COMPLETED
   // this->_task_received = false;
   this->_autonomy_objective_finished = false; // Reset flag
@@ -569,6 +628,28 @@ void AgentTaskSupervisorNode::_speed_control_timer_callback()
       //   }
       //   break;
     }   
+
+    if (current_primitive->parameters.contains("arrival_time") &&
+        current_primitive->parameters["arrival_time"].is_object())
+    {
+      const auto& arrival_time = current_primitive->parameters["arrival_time"];
+      if (arrival_time.contains("target") && arrival_time["target"].is_string())
+      {
+        const time_t target = Isotime::FromIso8601(
+          arrival_time["target"].get<std::string>());
+        const time_t now = std::chrono::system_clock::to_time_t(
+          std::chrono::system_clock::now());
+        const double remaining_seconds = difftime(target, now);
+        if (remaining_seconds > 0.0 && this->_distance_to_objective > 0.0f)
+        {
+          const float arrival_speed = static_cast<float>(
+            this->_distance_to_objective / remaining_seconds);
+          this->_required_speed = std::min(
+            this->_max_speed_limit,
+            std::max(0.01f, arrival_speed));
+        }
+      }
+    }
   } 
   
 }
@@ -740,8 +821,12 @@ void AgentTaskSupervisorNode::_vehicle_profile_subscriber_callback(const autonom
   this->agent_profile["vehicle_constraints"] = vehicle_constraints;
   this->agent_profile["vehicle_info"] = vehicle_info;
 
-  this->_max_speed_limit = 5;
-  this->agent_profile["vehicle_constraints"]["max_speed"]["linear"]["x"];
+  const float reported_max_speed =
+    this->agent_profile["vehicle_constraints"]["max_speed"]["linear"]["x"].get<float>();
+  if (std::isfinite(reported_max_speed) && reported_max_speed > 0.0f)
+  {
+    this->_max_speed_limit = reported_max_speed;
+  }
 
 }
     
@@ -780,6 +865,21 @@ void AgentTaskSupervisorNode::_addTaskService_callback(
     this->_current_task.override = request->override;
     
     nlohmann::json task_config_json = nlohmann::json::parse(request->task_config);
+
+    // The inherited AddTask service has no dedicated time fields, so the
+    // planner carries the canonical start window in task_config JSON.
+    this->_current_task_std = std::chrono::system_clock::to_time_t(
+      std::chrono::system_clock::now());
+    if (task_config_json.contains("start_time") &&
+        task_config_json["start_time"].is_object())
+    {
+      const auto& start_time = task_config_json["start_time"];
+      if (start_time.contains("earliest") && start_time["earliest"].is_string())
+      {
+        this->_current_task_std = Isotime::FromIso8601(
+          start_time["earliest"].get<std::string>());
+      }
+    }
 
     // Create new Task instance
     Task new_task(request->task_id, request->task_type, request->override);
@@ -885,7 +985,11 @@ void AgentTaskSupervisorNode::_addTaskService_callback(
     // Assign new task
     this->_current_task = std::move(new_task);
     this->_task_received = true;
-    this->_start_time_passed = !this->_use_start_time;
+    this->_start_time_passed = !this->_use_start_time ||
+      difftime(
+        this->_current_task_std,
+        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now())
+      ) <= 0;
 
     response->task_id = this->_current_task.task_id;
     response->task_state = 0; // Pending

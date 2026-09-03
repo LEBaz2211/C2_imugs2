@@ -90,14 +90,15 @@ def picture_materializer(
     )
 
 
-SCENARIO_BINDING = {
-    "scenario_id": "scenario-a",
-    "version": "v1",
-    "map_collection": "scenario_scenario_a_v1",
+WORLD_BINDING = {
+    "world_id": "world-a",
+    "world_version": "v1",
+    "deployment_id": "deployment-a",
+    "map_collection": "world_world_a_v1",
     "content_hash": "content-a",
     "map_feature_hash": "features-a",
-    "activation_id": "activation-a",
-    "activation_token": "token-a",
+    "launch_id": "launch-a",
+    "map_snapshot_token": "token-a",
     "status": "ready",
     "ready": True,
 }
@@ -126,35 +127,21 @@ PARADE_MAP_FEATURE = {
     "source_id": "MapDB.active",
 }
 
-OPERATOR_OBJECTIVE = {
-    "feature_id": "entry-1",
-    "name": "Entry 1",
-    "feature_type": "objective",
-    "geometry": {
-        "geometry_type": "Point",
-        "coordinates": [4.3932479, 50.8445956],
-    },
-    "active_map_asset": False,
-    "usage": "inline_geometry_only",
-    "source_id": "adapter.operator_objectives",
-}
-
-
-def scenario_picture_materializer(
+def world_picture_materializer(
     current: OperationalPicture | None, update: int
 ) -> OperationalPicture:
     observed_at = BASE_TIME + timedelta(seconds=update)
     empty = OperationalReadModel.empty(observed_at)
     sections = dict(empty.sections)
-    sections["scenario"] = OperationalSection(
+    sections["world"] = OperationalSection(
         metadata=SectionMetadata(observed_at, Freshness.FRESH),
         items={
-            "scenario-a@v1": OperationalItem(
-                "scenario-a@v1",
-                "active_scenario",
+            "world-a@v1": OperationalItem(
+                "world-a@v1",
+                "active_world",
                 observed_at,
                 Freshness.FRESH,
-                SCENARIO_BINDING,
+                WORLD_BINDING,
             )
         },
     )
@@ -165,7 +152,7 @@ def scenario_picture_materializer(
             sections=sections,
             sources=empty.sources,
         ),
-        picture_revision=f"scenario-runtime:{update}",
+        picture_revision=f"world-runtime:{update}",
     )
 
 
@@ -175,34 +162,26 @@ def map_feature_picture_materializer(
     observed_at = BASE_TIME + timedelta(seconds=update)
     empty = OperationalReadModel.empty(observed_at)
     sections = dict(empty.sections)
-    sections["scenario"] = OperationalSection(
+    sections["world"] = OperationalSection(
         metadata=SectionMetadata(observed_at, Freshness.FRESH),
         items={
-            "scenario-a@v1": OperationalItem(
-                "scenario-a@v1",
-                "active_scenario",
+            "world-a@v1": OperationalItem(
+                "world-a@v1",
+                "active_world",
                 observed_at,
                 Freshness.FRESH,
                 {
-                    **SCENARIO_BINDING,
+                    **WORLD_BINDING,
                     "map": "rma",
                     "feature_count": 1,
                     "road_count": 0,
                     "map_features": [PARADE_MAP_FEATURE],
-                    "operator_objectives": [OPERATOR_OBJECTIVE],
                     "map_feature_observation": {
                         "freshness": "fresh",
                         "returned_count": 1,
                         "feature_limit": 64,
                         "geometry_coordinate_limit": 128,
                         "truncated": False,
-                    },
-                    "operator_objective_observation": {
-                        "freshness": "fresh",
-                        "returned_count": 1,
-                        "feature_limit": 64,
-                        "truncated": False,
-                        "usage": "inline Point mission geometry only",
                     },
                 },
             )
@@ -215,7 +194,7 @@ def map_feature_picture_materializer(
             sections=sections,
             sources=empty.sources,
         ),
-        picture_revision=f"scenario-runtime:{update}",
+        picture_revision=f"world-runtime:{update}",
     )
 
 
@@ -428,20 +407,20 @@ def test_response_carries_binding_from_the_exact_picture_sent_to_the_model() -> 
         context=context,
         model=LangChainOpenAIProvider(settings, model=model),
         settings=settings,
-        picture_materializer=scenario_picture_materializer,
+        picture_materializer=world_picture_materializer,
     )
 
     response = assistant.chat(conversation_id="binding", user_message="draft")
 
-    assert response.picture_revision == "scenario-runtime:1"
-    assert response.picture_scenario_binding is not None
-    assert response.picture_scenario_binding.model_dump() == SCENARIO_BINDING
+    assert response.picture_revision == "world-runtime:1"
+    assert response.picture_world_binding is not None
+    assert response.picture_world_binding.model_dump() == WORLD_BINDING
     serialized_request = "\n".join(
         str(message.content) for message in model.invocations[0]
     )
     assert '"current_environment"' in serialized_request
-    assert '"activation_token"' not in serialized_request
-    assert '"scenario_id"' not in serialized_request
+    assert '"map_snapshot_token"' not in serialized_request
+    assert '"world_id"' not in serialized_request
     assert '"map_collection"' not in serialized_request
     assert '"content_hash"' not in serialized_request
     assert '"map_feature_hash"' not in serialized_request
@@ -464,8 +443,8 @@ def test_model_messages_include_exact_active_map_feature_without_internal_bindin
         debug=True,
     )
 
-    assert response.picture_scenario_binding is not None
-    assert response.picture_scenario_binding.activation_token == "token-a"
+    assert response.picture_world_binding is not None
+    assert response.picture_world_binding.map_snapshot_token == "token-a"
     assert response.debug_trace is not None
     assert response.debug_trace["model_messages"] == [
         {
@@ -481,22 +460,16 @@ def test_model_messages_include_exact_active_map_feature_without_internal_bindin
     assert projected_feature == {
         key: value for key, value in PARADE_MAP_FEATURE.items() if key != "source_id"
     }
-    assert model_picture["current_environment"]["operator_objectives"] == [
-        {
-            key: value
-            for key, value in OPERATOR_OBJECTIVE.items()
-            if key != "source_id"
-        }
-    ]
+    assert "operator_objectives" not in model_picture["current_environment"]
     serialized_picture = json.dumps(model_picture, sort_keys=True)
     for internal_key in (
-        "scenario_id",
+        "world_id",
         "version",
         "map_collection",
         "content_hash",
         "map_feature_hash",
-        "activation_id",
-        "activation_token",
+        "launch_id",
+        "map_snapshot_token",
         "source_id",
     ):
         assert f'"{internal_key}"' not in serialized_picture
@@ -545,6 +518,71 @@ def test_model_operational_picture_applies_section_and_browser_mission_selection
     assert projected["context_selection"]["item_filters"] == {
         "missions": ["mission-visible"]
     }
+
+
+def test_exclude_paths_trim_the_model_context_without_touching_protected_keys() -> None:
+    settings = AssistantSettings()
+    assistant = AssistantOrchestrator(
+        context=RevisionContext(),
+        model=LangChainOpenAIProvider(settings, model=FakeChatModel(['{"answer":"ok"}'])),
+        settings=settings,
+        picture_materializer=map_feature_picture_materializer,
+    )
+    picture = map_feature_picture_materializer(None, 1)
+
+    projected = assistant._model_operational_picture(  # noqa: SLF001
+        picture,
+        {
+            "sections": [],
+            "exclude_paths": [
+                "current_environment.map_features[*].geometry",
+                "current_environment.map_feature_observation",
+                "picture_revision",
+                "context_selection",
+            ],
+        },
+    )
+
+    assert projected["picture_revision"] == "world-runtime:1"
+    assert "context_selection" not in projected
+    environment = projected["current_environment"]
+    assert "geometry" not in environment["map_features"][0]
+    assert environment["map_features"][0]["name"] == "parade"
+    assert "operator_objectives" not in environment
+    assert "map_feature_observation" not in environment
+
+    with pytest.raises(AssistantInputError, match="exclude path"):
+        assistant._model_operational_picture(  # noqa: SLF001
+            picture,
+            {"sections": [], "exclude_paths": ["current_environment.bad[key"]},
+        )
+
+
+def test_operational_picture_preview_clears_exclude_paths_for_available_view() -> None:
+    settings = AssistantSettings()
+    model = FakeChatModel(['{"answer":"must not be used"}'])
+    assistant = AssistantOrchestrator(
+        context=RevisionContext(),
+        model=LangChainOpenAIProvider(settings, model=model),
+        settings=settings,
+        picture_materializer=map_feature_picture_materializer,
+    )
+
+    preview = assistant.preview_operational_picture(
+        {
+            "sections": ["agents"],
+            "exclude_paths": ["current_environment.map_features[*].geometry"],
+        }
+    )
+
+    assert model.invocations == []
+    selected = preview["operational_picture"]
+    available = preview["available_operational_picture"]
+    assert "geometry" not in selected["current_environment"]["map_features"][0]
+    assert "geometry" in available["current_environment"]["map_features"][0]
+    assert selected["context_selection"]["excluded_paths"] == [
+        "current_environment.map_features[*].geometry"
+    ]
 
 
 def test_operational_picture_preview_uses_same_projection_without_model_call() -> None:
@@ -607,7 +645,7 @@ def test_debug_messages_match_the_request_and_never_include_credentials(
     response = assistant.chat(
         conversation_id="secrets",
         user_message=(
-            f"Discuss the scenario. api_key={secret} "
+            f"Discuss the world. api_key={secret} "
             "Authorization: Bearer another-secret-value"
         ),
         debug=True,
@@ -630,7 +668,7 @@ def test_debug_messages_match_the_request_and_never_include_credentials(
     assert secret not in serialized
     assert "another-secret-value" not in serialized
     assert "Authorization" not in serialized
-    assert "Discuss the scenario" in str(model.invocations[0][-1].content)
+    assert "Discuss the world" in str(model.invocations[0][-1].content)
 
 
 def test_orchestrator_materializes_real_operational_context_deltas() -> None:
@@ -902,8 +940,8 @@ def test_v1_prompt_is_capability_accurate_and_structured() -> None:
     assert "backend/" not in bundle.system
     assert "legacy_ros/" not in bundle.system
     assert "set `mission_id` to the empty string" in bundle.mission_contract
-    assert "current_environment.operator_objectives" in bundle.system
-    assert "never put its `feature_id`" in bundle.mission_contract
+    assert "current_environment.map_features" in bundle.system
+    assert "prior world" in bundle.mission_contract
     assert "<example>" in bundle.examples
 
 

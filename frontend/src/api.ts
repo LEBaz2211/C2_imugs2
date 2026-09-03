@@ -19,6 +19,7 @@ export type CreatedMapFeature = {
 
 export type DeletedMapFeature = {
   deleted_feature_id: string;
+  world?: WorldCatalogEntry | null;
   geojson: FeatureCollection;
   map_features: MapFeature[];
 };
@@ -43,18 +44,12 @@ export type QueriedOsmRoads = {
   persisted: false;
 };
 
-export type ScenarioLaunchRequest = {
-  scenario_id: string;
-  name: string;
-  map: string;
-  notes?: string;
-  agents: Agent[];
-  feature_ids: string[];
-  road_imports?: unknown[];
+export type WorldLaunchRequest = {
+  revision: number;
 };
 
-export type ScenarioCatalogEntry = {
-  scenario_id: string;
+export type WorldCatalogEntry = {
+  world_id: string;
   name: string;
   map: string;
   notes: string;
@@ -69,30 +64,38 @@ export type ScenarioCatalogEntry = {
     geojson: FeatureCollection;
     created_at: string;
   }[];
-  version: string;
-  map_collection: string;
-  feature_count: number;
-  road_count: number;
-  runtime_active: boolean;
-  runtime_status: string;
+  map_view?: { center: LonLat; zoom: number } | null;
+  revision: number;
+  map_collection?: string;
+  feature_count?: number;
+  road_count?: number;
+  runtime_active?: boolean;
+  runtime_status?: string;
   created_at: string;
   updated_at: string;
 };
 
-export type ScenarioLaunchResult = {
-  status: "inactive" | "activating" | "ready" | "failed" | string;
+export type WorldLaunchResult = {
+  status: "inactive" | "launching" | "ready" | "failed" | "stale" | string;
   ready: boolean;
   message: string;
   error?: string;
   docker_started?: boolean;
-  scenario_id?: string;
+  world_id?: string;
   name?: string;
-  version?: string;
+  world_version?: string;
+  definition_revision?: number;
+  launch_id?: string;
+  deployment_id?: string;
+  map_snapshot_token?: string;
   map_collection?: string;
+  content_hash?: string;
+  map_feature_hash?: string;
   feature_count?: number;
   road_count?: number;
   feature_ids?: string[];
   agents?: Agent[];
+  map_view?: { center: LonLat; zoom: number } | null;
   containers?: {
     agent_id: string;
     name: string;
@@ -103,6 +106,8 @@ export type ScenarioLaunchResult = {
   host_command?: string;
   started_containers?: string[];
   docker_error?: string;
+  snapshot?: FeatureCollection;
+  live_features?: FeatureCollection;
 };
 
 export type MissionState = {
@@ -125,6 +130,15 @@ export type MissionState = {
   planned_paths?: Record<string, LonLat[]>;
   feedback?: Record<string, unknown>;
   config?: MissionConfig;
+  world_id?: string;
+  world_version?: string;
+  deployment_id?: string;
+  map_collection?: string;
+  content_hash?: string;
+  map_feature_hash?: string;
+  launch_id?: string;
+  map_snapshot_token?: string;
+  world_binding?: WorldBinding;
   adapter_adjustments?: {
     type: string;
     field?: string;
@@ -160,12 +174,12 @@ export type PlanningDiagnostics = {
   checks: { id: string; status: "ok" | "error"; message: string }[];
   summary?: Record<string, unknown>;
   interpretation?: string[];
-  scenario_analysis?: PlanningScenarioAnalysis;
+  variant_analysis?: PlanningVariantAnalysis;
   adapter?: unknown;
   legacy_mongo?: unknown;
 };
 
-export type PlanningScenarioAnalysis = {
+export type PlanningVariantAnalysis = {
   status: string;
   inputs?: {
     agent_id?: string;
@@ -176,11 +190,11 @@ export type PlanningScenarioAnalysis = {
   };
   model?: Record<string, unknown>;
   graph_summaries?: Record<string, unknown>;
-  scenarios?: PlanningScenario[];
+  variants?: PlanningVariant[];
   notes?: string[];
 };
 
-export type PlanningScenario = {
+export type PlanningVariant = {
   id: string;
   label: string;
   status: string;
@@ -231,7 +245,7 @@ export type ContractEdge = {
   notes?: string[];
 };
 
-export type ContractScenarioStage = {
+export type ContractWorkflowStage = {
   id: string;
   label: string;
   component: string;
@@ -241,11 +255,11 @@ export type ContractScenarioStage = {
   notes?: string[];
 };
 
-export type ContractScenario = {
+export type ContractWorkflow = {
   id: string;
   label: string;
   summary: string;
-  stages: ContractScenarioStage[];
+  stages: ContractWorkflowStage[];
   risks?: string[];
 };
 
@@ -352,7 +366,7 @@ export type ContractGraph = {
   summary: {
     nodes: number;
     edges: number;
-    scenarios: number;
+    workflows: number;
     by_layer?: Record<string, number>;
     by_kind?: Record<string, number>;
   };
@@ -365,7 +379,7 @@ export type ContractGraph = {
   layers: { id: string; label: string }[];
   nodes: ContractNode[];
   edges: ContractEdge[];
-  scenarios: ContractScenario[];
+  workflows: ContractWorkflow[];
   atlas: ContractAtlas;
   runtime?: {
     ros_nodes?: string[];
@@ -453,22 +467,25 @@ export type AssistantMissionProposalIssue = {
   message: string;
 };
 
-export type AssistantScenarioBinding = {
-  scenario_id: string | null;
-  version: string | null;
+export type WorldBinding = {
+  world_id: string | null;
+  world_version: string | null;
+  deployment_id: string | null;
   map_collection: string | null;
   content_hash: string | null;
   map_feature_hash: string | null;
-  activation_id: string | null;
-  activation_token: string | null;
+  launch_id: string | null;
+  map_snapshot_token: string | null;
   status: string | null;
   ready: boolean;
 };
 
+export type AssistantWorldBinding = WorldBinding;
+
 export type AssistantMissionProposalValidation = {
   valid: boolean;
   scope: string;
-  scenario_binding?: AssistantScenarioBinding;
+  world_binding?: AssistantWorldBinding;
   issues: AssistantMissionProposalIssue[];
   command_ready?: boolean;
   command_issues?: AssistantMissionProposalIssue[];
@@ -488,6 +505,7 @@ export type AssistantOperationalPictureOptions = {
   mission_ids?: string[] | null;
   operator_missions?: MissionConfig[];
   item_ids?: Partial<Record<AssistantOperationalPictureSection, string[]>>;
+  exclude_paths?: string[];
 };
 
 export type AssistantOperationalPicturePreview = {
@@ -548,7 +566,7 @@ export type AssistantMessageResponse = {
   answer: string;
   picture_revision: string;
   picture_observed_at: string;
-  picture_scenario_binding?: AssistantScenarioBinding | null;
+  picture_world_binding?: AssistantWorldBinding | null;
   prompt_version: string;
   assumptions: string[];
   warnings: string[];
@@ -572,27 +590,92 @@ export async function getOsmRoads(mapName = "rma"): Promise<FeatureCollection> {
 }
 
 export async function queryOsmRoads(request: OsmRoadImportRequest, mapName = "rma"): Promise<QueriedOsmRoads> {
-  return postJson(`/api/map/osm-roads/query?map=${encodeURIComponent(mapName)}`, request);
+  throw new Error(`Road imports require a saved world (${mapName}, ${request.bbox.join(",")})`);
 }
 
-export async function launchScenario(request: ScenarioLaunchRequest): Promise<ScenarioLaunchResult> {
-  return postJson("/api/scenarios/activate", request);
+export async function launchWorld(worldId: string, request: WorldLaunchRequest): Promise<WorldLaunchResult> {
+  return postJson(`/api/worlds/${encodeURIComponent(worldId)}/launch`, request);
 }
 
-export async function getActiveScenario(): Promise<ScenarioLaunchResult> {
-  return getJson("/api/scenarios/active");
+export async function getActiveWorld(): Promise<WorldLaunchResult> {
+  return getJson("/api/worlds/active");
 }
 
-export async function getScenarios(): Promise<{ scenarios: ScenarioCatalogEntry[] }> {
-  return getJson("/api/scenarios");
+export async function getWorlds(): Promise<{ worlds: WorldCatalogEntry[] }> {
+  return getJson("/api/worlds");
+}
+
+export async function createWorld(definition: Omit<WorldCatalogEntry, "world_id" | "revision" | "created_at" | "updated_at">): Promise<WorldCatalogEntry> {
+  return postJson("/api/worlds", definition);
+}
+
+export async function updateWorld(worldId: string, definition: Partial<WorldCatalogEntry> & { revision: number }): Promise<WorldCatalogEntry> {
+  return putJson(`/api/worlds/${encodeURIComponent(worldId)}`, definition);
+}
+
+export async function deleteWorld(worldId: string): Promise<{ world_id: string; deleted: boolean }> {
+  return deleteJson(`/api/worlds/${encodeURIComponent(worldId)}`);
+}
+
+export async function queryWorldRoadImport(worldId: string, request: OsmRoadImportRequest & { revision: number }): Promise<{ road_import: WorldCatalogEntry["road_imports"][number]; world: WorldCatalogEntry }> {
+  return postJson(`/api/worlds/${encodeURIComponent(worldId)}/road-imports/query`, request);
+}
+
+export async function deleteWorldRoadImport(worldId: string, importId: string, revision: number): Promise<WorldCatalogEntry> {
+  return deleteJson(`/api/worlds/${encodeURIComponent(worldId)}/road-imports/${encodeURIComponent(importId)}?revision=${revision}`);
+}
+
+export type VehicleModelRecord = {
+  model_id: string;
+  label: string;
+  vehicle_type: string;
+  constraints: Agent["constraints"];
+  capabilities: string[];
+  default_name?: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getVehicleModels(): Promise<{ vehicle_models: VehicleModelRecord[] }> {
+  return getJson("/api/vehicle-models");
+}
+
+export async function createVehicleModel(model: Omit<VehicleModelRecord, "model_id" | "revision" | "created_at" | "updated_at">): Promise<VehicleModelRecord> {
+  return postJson("/api/vehicle-models", model);
+}
+
+export async function deleteVehicleModel(modelId: string): Promise<{ model_id: string; deleted: boolean }> {
+  return deleteJson(`/api/vehicle-models/${encodeURIComponent(modelId)}`);
+}
+
+export async function createLiveFeature(feature: FeatureCollection["features"][number]): Promise<FeatureCollection["features"][number]> {
+  return postJson("/api/worlds/active/features", feature);
+}
+
+export async function updateLiveFeature(featureId: string, feature: FeatureCollection["features"][number]): Promise<FeatureCollection["features"][number]> {
+  return putJson(`/api/worlds/active/features/${encodeURIComponent(featureId)}`, feature);
+}
+
+export async function deleteLiveFeature(featureId: string): Promise<{ feature_id: string; deleted: boolean }> {
+  return deleteJson(`/api/worlds/active/features/${encodeURIComponent(featureId)}`);
 }
 
 export async function createMapFeature(feature: FeatureCollection["features"][number], mapName = "rma"): Promise<CreatedMapFeature> {
   return postJson(`/api/map/features?map=${encodeURIComponent(mapName)}`, feature);
 }
 
-export async function deleteMapFeature(featureId: string, mapName = "rma"): Promise<DeletedMapFeature> {
-  return deleteJson(`/api/map/features/${encodeURIComponent(featureId)}?map=${encodeURIComponent(mapName)}`);
+export async function deleteMapFeature(
+  featureId: string,
+  mapName = "rma",
+  worldBinding?: { worldId: string; revision: number },
+): Promise<DeletedMapFeature> {
+  const params = new URLSearchParams({ map: mapName });
+  if (worldBinding) {
+    params.set("world_id", worldBinding.worldId);
+    params.set("revision", String(worldBinding.revision));
+  }
+  return deleteJson(`/api/map/features/${encodeURIComponent(featureId)}?${params}`);
 }
 
 export async function updateMapFeature(featureId: string, feature: FeatureCollection["features"][number], mapName = "rma"): Promise<UpdatedMapFeature> {
@@ -703,9 +786,16 @@ async function responseError(response: Response) {
   try {
     const payload = JSON.parse(body) as { detail?: unknown; message?: unknown };
     const detail = payload.detail ?? payload.message;
-    if (typeof detail === "string" && detail.trim()) return new Error(detail);
+    if (typeof detail === "string" && detail.trim()) return new ApiError(response.status, detail, detail);
+    return new ApiError(response.status, `${response.status} ${response.statusText}`, detail);
   } catch {
     // Fall back to the response body for non-JSON errors.
   }
-  return new Error(body || `${response.status} ${response.statusText}`);
+  return new ApiError(response.status, body || `${response.status} ${response.statusText}`, body);
+}
+
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string, public readonly detail: unknown) {
+    super(message);
+  }
 }

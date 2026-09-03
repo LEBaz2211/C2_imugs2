@@ -37,10 +37,12 @@ When documents disagree, use this order:
 
 | Document | Label | Purpose |
 | --- | --- | --- |
-| [Architecture](ARCHITECTURE.md) | `PRIMARY` | Current runtime, ownership, scenario model, and replacement boundaries |
+| [Architecture](ARCHITECTURE.md) | `PRIMARY` | Current runtime, ownership, world model, and replacement boundaries |
 | [Project Planning](../PROJECT_PLANNING.md) | `CURRENT` | Project priorities and non-negotiable migration rules |
 | [UI to Editable ROS Adapter](UI_BACKEND_LEGACY_ADAPTER.md) | `CURRENT` | Browser-to-adapter-to-ROS integration |
 | [UI to Simulation Interface](UI_SIMULATION_INTERFACE.md) | `CONTRACT` | Stable UI-facing boundary and state semantics |
+| [ICD Mission Examples](ICD_MISSION_EXAMPLES.md) | `CURRENT` | UI example templates, behavior interpretation, world prerequisites, and known limits |
+| [ICD Examples Code Sequence](ICD_EXAMPLES_CODE_SEQUENCE.md) | `CURRENT` | Code-level sequence from example selection through planner and edge execution, with per-example branch mapping |
 | [Editable Runtime Walkthrough](SINGLE_ROBOT_MISSION_CODE_WALKTHROUGH.md) | `NEEDS REVIEW` | Detailed walkthrough pending revalidation against the evolving planner |
 | [LLM Assistant Context Architecture](LLM_ASSISTANT_CONTEXT_ARCHITECTURE.md) | `CURRENT` | Implemented LangChain assistant, operational picture/diffs, active-feature grounding, persistent mission cards, debug behavior, and remaining safety work |
 

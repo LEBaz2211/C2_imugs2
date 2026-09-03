@@ -18,9 +18,9 @@ FastAPI handler `planning_diagnostics`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| getPlanningDiagnostics | `—` | [`frontend/src/api.ts:606`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L606) |
-| handled by planning_diagnostics | `—` | [`src/c2_imugs2/api/app.py:205`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L205) |
+| getPlanningDiagnostics | `—` | [`frontend/src/api.ts:665`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L665) |
+| handled by planning_diagnostics | `—` | [`src/c2_imugs2/api/app.py:203`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L203) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/app.py:205`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L205)
+- [`src/c2_imugs2/api/app.py:203`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/app.py#L203)

@@ -1,4 +1,4 @@
-"""Docker-facing helpers for launching one editable-backend scenario."""
+"""Docker-facing helpers for launching one editable-backend deployment."""
 
 from __future__ import annotations
 
@@ -20,32 +20,32 @@ LOCAL_CYCLONEDDS_URI = (
 )
 
 
-def launch_scenario(
+def launch_deployment(
     repo_root: Path,
     payload: dict[str, Any],
     *,
     host_repo_root: Path | None = None,
     docker_socket: str = "/var/run/docker.sock",
 ) -> dict[str, Any]:
-    scenario_id = _safe_name(str(payload.get("scenario_id") or "scenario"))
+    deployment_id = _safe_name(str(payload.get("deployment_id") or "deployment"))
     agents = payload.get("agents")
     if not isinstance(agents, list) or not agents:
-        raise ValueError("scenario launch requires at least one scenario vehicle")
+        raise ValueError("deployment launch requires at least one deployment vehicle")
 
-    launch_dir = repo_root / "data" / "runtime" / "scenario_launches" / scenario_id
+    launch_dir = repo_root / "data" / "runtime" / "deployment_launches" / deployment_id
     launch_dir.mkdir(parents=True, exist_ok=True)
     host_root = host_repo_root or repo_root
-    host_launch_dir = host_root / "data" / "runtime" / "scenario_launches" / scenario_id
+    host_launch_dir = host_root / "data" / "runtime" / "deployment_launches" / deployment_id
 
     containers = []
     for index, agent in enumerate(agents, start=1):
         if not isinstance(agent, dict):
-            raise ValueError("scenario agents must be objects")
+            raise ValueError("deployment agents must be objects")
         agent_id = _agent_id(agent, index)
         prefix = _topic_prefix(agent, index)
         config_path = launch_dir / f"{prefix}_autonomy.yaml"
         config_path.write_text(_autonomy_config(prefix, agent), encoding="utf-8")
-        container_name = f"c2-imugs2-backend-scenario-{scenario_id}-{_safe_name(agent_id)[:12]}"
+        container_name = f"c2-imugs2-backend-deployment-{deployment_id}-{_safe_name(agent_id)[:12]}"
         containers.append(
             {
                 "agent_id": agent_id,
@@ -58,53 +58,53 @@ def launch_scenario(
             }
         )
 
-    compose_path = launch_dir / "docker-compose.scenario.yml"
+    compose_path = launch_dir / "docker-compose.deployment.yml"
     compose_path.write_text(_compose_yaml(containers, host_root), encoding="utf-8")
     manifest = {
-        "scenario_id": scenario_id,
-        "name": payload.get("name") or scenario_id,
+        "deployment_id": deployment_id,
+        "name": payload.get("name") or deployment_id,
         "agent_count": len(containers),
         "containers": containers,
         "compose_file": str(compose_path),
-        "host_command": f"docker compose -f {host_launch_dir / 'docker-compose.scenario.yml'} up -d",
+        "host_command": f"docker compose -f {host_launch_dir / 'docker-compose.deployment.yml'} up -d",
     }
     (launch_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     result = {
         **manifest,
         "status": "generated",
-        "message": "Scenario launch files generated.",
+        "message": "Deployment launch files generated.",
         "docker_started": False,
         "docker_socket": docker_socket,
     }
     if not Path(docker_socket).exists():
-        result["message"] = "Scenario launch files generated; Docker socket is not available to the API service."
+        result["message"] = "Deployment launch files generated; Docker socket is not available to the API service."
         return result
 
     try:
         started = _start_containers_with_docker_socket(docker_socket, containers, host_root)
     except OSError as exc:
-        result["message"] = f"Scenario launch files generated; Docker start failed: {exc}"
+        result["message"] = f"Deployment launch files generated; Docker start failed: {exc}"
         result["docker_error"] = str(exc)
         return result
 
     result["status"] = "started"
     result["docker_started"] = True
     result["started_containers"] = started
-    result["message"] = f"Started {len(started)} scenario vehicle simulation container(s)."
+    result["message"] = f"Started {len(started)} deployment vehicle simulation container(s)."
     return result
 
 
 def _agent_id(agent: dict[str, Any], index: int) -> str:
     raw = str(agent.get("agent_id") or "").strip()
-    return raw if raw else f"scenario-agent-{index:02d}"
+    return raw if raw else f"deployment-agent-{index:02d}"
 
 
 def _topic_prefix(agent: dict[str, Any], index: int) -> str:
     name = str(agent.get("name") or agent.get("agent_id") or f"vehicle-{index}")
     prefix = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip()).strip("_")
     if not prefix:
-        prefix = f"ScenarioVehicle{index}"
+        prefix = f"DeploymentVehicle{index}"
     if not prefix[0].isalpha():
         prefix = f"Vehicle_{prefix}"
     return prefix[:48]
@@ -112,7 +112,7 @@ def _topic_prefix(agent: dict[str, Any], index: int) -> str:
 
 def _safe_name(value: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-_.").lower()
-    return safe[:48] or "scenario"
+    return safe[:48] or "deployment"
 
 
 def _number(value: Any, default: float) -> float:
@@ -147,7 +147,7 @@ def _autonomy_config(prefix: str, agent: dict[str, Any]) -> str:
 
 
 def _compose_yaml(containers: list[dict[str, Any]], host_root: Path) -> str:
-    services = ["name: c2-imugs2-scenario-launch", "", "services:"]
+    services = ["name: c2-imugs2-deployment-launch", "", "services:"]
     for container in containers:
         service = _safe_name(container["container_name"])
         services.extend(
@@ -220,7 +220,7 @@ def _start_containers_with_docker_socket(socket_path: str, containers: list[dict
             "Image": EDGE_IMAGE,
             "Cmd": ["bash", "-lc", "bash /app/launch_edge_with_autonomy_sim.sh"],
             "Labels": {
-                "c2-imugs2.role": "scenario-agent",
+                "c2-imugs2.role": "deployment-agent",
                 "c2-imugs2.agent-id": container["agent_id"],
             },
             "Env": [

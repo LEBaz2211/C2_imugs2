@@ -78,15 +78,24 @@ void Autonomy::_objective_subscriber_callback(const autonomy_msgs::msg::Autonomy
                 auto parameters = primitive_json["parameters"];
                 if (parameters.contains("coordinates"))
                 {
-          
                     this->_current_arrival_point = parameters.at("coordinates").get<std::vector<float>>();
-                    break; // Stop after the first waypoint found
+                }
+                this->_requested_max_acceleration = parameters.value(
+                    "max_acceleration", 1.0f);
+                this->_requested_max_deceleration = parameters.value(
+                    "max_deceleration", this->_requested_max_acceleration);
+                this->_has_desired_heading = parameters.contains("desired_heading_deg") &&
+                    parameters["desired_heading_deg"].is_number();
+                if (this->_has_desired_heading)
+                {
+                    this->_desired_heading_deg = parameters["desired_heading_deg"].get<float>();
                 }
                 this->_current_primitive_status.primitive_id  = convertStringUuidtoRosUuid(primitive_json["id"]) ;
                 this->_current_primitive_status.primitive_type  = primitive_json["type"] ;
                 this->_current_primitive_status.status  = autonomy_msgs::msg::AutonomyStatus::ACTIVE;
                 
                 this->_autonomy_status.primitive_statuses.push_back(this->_current_primitive_status);
+                break; // Stop after the first waypoint primitive.
             }
         }
 
@@ -213,29 +222,45 @@ void Autonomy::_initVehicleProfile()
 
 void Autonomy::_motion_control_callback()
 {
-    if (!this->_null_objective)
+    if (!this->_null_objective && this->_current_arrival_point.size() >= 2)
     {
-        float long_dist = this->_current_arrival_point[0] - this->_odometry.pose.pose.position.x;
-        float lat_dist = this->_current_arrival_point[1] - this->_odometry.pose.pose.position.y;
-
-        float dist_to_objective;
-        float travel_dist;
-
-        if (this->coordinate_mode == 1)  // Local coordinates mode
+        const double longitude_delta = this->_current_arrival_point[0] - this->_odometry.pose.pose.position.x;
+        const double latitude_delta = this->_current_arrival_point[1] - this->_odometry.pose.pose.position.y;
+        const double mean_latitude_rad =
+            (this->_current_arrival_point[1] + this->_odometry.pose.pose.position.y) *
+            0.5 * M_PI / 180.0;
+        double east_m = longitude_delta;
+        double north_m = latitude_delta;
+        if (this->coordinate_mode == 0)
         {
-            dist_to_objective = std::sqrt(pow(long_dist, 2) + pow(lat_dist, 2));
-            travel_dist = this->_current_objective.max_speed * 0.1;  // dist = speed * time
+            east_m *= 111320.0 * std::cos(mean_latitude_rad);
+            north_m *= 110540.0;
         }
-        else  // Global (GPS) coordinates mode
-        {
-            dist_to_objective = 111000 * std::sqrt(pow(long_dist, 2) + pow(lat_dist, 2));
-            travel_dist = (0.00000901 * this->_current_objective.max_speed) * 0.1; // Convert meters to degrees
-        }
+        const double dist_to_objective = std::hypot(east_m, north_m);
+        const float acceleration = std::max(0.01f, this->_requested_max_acceleration);
+        const float deceleration = std::max(0.01f, this->_requested_max_deceleration);
+        this->_current_speed_mps = std::min(
+            this->_current_objective.max_speed,
+            this->_current_speed_mps + acceleration * 0.1f);
+        const float braking_speed = std::sqrt(
+            std::max(0.0, 2.0 * static_cast<double>(deceleration) * dist_to_objective));
+        this->_current_speed_mps = std::min(this->_current_speed_mps, braking_speed);
+        const double travel_m = std::min(
+            dist_to_objective, static_cast<double>(this->_current_speed_mps) * 0.1);
 
         RCLCPP_INFO(this->get_logger(), "Distance to objective: %f meters", dist_to_objective);
 
         if (dist_to_objective <= this->_objective_distance_tolerance)
         {
+            this->_odometry.pose.pose.position.x = this->_current_arrival_point[0];
+            this->_odometry.pose.pose.position.y = this->_current_arrival_point[1];
+            this->_current_speed_mps = 0.0f;
+            if (this->_has_desired_heading)
+            {
+                const double yaw = (90.0 - this->_desired_heading_deg) * M_PI / 180.0;
+                this->_odometry.pose.pose.orientation.z = std::sin(yaw / 2.0);
+                this->_odometry.pose.pose.orientation.w = std::cos(yaw / 2.0);
+            }
             RCLCPP_INFO(this->get_logger(), " ---------- Objective reached");
             this->_autonomy_status.status = autonomy_msgs::msg::AutonomyStatus::COMPLETED;
             this->_current_primitive_status.status =  autonomy_msgs::msg::AutonomyPrimitiveStatus::COMPLETED;
@@ -243,38 +268,24 @@ void Autonomy::_motion_control_callback()
         else
         {
             this->_autonomy_status.status = autonomy_msgs::msg::AutonomyStatus::ACTIVE;
-
-            float d_long = 0;
-            float d_lat = 0;
-
-            if (fabs(long_dist) <= travel_dist * std::sqrt(2))
+            const double ratio = travel_m / dist_to_objective;
+            const double step_east_m = east_m * ratio;
+            const double step_north_m = north_m * ratio;
+            if (this->coordinate_mode == 0)
             {
-                d_long = 0;
-                d_lat = travel_dist;
-            }
-            if (fabs(lat_dist) <= travel_dist * std::sqrt(2))
-            {
-                d_long = travel_dist;
-                d_lat = 0;
+                this->_odometry.pose.pose.position.x +=
+                    step_east_m / (111320.0 * std::cos(mean_latitude_rad));
+                this->_odometry.pose.pose.position.y += step_north_m / 110540.0;
             }
             else
             {
-                d_long = fabs(std::sqrt(pow(travel_dist, 2) / (1 + pow(lat_dist / long_dist, 2))));
-                d_lat = (fabs(long_dist) <= travel_dist) ? travel_dist : fabs(std::sqrt(pow(travel_dist, 2) / (1 + pow(lat_dist / long_dist, 2))) * lat_dist / long_dist);
+                this->_odometry.pose.pose.position.x += step_east_m;
+                this->_odometry.pose.pose.position.y += step_north_m;
             }
-
-            if (long_dist < 0)
-            {
-                d_long = -d_long;
-            }
-            if (lat_dist < 0)
-            {
-                d_lat = -d_lat;
-            }
-
-            // Update position
-            this->_odometry.pose.pose.position.x += d_long;
-            this->_odometry.pose.pose.position.y += d_lat;
+            const double yaw = std::atan2(step_north_m, step_east_m);
+            this->_odometry.pose.pose.orientation.z = std::sin(yaw / 2.0);
+            this->_odometry.pose.pose.orientation.w = std::cos(yaw / 2.0);
+            this->_odometry.twist.twist.linear.x = this->_current_speed_mps;
         }
     }
 }

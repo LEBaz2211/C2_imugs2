@@ -113,12 +113,37 @@ Legacy input aliases are normalized at the adapter boundary:
 | `transit.desired_speed` | `transit.desired_vehicle_constraints.max_speed` |
 | `objective.maximize_area_coverage` | `objective.maximize_coverage` |
 | scalar `objective.vehicle_orientation` | one-item array |
+| `start.vehicle_orientations` | `start.vehicle_orientation` |
 | `vehicle_formation_distances` | `vehicle_formation_distance` |
-| `maximize_coverage_distances` | `maximum_coverage_distances` |
+| `objective.maximize_coverage_distances` | `objective.maximum_coverage_distances` |
 | `transit.geofence_maximum_coverage` | `transit.geofence_maximize_coverage` |
 
 The adapter translates canonical `optimization` back to inherited
 `optimalization` before posting through the REST bridge.
+
+Two distance fields that were historically conflated have distinct canonical
+meanings:
+
+| Canonical field | Unit and meaning |
+| --- | --- |
+| `objective.maximum_coverage_distances` | Maximum permitted separation between mission vehicles. A one-item array applies to every vehicle; otherwise supply one value per vehicle. The legacy spelling is `maximize_coverage_distances`. |
+| `objective.coverage_swath_widths` | Effective sensor or implement swath used to space Polygon coverage lanes. A one-item array applies to every vehicle; otherwise supply one value per vehicle. |
+
+`maximum_coverage_distances` is not a lawnmower lane width. During mission
+initialization, the adapter may add `coverage_swath_widths` only to the
+backend-bound compatibility copy by reading `constraints.coverage_width_m`
+from each selected active-world vehicle. An explicitly supplied canonical
+swath wins. Old payloads that used `maximum_coverage_distances` as a swath are
+accepted as a migration fallback when no vehicle swath is available, but new
+missions must not rely on that ambiguity.
+
+Inline mission geometry may be `Point`, `MultiPoint`, `LineString`, or
+single-ring `Polygon`. Canonical Point coordinates are `[lon, lat]`; the
+normalizer also accepts the extra singleton array nesting present in an
+original ICD example. Missing or null `behavior` normalizes to `NAVIGATE=0`.
+For `COVERAGE=1`, omitted `objective.maximize_coverage` normalizes to `true`;
+an explicit `false` means reach the geometry without surveying or patrolling
+it.
 
 ## Numeric Enums
 
@@ -157,7 +182,7 @@ confirmed only by mission feedback containing non-empty waypoint tasks.
 
 ## Out Of Scope
 
-This ICD deliberately does not describe planner algorithms, scenario loading,
+This ICD deliberately does not describe planner algorithms, world loading,
 risk policy, coverage behavior, deployment fixes, current defects, or runtime
 workarounds. Those details evolve with `backend/` and belong in
 [Architecture](ARCHITECTURE.md), focused `CURRENT` documents, source, and

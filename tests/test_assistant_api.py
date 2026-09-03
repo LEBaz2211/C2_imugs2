@@ -8,7 +8,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from c2_imugs2.api import create_app
-from c2_imugs2.assistant.models import AssistantResponse, AssistantScenarioBinding
+from c2_imugs2.assistant.models import AssistantResponse, AssistantWorldBinding
 from c2_imugs2.assistant.orchestrator import AssistantBusyError
 from c2_imugs2.infrastructure.legacy.rest import LegacyRestResponse
 from c2_imugs2.operations.models import OperationalReadModel
@@ -17,19 +17,35 @@ from c2_imugs2.operations.service import OperationalContextService
 
 ROOT = Path(__file__).resolve().parents[1]
 
-ACTIVE_SCENARIO = {
-    "scenario_id": "assistant-test",
-    "version": "v1",
+ACTIVE_WORLD = {
+    "world_id": "assistant-test",
+    "world_version": "v1",
+    "deployment_id": "deployment-assistant-test",
     "status": "ready",
     "ready": True,
     "agents": [],
-    "map_collection": "scenario_assistant_test_v1",
+    "map_collection": "world_assistant_test_v1",
     "content_hash": "content-test-v1",
     "map_feature_hash": "features-test-v1",
-    "activation_id": "activation-1",
-    "activation_token": "token-1",
+    "launch_id": "launch-1",
+    "map_snapshot_token": "token-1",
+    "snapshot": {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e",
+                "properties": {
+                    "feature_id": "dbfd7aea-2f43-4653-b62a-aa0cd8ef9e0e",
+                    "feature_type": "geofence",
+                },
+                "geometry": {"type": "Polygon", "coordinates": []},
+            }
+        ],
+    },
+    "live_features": {"type": "FeatureCollection", "features": []},
 }
-PICTURE_SCENARIO_BINDING = AssistantScenarioBinding.from_mapping(ACTIVE_SCENARIO)
+PICTURE_WORLD_BINDING = AssistantWorldBinding.from_mapping(ACTIVE_WORLD)
 
 
 class FakeRestClient:
@@ -44,9 +60,9 @@ class FakeRosbridgeClient:
         return {"checks": [], "nodes": [], "topics": [], "services": []}
 
 
-class ReadyScenarioManager:
+class ReadyWorldManager:
     def __init__(self, **overrides: Any) -> None:
-        self.state = {**ACTIVE_SCENARIO, **overrides}
+        self.state = {**ACTIVE_WORLD, **overrides}
 
     def active(self) -> dict[str, Any]:
         return self.validated_active() or {}
@@ -74,10 +90,10 @@ class FakeAssistant:
     def __init__(
         self,
         mission_proposal: dict[str, Any],
-        picture_scenario_binding: AssistantScenarioBinding | None = PICTURE_SCENARIO_BINDING,
+        picture_world_binding: AssistantWorldBinding | None = PICTURE_WORLD_BINDING,
     ) -> None:
         self.mission_proposal = mission_proposal
-        self.picture_scenario_binding = picture_scenario_binding
+        self.picture_world_binding = picture_world_binding
         self.calls: list[tuple[str, str]] = []
         self.debug_calls: list[bool] = []
         self.operational_picture_calls: list[dict[str, Any] | None] = []
@@ -114,7 +130,7 @@ class FakeAssistant:
             answer="Draft ready",
             picture_revision="api-test:2",
             picture_observed_at="2026-08-22T00:00:02Z",
-            picture_scenario_binding=self.picture_scenario_binding,
+            picture_world_binding=self.picture_world_binding,
             prompt_version="v2",
             assumptions=["The active vehicle remains available."],
             warnings=[],
@@ -171,14 +187,14 @@ def _client(
     assistant: FakeAssistant,
     context: OperationalContextService,
     *,
-    scenario_manager: ReadyScenarioManager | None = None,
+    world_manager: ReadyWorldManager | None = None,
 ) -> TestClient:
     return TestClient(
         create_app(
             ROOT,
             rest_client=FakeRestClient(),
             rosbridge_client=FakeRosbridgeClient(),
-            scenario_manager=scenario_manager or ReadyScenarioManager(),
+            world_manager=world_manager or ReadyWorldManager(),
             assistant=assistant,  # type: ignore[arg-type]
             operational_context=context,
         )
@@ -214,14 +230,15 @@ def test_assistant_api_returns_validated_draft_without_initializing_it() -> None
         "valid": True,
         "scope": "schema_semantics_and_current_environment",
         "issues": [],
-        "scenario_binding": {
-            "scenario_id": "assistant-test",
-            "version": "v1",
-            "map_collection": "scenario_assistant_test_v1",
+        "world_binding": {
+                "world_id": "assistant-test",
+                "world_version": "v1",
+                "deployment_id": "deployment-assistant-test",
+                "map_collection": "world_assistant_test_v1",
             "content_hash": "content-test-v1",
             "map_feature_hash": "features-test-v1",
-            "activation_id": "activation-1",
-            "activation_token": "token-1",
+                "launch_id": "launch-1",
+            "map_snapshot_token": "token-1",
             "status": "ready",
             "ready": True,
         },
@@ -298,6 +315,7 @@ def test_assistant_api_forwards_bounded_operational_picture_selection() -> None:
                 "operator_missions": [
                     {"mission_id": "mission-a", "name": "Browser draft"}
                 ],
+                "exclude_paths": ["missions.items[*].data.operator_context"],
             },
         },
     )
@@ -311,8 +329,26 @@ def test_assistant_api_forwards_bounded_operational_picture_selection() -> None:
                 {"mission_id": "mission-a", "name": "Browser draft"}
             ],
             "item_ids": {},
+            "exclude_paths": ["missions.items[*].data.operator_context"],
         }
     ]
+
+
+def test_assistant_api_rejects_blank_operational_picture_exclude_paths() -> None:
+    assistant = FakeAssistant({"not": "used"})
+    context = OperationalContextService(ChangingOperationalProvider(), runtime_id="api-test")
+    client = _client(assistant, context)
+
+    response = client.post(
+        "/api/assistant/messages",
+        json={
+            "conversation_id": "bad-context-filter",
+            "message": "What is selected?",
+            "operational_picture": {"sections": [], "exclude_paths": ["   "]},
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_assistant_api_previews_exact_model_projection_without_chat() -> None:
@@ -351,6 +387,7 @@ def test_assistant_api_previews_exact_model_projection_without_chat() -> None:
                 "missions": ["mission-a"],
                 "health": ["backend"],
             },
+            "exclude_paths": [],
         }
     ]
 
@@ -383,13 +420,13 @@ def test_assistant_api_rejects_absent_binding_but_allows_stale_bound_draft_edit(
         "/api/assistant/messages",
         json={"conversation_id": "missing-binding", "message": "Draft a mission"},
     )
-    not_ready_binding = AssistantScenarioBinding.from_mapping(
-        {**ACTIVE_SCENARIO, "status": "stale", "ready": False}
+    not_ready_binding = AssistantWorldBinding.from_mapping(
+        {**ACTIVE_WORLD, "status": "stale", "ready": False}
     )
     not_ready = _client(
         FakeAssistant(proposal, not_ready_binding),
         context,
-        scenario_manager=ReadyScenarioManager(
+        world_manager=ReadyWorldManager(
             status="stale",
             ready=False,
             agents=[{"agent_id": proposal["vehicles"][0]}],
@@ -429,7 +466,7 @@ def test_assistant_api_assigns_new_mission_id_programmatically() -> None:
     assert assigned != proposal["mission_id"]
 
 
-def test_assistant_api_rejects_proposal_if_active_scenario_changed_during_generation() -> None:
+def test_assistant_api_rejects_proposal_if_active_world_changed_during_generation() -> None:
     proposal = json.loads(
         (ROOT / "fixtures" / "mission_examples" / "simple_navigation_themis.json").read_text(
             encoding="utf-8"
@@ -439,20 +476,20 @@ def test_assistant_api_rejects_proposal_if_active_scenario_changed_during_genera
     client = _client(
         FakeAssistant(proposal),
         context,
-        scenario_manager=ReadyScenarioManager(activation_id="activation-2"),
+        world_manager=ReadyWorldManager(launch_id="launch-2"),
     )
 
     response = client.post(
         "/api/assistant/messages",
-        json={"conversation_id": "scenario-race", "message": "Draft a mission"},
+        json={"conversation_id": "world-race", "message": "Draft a mission"},
     )
 
     assert response.status_code == 200
     validation = response.json()["mission_proposal_validation"]
     assert validation["valid"] is False
     assert "current environment changed" in validation["issues"][0]["message"]
-    assert "activation_id" in validation["issues"][0]["message"]
-    assert validation["scenario_binding"]["activation_id"] == "activation-2"
+    assert "launch_id" in validation["issues"][0]["message"]
+    assert validation["world_binding"]["launch_id"] == "launch-2"
 
 
 def test_assistant_busy_error_is_exposed_as_retryable_http_429() -> None:

@@ -22,16 +22,16 @@ from ..assistant import AssistantOrchestrator, AssistantSettings, build_assistan
 from ..contracts import build_contract_graph
 from ..core.mission_config import MissionValidationError, load_and_validate_mission
 from ..core.models import MissionIssue, MissionRequest, MissionStatus
-from ..infrastructure.legacy.map import delete_user_geojson_feature, feature_collection_to_map_features, load_legacy_geojson_map, load_osm_roads_overlay, load_user_geojson_map, query_osm_roads_for_bbox, query_osm_roads_for_polygon, save_user_geojson_feature, update_user_geojson_feature
+from ..infrastructure.legacy.map import feature_collection_to_map_features, load_osm_roads_overlay
 from ..infrastructure.legacy.rest import LegacyRestClient
 from ..infrastructure.mongo import bootstrap_mongo_indexes
 from ..infrastructure.repositories import read_json
 from ..infrastructure.rosbridge import RosbridgeClient
 from ..operations.live import LiveOperationalReadModelProvider
 from ..operations.service import OperationalContextService
-from ..scenarios.runtime import ScenarioRuntimeManager
-from .routers import assistant_router, mission_router, scenario_router
-from .services import BackendMissionApplicationService, ScenarioApplicationService
+from ..worlds.service import WorldConflictError, WorldManager
+from .routers import assistant_router, mission_router, vehicle_model_router, world_router
+from .services import BackendMissionApplicationService, WorldApplicationService
 
 
 LEGACY_AGENT_ID = "f9992bb3-9871-451f-90a0-9207eb9fe6c5"
@@ -42,7 +42,7 @@ def create_app(
     repo_root: Path = REPO_ROOT,
     rest_client: LegacyRestClient | None = None,
     rosbridge_client: RosbridgeClient | None = None,
-    scenario_manager: ScenarioRuntimeManager | None = None,
+    world_manager: WorldManager | None = None,
     assistant: AssistantOrchestrator | None = None,
     operational_context: OperationalContextService | None = None,
 ) -> FastAPI:
@@ -78,7 +78,7 @@ def create_app(
     app.state.rest_client = rest_client or LegacyRestClient(os.environ.get("C2_IMUGS2_LEGACY_REST_URL", "http://localhost:5001/mission_control"))
     app.state.rosbridge_client = rosbridge_client or RosbridgeClient(os.environ.get("C2_IMUGS2_ROSBRIDGE_URL", "ws://localhost:9090"))
     app.state.mongodb_url = os.environ.get("C2_IMUGS2_MONGODB_URL", os.environ.get("MONGODB_CONNSTRING", "mongodb://127.0.0.1:27017"))
-    app.state.scenario_manager = scenario_manager or ScenarioRuntimeManager(
+    app.state.world_manager = world_manager or WorldManager(
         repo_root,
         app.state.host_repo_root,
         app.state.mongodb_url,
@@ -94,23 +94,20 @@ def create_app(
         repo_root=repo_root,
         runtime=app.state,
         rest_client=app.state.rest_client,
-        scenario_runtime=app.state.scenario_manager,
+        world_runtime=app.state.world_manager,
         inline_feature_refs=_inline_user_feature_refs,
         normalize_mission_id=_legacy_uuid,
         status_name=_mission_status_name,
         now=_utc_now_iso,
         save_forgotten_missions=_save_forgotten_missions,
     )
-    app.state.scenario_application = ScenarioApplicationService(app.state, app.state.scenario_manager)
+    app.state.world_application = WorldApplicationService(app.state, app.state.world_manager)
     app.state.assistant_settings = AssistantSettings.from_env()
     app.state.operational_context = operational_context or OperationalContextService(
         LiveOperationalReadModelProvider(
             app.state,
-            app.state.scenario_manager,
+            app.state.world_manager,
             app.state.mongodb_url,
-            operator_objective_provider=lambda map_name: load_user_geojson_map(
-                app.state.repo_root, map_name
-            ),
         ),
         runtime_id=f"api-{uuid.uuid4().hex}",
     )
@@ -155,7 +152,8 @@ def create_app(
             lambda mission_id: _backfill_mission_from_legacy_mongo(app, mission_id),
         )
     )
-    app.include_router(scenario_router(app.state.scenario_application))
+    app.include_router(world_router(app.state.world_application))
+    app.include_router(vehicle_model_router(app.state.world_application))
     app.include_router(
         assistant_router(
             context=app.state.operational_context,
@@ -266,17 +264,21 @@ def create_app(
     @app.get("/api/map/features")
     async def map_features(map: str = Query(default="rma")) -> dict[str, Any]:
         try:
-            return load_legacy_geojson_map(app.state.repo_root, map)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return app.state.world_manager.authoring_feature_collection(map)
+        except (FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/map/features")
     async def create_map_feature(feature: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
         try:
-            saved = save_user_geojson_feature(app.state.repo_root, map, feature)
+            saved = app.state.world_manager.create_authoring_feature(map, feature)
+            collection = app.state.world_manager.authoring_feature_collection(map)
+        except WorldConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        collection = load_legacy_geojson_map(app.state.repo_root, map)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "feature": saved,
             "map_feature": feature_collection_to_map_features({"type": "FeatureCollection", "features": [saved]})[0],
@@ -285,13 +287,31 @@ def create_app(
         }
 
     @app.delete("/api/map/features/{feature_id}")
-    async def delete_map_feature(feature_id: str, map: str = Query(default="rma")) -> dict[str, Any]:
-        deleted = delete_user_geojson_feature(app.state.repo_root, map, feature_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Only user-created runtime features can be deleted")
-        collection = load_legacy_geojson_map(app.state.repo_root, map)
+    async def delete_map_feature(
+        feature_id: str,
+        map: str = Query(default="rma"),
+        world_id: str | None = Query(default=None),
+        revision: int | None = Query(default=None),
+    ) -> dict[str, Any]:
+        try:
+            deleted = app.state.world_manager.delete_authoring_feature(
+                map,
+                feature_id,
+                world_id=world_id,
+                revision=revision,
+            )
+            collection = app.state.world_manager.authoring_feature_collection(map)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except WorldConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "deleted_feature_id": feature_id,
+            "world": deleted.get("world"),
             "geojson": collection,
             "map_features": feature_collection_to_map_features(collection),
         }
@@ -299,12 +319,14 @@ def create_app(
     @app.put("/api/map/features/{feature_id}")
     async def update_map_feature(feature_id: str, feature: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
         try:
-            updated = update_user_geojson_feature(app.state.repo_root, map, feature_id, feature)
+            updated = app.state.world_manager.update_authoring_feature(map, feature_id, feature)
+            collection = app.state.world_manager.authoring_feature_collection(map)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        if not updated:
-            raise HTTPException(status_code=404, detail="Only user-created runtime features can be edited")
-        collection = load_legacy_geojson_map(app.state.repo_root, map)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "feature": updated,
             "map_feature": feature_collection_to_map_features({"type": "FeatureCollection", "features": [updated]})[0],
@@ -316,38 +338,12 @@ def create_app(
     async def osm_roads(map: str = Query(default="rma")) -> dict[str, Any]:
         return load_osm_roads_overlay(app.state.repo_root, map)
 
-    @app.post("/api/map/osm-roads/query")
-    async def query_osm_roads(payload: dict[str, Any], map: str = Query(default="rma")) -> dict[str, Any]:
-        polygon = payload.get("polygon")
-        if isinstance(polygon, list) and polygon:
-            try:
-                return query_osm_roads_for_polygon(
-                    app.state.repo_root,
-                    map,
-                    polygon,
-                    max_features=int(payload.get("max_features") or 50000),
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-        bbox = payload.get("bbox")
-        if not isinstance(bbox, list | tuple) or len(bbox) != 4:
-            raise HTTPException(status_code=422, detail="polygon is required, or bbox must be [west, south, east, north]")
-        try:
-            return query_osm_roads_for_bbox(
-                app.state.repo_root,
-                map,
-                (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
-                max_features=int(payload.get("max_features") or 160),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
     @app.get("/api/agents")
     async def agents() -> dict[str, Any]:
-        active = app.state.scenario_manager.validated_active()
+        active = app.state.world_manager.validated_active()
         if active and isinstance(active.get("agents"), list):
-            scenario_agents = deepcopy(active["agents"])
-            for agent in scenario_agents:
+            world_agents = deepcopy(active["agents"])
+            for agent in world_agents:
                 agent_id = str(agent.get("agent_id") or "")
                 update = next(
                     (
@@ -361,7 +357,7 @@ def create_app(
                     agent["current_location"] = update["current_location"]
                 if update.get("status"):
                     agent["status"] = str(update["status"])
-            return {"agents": scenario_agents, "scenario": active}
+            return {"agents": world_agents, "world": active}
         legacy_agent = {
             "agent_id": LEGACY_AGENT_ID,
             "name": "Themis Fr",
@@ -421,7 +417,9 @@ def create_app(
                                 mission_id = planner_mission["mission_id"]
                                 if mission_id in app.state.forgotten_missions:
                                     continue
-                                mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}})
+                                mission = app.state.missions.get(mission_id)
+                                if mission is None:
+                                    continue
                                 mission.update(planner_mission)
                                 mission["updated_at"] = _utc_now_iso()
                                 yield _sse("mission.updated", mission)
@@ -430,10 +428,15 @@ def create_app(
                             if mission_id in app.state.forgotten_missions:
                                 continue
                             if mission_id:
-                                mission = app.state.missions.setdefault(mission_id, {"mission_id": mission_id, "config": {}})
+                                mission = app.state.missions.get(mission_id)
+                                if mission is None:
+                                    # ROS feedback has no world/deployment identity. Never
+                                    # adopt an unknown mission into the current world.
+                                    continue
                                 mission.update(payload)
                                 mission["planner_status"] = _planner_status_from_mission_payload(payload)
                                 mission["updated_at"] = _utc_now_iso()
+                                payload = mission
                             planned_paths = payload.get("planned_paths")
                             if planned_paths:
                                 planner_payload = {
@@ -464,7 +467,10 @@ def create_app(
 
     @app.get("/api/runtime/bootstrap")
     async def runtime_bootstrap(map: str = Query(default="rma")) -> dict[str, Any]:
-        collection = load_legacy_geojson_map(app.state.repo_root, map)
+        try:
+            collection = app.state.world_manager.authoring_feature_collection(map)
+        except (FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {
             "agents": (await agents())["agents"],
             "map_features": feature_collection_to_map_features(collection),
@@ -589,14 +595,14 @@ def _planning_diagnostics_payload(app: FastAPI, mission_id: str | None) -> dict[
         "planner_state_matches_mission": planner_state_for_mission,
     }
     interpretation = _planning_interpretation(summary, bool(planning_doc), bool(feedback_doc))
-    scenario_analysis = _planning_scenario_analysis(app, mission, config_doc or {}, feedback_paths or planning_paths or adapter_paths)
+    variant_analysis = _planning_variant_analysis(app, mission, config_doc or {}, feedback_paths or planning_paths or adapter_paths)
 
     return {
         "mission_id": mission_id,
         "checks": checks,
         "summary": summary,
         "interpretation": interpretation,
-        "scenario_analysis": scenario_analysis,
+        "variant_analysis": variant_analysis,
         "adapter": {
             "mission": mission,
             "planner_state": app.state.planner_state,
@@ -627,7 +633,7 @@ DRIVE_HIGHWAY_CLASSES = {"motorway", "trunk", "primary", "secondary", "tertiary"
 NON_DRIVE_HIGHWAY_CLASSES = {"footway", "path", "pedestrian", "steps", "cycleway", "bridleway", "corridor"}
 
 
-def _planning_scenario_analysis(
+def _planning_variant_analysis(
     app: FastAPI,
     mission: dict[str, Any],
     config_doc: dict[str, Any],
@@ -638,23 +644,30 @@ def _planning_scenario_analysis(
         config = config_doc if isinstance(config_doc, dict) else {}
 
     map_name = str(config.get("map") or "rma")
-    agent_id = _scenario_agent_id(config, actual_paths)
-    start = _scenario_start_point(app, agent_id, actual_paths)
-    objective = _scenario_objective_point(config, app.state.repo_root, map_name)
+    agent_id = _variant_agent_id(config, actual_paths)
+    start = _variant_start_point(app, agent_id, actual_paths)
+    active_world = app.state.world_manager.validated_active()
+    active_features = []
+    if active_world:
+        active_features = [
+            *deepcopy(((active_world.get("snapshot") or {}).get("features") or [])),
+            *deepcopy(((active_world.get("live_features") or {}).get("features") or [])),
+        ]
+    objective = _variant_objective_point(config, active_features)
     if not start or not objective:
         return {
             "status": "missing_inputs",
             "inputs": {"agent_id": agent_id, "start": start, "objective": objective, "map": map_name},
-            "scenarios": [],
-            "notes": ["Scenario analysis needs a point objective and either live agent feedback or a planned path start."],
+            "variants": [],
+            "notes": ["Variant analysis needs a point objective and either live agent feedback or a planned path start."],
         }
 
-    scenarios = []
+    variants = []
     actual_path = _actual_path_for_agent(actual_paths, agent_id)
     if actual_path:
-        scenarios.append(_actual_path_scenario(actual_path, start, objective))
+        variants.append(_actual_path_variant(actual_path, start, objective))
 
-    scenario_defs = [
+    variant_defs = [
         {
             "id": "nearest_osm_drive_no_service",
             "label": "Nearest OSM Drive, No Service",
@@ -700,14 +713,14 @@ def _planning_scenario_analysis(
     ]
     graph_cache: dict[str, dict[str, Any]] = {}
     graph_summaries = {}
-    for scenario_def in scenario_defs:
-        road_filter = scenario_def["road_filter"]
+    for variant_def in variant_defs:
+        road_filter = variant_def["road_filter"]
         graph = graph_cache.get(road_filter)
         if graph is None:
-            graph = _build_diagnostic_graph(app.state.repo_root, map_name, road_filter)
+            graph = _build_diagnostic_graph(active_features, road_filter)
             graph_cache[road_filter] = graph
             graph_summaries[road_filter] = graph["summary"]
-        scenarios.append(_run_graph_scenario(graph, scenario_def, start, objective))
+        variants.append(_run_graph_variant(graph, variant_def, start, objective))
 
     return {
         "status": "ok",
@@ -720,15 +733,15 @@ def _planning_scenario_analysis(
         },
         "model": {
             "kind": "adapter_diagnostic_graph",
-            "important_limit": "This does not command ROS. It isolates node snapping, source filters, and endpoint-cost assumptions using the adapter road overlays.",
+            "important_limit": "This does not command ROS. It isolates node snapping, source filters, and endpoint-cost assumptions using only the active immutable snapshot and current-deployment overlays.",
             "legacy_planner_issue_to_watch": "The legacy planner snaps both endpoints to graph nodes and returns only that graph-node path. This adapter diagnostic adds the exact endpoint legs for visibility; they are not planner output or part of A* route selection.",
         },
         "graph_summaries": graph_summaries,
-        "scenarios": scenarios,
+        "variants": variants,
     }
 
 
-def _scenario_agent_id(config: dict[str, Any], actual_paths: dict[str, list[list[float]]]) -> str:
+def _variant_agent_id(config: dict[str, Any], actual_paths: dict[str, list[list[float]]]) -> str:
     vehicles = config.get("vehicles") if isinstance(config.get("vehicles"), list) else []
     if vehicles:
         return _normalize_uuidish_id(vehicles[0])
@@ -737,7 +750,7 @@ def _scenario_agent_id(config: dict[str, Any], actual_paths: dict[str, list[list
     return LEGACY_AGENT_ID
 
 
-def _scenario_start_point(app: FastAPI, agent_id: str, actual_paths: dict[str, list[list[float]]]) -> list[float] | None:
+def _variant_start_point(app: FastAPI, agent_id: str, actual_paths: dict[str, list[list[float]]]) -> list[float] | None:
     normalized_agent_id = _normalize_uuidish_id(agent_id)
     agent_update = app.state.agent_updates.get(normalized_agent_id) or app.state.agent_updates.get(agent_id)
     if isinstance(agent_update, dict):
@@ -757,7 +770,7 @@ def _actual_path_for_agent(actual_paths: dict[str, list[list[float]]], agent_id:
     return actual_paths.get(normalized_agent_id) or actual_paths.get(agent_id) or next(iter(actual_paths.values()))
 
 
-def _scenario_objective_point(config: dict[str, Any], repo_root: Path, map_name: str) -> list[float] | None:
+def _variant_objective_point(config: dict[str, Any], active_features: list[dict[str, Any]]) -> list[float] | None:
     objective = config.get("objective") if isinstance(config.get("objective"), dict) else {}
     direct_geometry = objective.get("geometry") if isinstance(objective.get("geometry"), dict) else None
     if direct_geometry:
@@ -766,7 +779,7 @@ def _scenario_objective_point(config: dict[str, Any], repo_root: Path, map_name:
             return point
     direct_feature_id = str(objective.get("feature_id") or "")
     if direct_feature_id:
-        point = _feature_point_by_id(repo_root, map_name, direct_feature_id)
+        point = _feature_point_by_id(active_features, direct_feature_id)
         if point:
             return point
 
@@ -780,7 +793,7 @@ def _scenario_objective_point(config: dict[str, Any], repo_root: Path, map_name:
             return point
         feature_id = str(geometry_ref.get("feature_id") or "")
         if feature_id:
-            point = _feature_point_by_id(repo_root, map_name, feature_id)
+            point = _feature_point_by_id(active_features, feature_id)
             if point:
                 return point
     return None
@@ -794,12 +807,8 @@ def _point_from_geometry(geometry: Any) -> list[float] | None:
     return _lonlat_point(geometry.get("coordinates"))
 
 
-def _feature_point_by_id(repo_root: Path, map_name: str, feature_id: str) -> list[float] | None:
-    try:
-        collection = load_legacy_geojson_map(repo_root, map_name)
-    except FileNotFoundError:
-        return None
-    for feature in collection.get("features", []):
+def _feature_point_by_id(active_features: list[dict[str, Any]], feature_id: str) -> list[float] | None:
+    for feature in active_features:
         properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
         if str(properties.get("feature_id") or feature.get("id") or "") != feature_id:
             continue
@@ -809,7 +818,7 @@ def _feature_point_by_id(repo_root: Path, map_name: str, feature_id: str) -> lis
     return None
 
 
-def _actual_path_scenario(path: list[list[float]], start: list[float], objective: list[float]) -> dict[str, Any]:
+def _actual_path_variant(path: list[list[float]], start: list[float], objective: list[float]) -> dict[str, Any]:
     route = [_lonlat_point(point) for point in path]
     route = [point for point in route if point]
     length = _route_length_m(route)
@@ -827,63 +836,53 @@ def _actual_path_scenario(path: list[list[float]], start: list[float], objective
             "end_gap_to_objective_m": round(end_gap, 2) if end_gap is not None else None,
         },
         "route": route,
-        "notes": ["Use this to compare what legacy actually emitted against the diagnostic scenario routes."],
+        "notes": ["Use this to compare what legacy actually emitted against the diagnostic world routes."],
     }
 
 
-def _build_diagnostic_graph(repo_root: Path, map_name: str, road_filter: str) -> dict[str, Any]:
+def _build_diagnostic_graph(active_features: list[dict[str, Any]], road_filter: str) -> dict[str, Any]:
     nodes: dict[str, list[float]] = {}
     adjacency: dict[str, list[dict[str, Any]]] = {}
     edge_count = 0
     source_counts: dict[str, int] = {}
     highway_counts: dict[str, int] = {}
 
-    collections = []
-    try:
-        collections.append(("osm", load_osm_roads_overlay(repo_root, map_name)))
-    except Exception:
-        collections.append(("osm", {"type": "FeatureCollection", "features": []}))
-    try:
-        collections.append(("legacy", load_legacy_geojson_map(repo_root, map_name)))
-    except FileNotFoundError:
-        collections.append(("legacy", {"type": "FeatureCollection", "features": []}))
-
-    for source, collection in collections:
-        for feature in collection.get("features", []):
-            if not _diagnostic_feature_allowed(feature, source, road_filter):
+    for feature in active_features:
+        if not _diagnostic_feature_allowed(feature, road_filter):
+            continue
+        geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+        if geometry.get("type") != "LineString":
+            continue
+        coordinates = [_lonlat_point(point) for point in geometry.get("coordinates", [])]
+        coordinates = [point for point in coordinates if point]
+        if len(coordinates) < 2:
+            continue
+        properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+        source = str(properties.get("source") or "active_snapshot")
+        for first, second in zip(coordinates, coordinates[1:]):
+            first_key = _node_key(first)
+            second_key = _node_key(second)
+            if first_key == second_key:
                 continue
-            geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
-            if geometry.get("type") != "LineString":
-                continue
-            coordinates = [_lonlat_point(point) for point in geometry.get("coordinates", [])]
-            coordinates = [point for point in coordinates if point]
-            if len(coordinates) < 2:
-                continue
-            properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
-            for first, second in zip(coordinates, coordinates[1:]):
-                first_key = _node_key(first)
-                second_key = _node_key(second)
-                if first_key == second_key:
-                    continue
-                nodes[first_key] = first
-                nodes[second_key] = second
-                length_m = _haversine_m(first, second)
-                edge = {
-                    "to": second_key,
-                    "length_m": length_m,
-                    "source": source,
-                    "feature_id": str(properties.get("feature_id") or feature.get("id") or ""),
-                    "name": str(properties.get("name") or ""),
-                    "highway": str(properties.get("highway") or properties.get("feature_type") or ""),
-                }
-                reverse = dict(edge)
-                reverse["to"] = first_key
-                adjacency.setdefault(first_key, []).append(edge)
-                adjacency.setdefault(second_key, []).append(reverse)
-                edge_count += 1
-            source_counts[source] = source_counts.get(source, 0) + 1
-            highway = str(properties.get("highway") or properties.get("feature_type") or "unknown")
-            highway_counts[highway] = highway_counts.get(highway, 0) + 1
+            nodes[first_key] = first
+            nodes[second_key] = second
+            length_m = _haversine_m(first, second)
+            edge = {
+                "to": second_key,
+                "length_m": length_m,
+                "source": source,
+                "feature_id": str(properties.get("feature_id") or feature.get("id") or ""),
+                "name": str(properties.get("name") or ""),
+                "highway": str(properties.get("highway") or properties.get("feature_type") or ""),
+            }
+            reverse = dict(edge)
+            reverse["to"] = first_key
+            adjacency.setdefault(first_key, []).append(edge)
+            adjacency.setdefault(second_key, []).append(reverse)
+            edge_count += 1
+        source_counts[source] = source_counts.get(source, 0) + 1
+        highway = str(properties.get("highway") or properties.get("feature_type") or "unknown")
+        highway_counts[highway] = highway_counts.get(highway, 0) + 1
 
     return {
         "nodes": nodes,
@@ -898,7 +897,7 @@ def _build_diagnostic_graph(repo_root: Path, map_name: str, road_filter: str) ->
     }
 
 
-def _diagnostic_feature_allowed(feature: Any, source: str, road_filter: str) -> bool:
+def _diagnostic_feature_allowed(feature: Any, road_filter: str) -> bool:
     if not isinstance(feature, dict):
         return False
     properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
@@ -908,9 +907,10 @@ def _diagnostic_feature_allowed(feature: Any, source: str, road_filter: str) -> 
     feature_type = str(properties.get("feature_type") or "")
     highway = str(properties.get("highway") or "").lower()
 
-    if source == "legacy":
-        return road_filter == "mixed_drive_no_service" and feature_type == "road"
-    if feature_type != "osm_road":
+    source = str(properties.get("source") or "")
+    if feature_type == "road" and source != "frozen_openstreetmap":
+        return road_filter == "mixed_drive_no_service"
+    if feature_type not in {"osm_road", "road"} or source not in {"frozen_openstreetmap", "world_osm_road"}:
         return False
     if road_filter == "osm_all":
         return bool(highway)
@@ -923,21 +923,21 @@ def _diagnostic_feature_allowed(feature: Any, source: str, road_filter: str) -> 
     return road_filter in {"osm_drive_no_service", "osm_drive_with_service", "mixed_drive_no_service"}
 
 
-def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], start: list[float], objective: list[float]) -> dict[str, Any]:
+def _run_graph_variant(graph: dict[str, Any], variant_def: dict[str, Any], start: list[float], objective: list[float]) -> dict[str, Any]:
     nodes = graph["nodes"]
     if not nodes:
         return {
-            "id": scenario_def["id"],
-            "label": scenario_def["label"],
+            "id": variant_def["id"],
+            "label": variant_def["label"],
             "status": "no_graph",
-            "parameters": scenario_def,
+            "parameters": variant_def,
             "metrics": {},
             "route": [],
-            "notes": ["No line features matched this scenario filter."],
+            "notes": ["No line features matched this world filter."],
         }
 
-    candidate_count = int(scenario_def["candidate_count"])
-    endpoint_penalty = float(scenario_def["endpoint_penalty"])
+    candidate_count = int(variant_def["candidate_count"])
+    endpoint_penalty = float(variant_def["endpoint_penalty"])
     start_candidates = _nearest_graph_nodes(nodes, start, candidate_count)
     end_candidates = _nearest_graph_nodes(nodes, objective, candidate_count)
     best: dict[str, Any] | None = None
@@ -966,10 +966,10 @@ def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], sta
         nearest_start = start_candidates[0] if start_candidates else None
         nearest_end = end_candidates[0] if end_candidates else None
         return {
-            "id": scenario_def["id"],
-            "label": scenario_def["label"],
+            "id": variant_def["id"],
+            "label": variant_def["label"],
             "status": "no_route",
-            "parameters": scenario_def,
+            "parameters": variant_def,
             "metrics": {
                 "candidate_pairs_evaluated": evaluated,
                 "connected_candidate_pairs": connected,
@@ -977,7 +977,7 @@ def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], sta
                 "nearest_end_snap_m": round(nearest_end["distance_m"], 2) if nearest_end else None,
             },
             "route": [],
-            "notes": ["Graph nodes exist, but candidate start/end road nodes are disconnected under this scenario filter."],
+            "notes": ["Graph nodes exist, but candidate start/end road nodes are disconnected under this world filter."],
         }
 
     # The legacy ROS planner returns only graph nodes. The diagnostic adds
@@ -986,18 +986,18 @@ def _run_graph_scenario(graph: dict[str, Any], scenario_def: dict[str, Any], sta
     visible_length = _route_length_m(route)
     start_snap = float(best["start"]["distance_m"])
     end_snap = float(best["end"]["distance_m"])
-    segments = _scenario_segments(graph, start, objective, best["node_path"], start_snap, end_snap)
+    segments = _variant_segments(graph, start, objective, best["node_path"], start_snap, end_snap)
     notes = []
     if start_snap > 25 or end_snap > 25:
         notes.append("Large endpoint snap: the legacy planner omits the exact endpoint legs; this diagnostic draws them only for visibility.")
     if endpoint_penalty == 0:
         notes.append("Endpoint snap is reported but not charged here; the legacy A* optimizes only its graph-node path.")
     return {
-        "id": scenario_def["id"],
-        "label": scenario_def["label"],
+        "id": variant_def["id"],
+        "label": variant_def["label"],
         "status": "ok",
         "parameters": {
-            "road_filter": scenario_def["road_filter"],
+            "road_filter": variant_def["road_filter"],
             "candidate_count": candidate_count,
             "endpoint_penalty": endpoint_penalty,
         },
@@ -1062,7 +1062,7 @@ def _dijkstra(graph: dict[str, Any], start_node: str, end_node: str) -> tuple[fl
     return distances[end_node], path
 
 
-def _scenario_segments(graph: dict[str, Any], start: list[float], objective: list[float], node_path: list[str], start_snap: float, end_snap: float) -> list[dict[str, Any]]:
+def _variant_segments(graph: dict[str, Any], start: list[float], objective: list[float], node_path: list[str], start_snap: float, end_snap: float) -> list[dict[str, Any]]:
     nodes = graph["nodes"]
     segments = []
     if node_path:
@@ -1344,16 +1344,14 @@ def _mission_updates_from_planner_state(payload: dict[str, Any]) -> list[dict[st
 
 
 def _inline_user_feature_refs(mission_config: dict[str, Any], repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
-    """Replace runtime UI feature_id references with inline geometry for the legacy planner.
+    """Shape canonical inline geometry for the inherited ROS parser.
 
-    The legacy planner resolves feature_id values only from its configured
-    MapDB collection. UI-created features live in the adapter's user_features file and
-    are not seeded there, so they must cross the mission boundary as literal geometry.
-    Inlining preserves the contract but does not make every geometry a routing-graph
-    input; for example, the legacy planner does not add transit roads to its graph.
+    Active-deployment overlays have already been inlined by the mission service.
+    Durable authoring references resolve from the immutable active snapshot, so
+    this compatibility boundary must not read or join the global authoring library.
     """
     normalized = deepcopy(mission_config)
-    user_geometries = _user_feature_geometry_index(repo_root, map_name)
+    user_geometries: dict[str, dict[str, Any]] = {}
 
     objective = normalized.get("objective")
     if isinstance(objective, dict):
@@ -1381,19 +1379,6 @@ def _inline_user_feature_refs(mission_config: dict[str, Any], repo_root: Path, m
         start["geometry"] = _inline_direct_geometry_ref(start["geometry"], user_geometries)
 
     return normalized
-
-
-def _user_feature_geometry_index(repo_root: Path, map_name: str) -> dict[str, dict[str, Any]]:
-    geometries: dict[str, dict[str, Any]] = {}
-    for feature in load_user_geojson_map(repo_root, map_name).get("features", []):
-        if not isinstance(feature, dict):
-            continue
-        properties = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
-        feature_id = str(properties.get("feature_id") or feature.get("id") or "")
-        geometry = feature.get("geometry")
-        if feature_id and isinstance(geometry, dict):
-            geometries[feature_id] = deepcopy(geometry)
-    return geometries
 
 
 def _legacy_inline_geometry_literal(geometry: dict[str, Any], feature_id: str) -> dict[str, Any]:

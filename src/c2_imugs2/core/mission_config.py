@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 from functools import lru_cache
 import json
 import math
@@ -17,7 +18,7 @@ class MissionValidationError(ValueError):
     pass
 
 
-_SUPPORTED_INLINE_GEOMETRY_TYPES = {"Point", "LineString", "Polygon"}
+_SUPPORTED_INLINE_GEOMETRY_TYPES = {"Point", "MultiPoint", "LineString", "Polygon"}
 
 
 def normalize_mission_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -25,6 +26,12 @@ def normalize_mission_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise MissionValidationError("Mission config must be a JSON object")
     normalized = deepcopy(config)
+
+    # The original ICD defines a missing/null behavior as NAVIGATE. Keep this
+    # default at the canonical boundary so every downstream implementation sees
+    # an explicit behavior value.
+    if normalized.get("behavior") is None:
+        normalized["behavior"] = 0
 
     objective = normalized.setdefault("objective", {})
     if isinstance(objective, dict):
@@ -43,6 +50,11 @@ def normalize_mission_config(config: dict[str, Any]) -> dict[str, Any]:
             objective["maximize_coverage"] = objective.pop("maximize_area_coverage")
         if isinstance(objective.get("vehicle_orientation"), int | float):
             objective["vehicle_orientation"] = [objective["vehicle_orientation"]]
+
+        # COVERAGE means survey/patrol by default. Explicit false remains the
+        # supported way to request reach-only behavior for a coverage geometry.
+        if normalized.get("behavior") == 1 and "maximize_coverage" not in objective:
+            objective["maximize_coverage"] = True
 
     for section_name in ("start", "transit", "objective"):
         section = normalized.get(section_name)
@@ -78,8 +90,11 @@ def normalize_mission_config(config: dict[str, Any]) -> dict[str, Any]:
             transit["geofence_maximize_coverage"] = transit.pop("geofence_maximum_coverage")
 
     start = normalized.get("start")
-    if isinstance(start, dict) and isinstance(start.get("geometry"), dict):
-        start["geometry"] = _normalize_geometry_ref(start["geometry"])
+    if isinstance(start, dict):
+        if isinstance(start.get("geometry"), dict):
+            start["geometry"] = _normalize_geometry_ref(start["geometry"])
+        if "vehicle_orientations" in start and "vehicle_orientation" not in start:
+            start["vehicle_orientation"] = start.pop("vehicle_orientations")
 
     normalized.setdefault("schema_version", "1.0")
     return normalized
@@ -107,6 +122,18 @@ def _normalize_inline_geometry_literal(value: dict[str, Any]) -> dict[str, Any]:
 
     normalized = deepcopy(value)
     coordinates = normalized.get("coordinates")
+    if normalized.get("geometry_type") == "Point":
+        # Several original ICD examples wrapped Point coordinates as [[[lon,
+        # lat]]]. Accept that legacy mistake without weakening canonical Point
+        # validation for any other shape.
+        while (
+            isinstance(coordinates, list)
+            and len(coordinates) == 1
+            and isinstance(coordinates[0], list)
+            and not _looks_like_position(coordinates)
+        ):
+            coordinates = coordinates[0]
+        normalized["coordinates"] = coordinates
     if (
         normalized.get("geometry_type") == "Polygon"
         and isinstance(coordinates, list)
@@ -171,30 +198,140 @@ def validate_mission_config(config: dict[str, Any]) -> None:
     if isinstance(start, dict) and "geometry" in start:
         _validate_geometry_ref(start["geometry"], "start.geometry")
 
-    coverage_widths = objective.get("maximum_coverage_distances")
-    if int(config["behavior"]) == 1 and not coverage_widths:
-        raise MissionValidationError(
-            "Coverage missions require objective.maximum_coverage_distances=[swath_width_m]"
-        )
-    if coverage_widths is not None:
-        if not isinstance(coverage_widths, list) or not coverage_widths:
+    for field_name, label in (
+        ("maximum_coverage_distances", "vehicle separation distances"),
+        ("coverage_swath_widths", "coverage swath widths"),
+    ):
+        values = objective.get(field_name)
+        if values is None:
+            continue
+        if not isinstance(values, list) or not values:
             raise MissionValidationError(
-                "objective.maximum_coverage_distances must be a non-empty list"
+                f"objective.{field_name} must be a non-empty list"
             )
         if any(
-            isinstance(width, bool)
-            or not isinstance(width, int | float)
-            or not math.isfinite(width)
-            or width <= 0
-            for width in coverage_widths
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            or value <= 0
+            for value in values
         ):
             raise MissionValidationError(
-                "objective.maximum_coverage_distances must contain positive finite widths in metres"
+                f"objective.{field_name} must contain positive finite {label} in metres"
             )
-        if len(coverage_widths) not in (1, len(vehicles)):
+        if len(values) not in (1, len(vehicles)):
             raise MissionValidationError(
-                "Coverage width list must contain one shared width or one width per mission vehicle"
+                f"objective.{field_name} must contain one shared value or one value per mission vehicle"
             )
+
+    _validate_objective_semantics(objective, vehicles)
+    _validate_transit_semantics(transit)
+    _validate_time_window(start.get("start_time") if isinstance(start, dict) else None, "start.start_time")
+    _validate_time_window(objective.get("arrival_time"), "objective.arrival_time")
+    if config.get("mission_end_time") is not None:
+        _parse_iso8601(config["mission_end_time"], "mission_end_time")
+
+
+def _validate_objective_semantics(objective: dict[str, Any], vehicles: list[str]) -> None:
+    minimum = objective.get("minimum_distance")
+    maximum = objective.get("maximum_distance")
+    for field_name, value in (("minimum_distance", minimum), ("maximum_distance", maximum)):
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+            raise MissionValidationError(f"objective.{field_name} must be a finite number")
+    if maximum is not None and maximum < 0:
+        raise MissionValidationError("objective.maximum_distance must be non-negative")
+    if minimum is not None and maximum is not None and max(0.0, minimum) > maximum:
+        raise MissionValidationError(
+            "objective.minimum_distance cannot exceed objective.maximum_distance"
+        )
+
+    orientations = objective.get("vehicle_orientation")
+    if orientations is not None:
+        if not isinstance(orientations, list) or not orientations:
+            raise MissionValidationError("objective.vehicle_orientation must be a non-empty array")
+        if len(orientations) not in (1, len(vehicles)):
+            raise MissionValidationError(
+                "objective.vehicle_orientation must contain one shared heading or one heading per vehicle"
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            for value in orientations
+        ):
+            raise MissionValidationError("objective.vehicle_orientation must contain finite headings")
+
+    formation_distance = objective.get("vehicle_formation_distance")
+    if formation_distance is not None and (
+        isinstance(formation_distance, bool)
+        or not isinstance(formation_distance, int | float)
+        or not math.isfinite(formation_distance)
+        or formation_distance <= 0
+    ):
+        raise MissionValidationError("objective.vehicle_formation_distance must be positive")
+
+
+def _validate_transit_semantics(transit: Any) -> None:
+    if not isinstance(transit, dict):
+        return
+    optimization = transit.get("optimization")
+    if isinstance(optimization, dict):
+        for key in ("visibility", "energy", "road_usage"):
+            value = optimization.get(key)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or not 0 <= value <= 1
+            ):
+                raise MissionValidationError(
+                    f"transit.optimization.{key} must be between 0 and 1"
+                )
+    constraints = transit.get("desired_vehicle_constraints")
+    if isinstance(constraints, dict):
+        for key, value in constraints.items():
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise MissionValidationError(
+                    f"transit.desired_vehicle_constraints.{key} must be a non-negative finite number"
+                )
+
+
+def _validate_time_window(value: Any, path: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        raise MissionValidationError(f"{path} must be an object")
+    parsed = {
+        key: _parse_iso8601(value.get(key), f"{path}.{key}")
+        for key in ("earliest", "target", "latest")
+    }
+    if not parsed["earliest"] <= parsed["target"] <= parsed["latest"]:
+        raise MissionValidationError(
+            f"{path} must satisfy earliest <= target <= latest"
+        )
+
+
+def _parse_iso8601(value: Any, path: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise MissionValidationError(f"{path} must be an ISO8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MissionValidationError(f"{path} must be an ISO8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise MissionValidationError(f"{path} must include a timezone")
+    return parsed
 
 
 def _validate_geometry_ref(geometry_ref: Any, path: str) -> None:
@@ -236,10 +373,12 @@ def _validate_inline_geometry(geometry: dict[str, Any], path: str) -> None:
     if not isinstance(coordinates, list):
         raise MissionValidationError(f"{path}.coordinates must be an array")
 
-    if geometry_type == "LineString":
-        if len(coordinates) < 2:
+    if geometry_type in {"MultiPoint", "LineString"}:
+        minimum_positions = 1 if geometry_type == "MultiPoint" else 2
+        if len(coordinates) < minimum_positions:
+            count_word = "two" if minimum_positions == 2 else "one"
             raise MissionValidationError(
-                f"{path}.coordinates must contain at least two positions"
+                f"{path}.coordinates must contain at least {count_word} positions"
             )
         for index, position in enumerate(coordinates):
             _validate_lon_lat(position, f"{path}.coordinates[{index}]")

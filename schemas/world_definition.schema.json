@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://c2-imugs2.local/schemas/world_definition.schema.json",
+  "title": "WorldDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["world_id", "name", "map", "feature_ids", "agents", "road_imports", "revision", "created_at", "updated_at"],
+  "properties": {
+    "world_id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "map": {"type": "string", "minLength": 1},
+    "notes": {"type": "string"},
+    "feature_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "name", "vehicle_type"],
+        "properties": {
+          "agent_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "vehicle_type": {"type": "string", "minLength": 1},
+          "current_location": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+          "constraints": {"type": "object"},
+          "capabilities": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "road_imports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["import_id", "name", "feature_count", "created_at"],
+        "properties": {
+          "import_id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "feature_count": {"type": "integer", "minimum": 0},
+          "bbox": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+          "created_at": {"type": "string"},
+          "geojson": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "map_view": {
+      "type": ["object", "null"],
+      "required": ["center", "zoom"],
+      "properties": {
+        "center": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+        "zoom": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "revision": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  }
+}

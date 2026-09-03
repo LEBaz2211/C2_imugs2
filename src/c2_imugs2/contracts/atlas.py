@@ -948,16 +948,6 @@ def build_verified_contract_atlas(repo_root: Path, runtime: dict[str, Any] | Non
                 ref(f"{CENTRAL}/c2_interface_node.cpp", "c2_msgs::msg::InitMissionResponse _response", "Unpublished response"),
             ],
         ),
-        _gap(
-            "incomplete_legacy_alias_translation",
-            "high",
-            "Canonical-to-legacy translation is incomplete",
-            "The boundary translates optimization only; several normalized coverage/formation names differ from fields the old parser expects.",
-            [
-                ref("src/c2_imugs2/infrastructure/legacy/rest.py", "if isinstance(transit, dict) and", "Only optimization is translated"),
-                ref("src/c2_imugs2/core/mission_config.py", '"maximum_coverage_distances"', "Other canonical aliases"),
-            ],
-        ),
     ]
 
     workflow = _workflow(repo_root, ref)
@@ -1092,7 +1082,7 @@ def _workflow(repo_root: Path, ref: Any) -> dict[str, Any]:
             ],
             source_refs=[
                 ref("src/c2_imugs2/api/services.py", "compatibility_config = self.inline_feature_refs", "Runtime geometry inlining"),
-                ref("src/c2_imugs2/api/services.py", 'canonical["mission_id"] = self.normalize_mission_id', "UUID repair"),
+                ref("src/c2_imugs2/api/services.py", 'draft["mission_id"] = self.normalize_mission_id', "UUID repair"),
             ],
         ),
         _step(

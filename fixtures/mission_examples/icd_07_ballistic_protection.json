@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "70000000-0000-4000-8000-000000000001",
+  "required_capabilities": ["ballistic_protection"],
+  "phase": 1,
+  "name": "ICD 7 — threat-relative ballistic protection line",
+  "behavior": 0,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002", "fcee3176-50f6-11ec-bf63-0242ac130002", "a18d27fc-50f6-11ec-bf63-0242ac130055", "ee81c8fc-50f6-11ec-bf63-0242ac130056", "5caeb16f-58d6-4346-b198-ad16e32d11ca", "b11d27fc-50f6-11ec-bf63-0242ac130022"],
+  "objective": {
+    "geometry": {"geometry_type": "Point", "coordinates": [4.3950, 50.8460]},
+    "minimum_distance": 50,
+    "vehicle_formation": 2,
+    "vehicle_formation_distances": 5,
+    "vehicle_orientation": 90,
+    "vehicle_orientation_origin": {"geometry_type": "Polygon", "coordinates": [[4.3975, 50.8455], [4.3985, 50.8455], [4.3985, 50.8465], [4.3975, 50.8465], [4.3975, 50.8455]]},
+    "line_of_sight": {"geometry_type": "Polygon", "coordinates": [[4.3975, 50.8455], [4.3985, 50.8455], [4.3985, 50.8465], [4.3975, 50.8465], [4.3975, 50.8455]]}
+  }
+}

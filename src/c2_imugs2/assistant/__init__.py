@@ -9,7 +9,7 @@ from .config import AssistantSettings
 from .factory import build_assistant
 from .models import (
     AssistantResponse,
-    AssistantScenarioBinding,
+    AssistantWorldBinding,
     AssistantStructuredOutput,
 )
 from .orchestrator import AssistantBusyError, AssistantOrchestrator
@@ -19,7 +19,7 @@ __all__ = [
     "AssistantOrchestrator",
     "AssistantBusyError",
     "AssistantResponse",
-    "AssistantScenarioBinding",
+    "AssistantWorldBinding",
     "AssistantSettings",
     "AssistantStructuredOutput",
     "ChatModelProvider",

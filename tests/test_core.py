@@ -87,7 +87,7 @@ def test_normalizes_old_icd_aliases():
     assert normalized["objective"]["vehicle_orientation"] == [90]
 
 
-def test_coverage_requires_a_positive_swath_width():
+def test_coverage_swath_is_optional_in_intent_and_validated_when_explicit():
     mission = {
         "mission_id": "coverage",
         "behavior": 1,
@@ -105,13 +105,14 @@ def test_coverage_requires_a_positive_swath_width():
         },
     }
 
-    with pytest.raises(MissionValidationError, match="swath_width_m"):
-        load_and_validate_mission(mission)
+    normalized = load_and_validate_mission(mission)
+    assert normalized["objective"]["maximize_coverage"] is True
+    assert "coverage_swath_widths" not in normalized["objective"]
 
-    mission["objective"]["maximum_coverage_distances"] = [6.0]
+    mission["objective"]["coverage_swath_widths"] = [6.0]
     normalized = load_and_validate_mission(mission)
 
-    assert normalized["objective"]["maximum_coverage_distances"] == [6.0]
+    assert normalized["objective"]["coverage_swath_widths"] == [6.0]
 
 
 def test_coverage_width_accepts_legacy_alias():

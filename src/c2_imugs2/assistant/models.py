@@ -19,7 +19,7 @@ class AssistantStructuredOutput(BaseModel):
     mission_proposal: dict[str, Any] | None = None
 
 
-class AssistantScenarioBinding(BaseModel):
+class AssistantWorldBinding(BaseModel):
     """Internal runtime identity captured alongside the model-safe picture.
 
     These fields support exact post-generation validation but are deliberately
@@ -29,27 +29,29 @@ class AssistantScenarioBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     IDENTITY_FIELDS: ClassVar[tuple[str, ...]] = (
-        "scenario_id",
-        "version",
+        "world_id",
+        "world_version",
+        "deployment_id",
         "map_collection",
         "content_hash",
         "map_feature_hash",
-        "activation_id",
-        "activation_token",
+        "launch_id",
+        "map_snapshot_token",
     )
 
-    scenario_id: str | None = None
-    version: str | None = None
+    world_id: str | None = None
+    world_version: str | None = None
+    deployment_id: str | None = None
     map_collection: str | None = None
     content_hash: str | None = None
     map_feature_hash: str | None = None
-    activation_id: str | None = None
-    activation_token: str | None = None
+    launch_id: str | None = None
+    map_snapshot_token: str | None = None
     status: str | None = None
     ready: bool = False
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "AssistantScenarioBinding":
+    def from_mapping(cls, value: Mapping[str, Any]) -> "AssistantWorldBinding":
         def optional_text(field: str) -> str | None:
             raw = value.get(field)
             if raw is None:
@@ -68,7 +70,7 @@ class AssistantScenarioBinding(BaseModel):
         return tuple(field for field in self.IDENTITY_FIELDS if not getattr(self, field))
 
     def identity_differences(
-        self, other: "AssistantScenarioBinding"
+        self, other: "AssistantWorldBinding"
     ) -> tuple[str, ...]:
         return tuple(
             field
@@ -84,7 +86,7 @@ class AssistantResponse(BaseModel):
     answer: str
     picture_revision: str
     picture_observed_at: str
-    picture_scenario_binding: AssistantScenarioBinding | None = None
+    picture_world_binding: AssistantWorldBinding | None = None
     prompt_version: str
     assumptions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

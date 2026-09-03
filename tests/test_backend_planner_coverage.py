@@ -43,20 +43,41 @@ def _class_methods(path: Path, class_name: str) -> dict[str, ast.FunctionDef]:
     }
 
 
-def test_coverage_branch_uses_the_polygon_lawnmower_planner() -> None:
+def test_coverage_dispatch_distinguishes_area_line_and_road_patrol() -> None:
     methods = _class_methods(
         PATH_LIBRARY / "multi_robot_path_planning.py",
         "MultiRobotPathPlanning",
     )
     solve_source = ast.unparse(methods["solve_mission"])
-    coverage_source = ast.unparse(methods["_solve_polygon_coverage"])
+    coverage_source = ast.unparse(methods["_solve_coverage"])
 
     assert "coverage_algorithm" not in solve_source
-    assert "self._solve_polygon_coverage" in solve_source
+    assert "self._solve_coverage" in solve_source
     assert "lawnmower_coverage_path" in coverage_source
-    assert "maximum_coverage_distances" in ast.unparse(
+    assert "self._road_patrol_path" in coverage_source
+    assert "LineString" in coverage_source
+    assert "coverage_swath_widths" in ast.unparse(
         methods["_coverage_widths_by_vehicle"]
     )
+    assert "maximum_coverage_distances" not in ast.unparse(
+        methods["_coverage_widths_by_vehicle"]
+    )
+
+
+def test_patrol_work_is_complete_and_evenly_divided() -> None:
+    methods = _class_methods(
+        PATH_LIBRARY / "multi_robot_path_planning.py",
+        "MultiRobotPathPlanning",
+    )
+    road_source = ast.unparse(methods["_road_patrol_path"])
+    split_source = ast.unparse(methods["_split_continuous_path"])
+
+    assert "nx.eulerize" in road_source
+    assert "nx.eulerian_circuit" in road_source
+    assert "disconnected active-world road components" in road_source
+    assert "total_length" in split_source
+    assert "point_at" in split_source
+    assert "segment_lengths" in split_source
 
 
 def test_database_polygon_resolution_preserves_interior_holes() -> None:
@@ -64,7 +85,7 @@ def test_database_polygon_resolution_preserves_interior_holes() -> None:
         PATH_LIBRARY / "multi_robot_path_planning.py",
         "MultiRobotPathPlanning",
     )
-    source = ast.unparse(methods["update_mission"])
+    source = ast.unparse(methods["_resolve_geometry_ref"])
 
     assert "geometry.interiors" in source
 
@@ -122,7 +143,7 @@ def test_coverage_transit_and_sweep_treat_risks_as_hard_obstacles() -> None:
         PATH_LIBRARY / "multi_robot_path_planning.py",
         "MultiRobotPathPlanning",
     )
-    solve_source = ast.unparse(methods["_solve_polygon_coverage"])
+    solve_source = ast.unparse(methods["_solve_coverage"])
     connector_source = ast.unparse(methods["_connector_is_risk_free"])
     astar_methods = _class_methods(MAPF_SOURCE, "AStar")
     search_source = ast.unparse(astar_methods["search"])
@@ -143,14 +164,14 @@ def test_navigation_attaches_exact_endpoints_and_collapses_lattice_noise() -> No
         PATH_LIBRARY / "multi_robot_path_planning.py",
         "MultiRobotPathPlanning",
     )
-    solve_source = ast.unparse(methods["solve_mission"])
+    allocation_source = ast.unparse(methods["_paths_for_allocations"])
     path_source = ast.unparse(methods["_navigation_path_from_route"])
     simplify_source = ast.unparse(methods["_remove_collinear_waypoints"])
     search_source = ast.unparse(methods["_search_route"])
     astar_methods = _class_methods(MAPF_SOURCE, "AStar")
     snap_source = ast.unparse(astar_methods["nearest_routable_node"])
 
-    assert solve_source.count("self._navigation_path_from_route") == 3
+    assert "self._navigation_path_from_route" in allocation_source
     assert "float(start[0])" in path_source
     assert "float(destination[0])" in path_source
     assert "self._remove_collinear_waypoints" in path_source
@@ -192,7 +213,28 @@ def test_successful_plan_is_cached_until_an_explicit_new_request() -> None:
     assert "self.mission_defined = True" in create_source
 
 
-def test_planner_injects_scenario_risk_polygons_into_mission_planner() -> None:
+def test_multi_vehicle_planning_waits_for_every_selected_agent() -> None:
+    methods = _class_methods(PLANNER_SOURCE, "PlannerNode")
+    planning_source = ast.unparse(methods["planning_timer_callback"])
+
+    assert "missing_agents" in planning_source
+    assert "agent_id not in live_agents" in planning_source
+    assert "agents_to_plan = [live_agents[agent_id] for agent_id in mission_agents]" in planning_source
+
+
+def test_custom_start_geometry_is_an_executable_staging_waypoint() -> None:
+    methods = _class_methods(
+        PATH_LIBRARY / "multi_robot_path_planning.py",
+        "MultiRobotPathPlanning",
+    )
+    source = ast.unparse(methods["_start_formation_allocations"])
+
+    assert "start.get('geometry')" in source
+    assert "transit.get('vehicle_formation')" in source
+    assert "placements = [list(center_coordinates) for _ in ordered_agents]" in source
+
+
+def test_planner_injects_world_risk_polygons_into_mission_planner() -> None:
     methods = _class_methods(PLANNER_SOURCE, "PlannerNode")
     source = ast.unparse(methods["initialize_map"])
 

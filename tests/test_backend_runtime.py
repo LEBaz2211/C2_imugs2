@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from c2_imugs2.scenarios.runtime import (
+from c2_imugs2.worlds.service import (
     C2_REST_CONTAINER,
     COORDINATION_CONTAINER,
     DEFAULT_EDGE_CONTAINER,
@@ -15,7 +15,7 @@ from c2_imugs2.scenarios.runtime import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_backend_compose_preserves_mapdb_and_scenario_startup_behavior() -> None:
+def test_backend_compose_preserves_mapdb_and_world_startup_behavior() -> None:
     compose = yaml.safe_load(
         (REPO_ROOT / "docker-compose.backend.yml").read_text(encoding="utf-8")
     )
@@ -27,9 +27,10 @@ def test_backend_compose_preserves_mapdb_and_scenario_startup_behavior() -> None
     assert planner["depends_on"]["mapdb-seed"]["condition"] == "service_completed_successfully"
     assert "./data/runtime:/runtime:ro" in planner["volumes"]
     assert "active_planner.yaml" in planner["command"]
+    assert "map_snapshot_token:" in planner["command"]
 
 
-def test_scenario_runtime_targets_only_editable_backend_containers() -> None:
+def test_world_runtime_targets_only_editable_backend_containers() -> None:
     assert COORDINATION_CONTAINER == "c2-imugs2-backend-centralized-coordination"
     assert PLANNER_CONTAINER == "c2-imugs2-backend-planner"
     assert C2_REST_CONTAINER == "c2-imugs2-backend-c2-ros-rest"

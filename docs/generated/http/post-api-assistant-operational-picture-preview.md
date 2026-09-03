@@ -18,9 +18,9 @@ FastAPI handler `operational_picture_preview`
 
 | Relationship | Contract | Evidence |
 |---|---|---|
-| handled by operational_picture_preview | `—` | [`src/c2_imugs2/api/routers.py:307`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L307) |
-| previewAssistantOperationalPicture | `—` | [`frontend/src/api.ts:655`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L655) |
+| handled by operational_picture_preview | `—` | [`src/c2_imugs2/api/routers.py:430`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L430) |
+| previewAssistantOperationalPicture | `—` | [`frontend/src/api.ts:714`](https://github.com/LEBaz2211/C2_imugs2/blob/main/frontend/src/api.ts#L714) |
 
 ## Definition evidence
 
-- [`src/c2_imugs2/api/routers.py:307`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L307)
+- [`src/c2_imugs2/api/routers.py:430`](https://github.com/LEBaz2211/C2_imugs2/blob/main/src/c2_imugs2/api/routers.py#L430)

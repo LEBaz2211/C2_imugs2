@@ -5,16 +5,16 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .services import (
     ApplicationServiceError,
     BackendMissionApplicationService,
-    ScenarioApplicationService,
+    WorldApplicationService,
 )
 from ..assistant.config import AssistantConfigurationError
-from ..assistant.models import AssistantResponse, AssistantScenarioBinding
+from ..assistant.models import AssistantResponse, AssistantWorldBinding
 from ..assistant.orchestrator import (
     AssistantBusyError,
     AssistantInputError,
@@ -40,6 +40,17 @@ class AssistantOperationalPictureOptions(BaseModel):
         Literal["agents", "missions", "plans", "health", "warnings"],
         list[str],
     ] = Field(default_factory=dict, max_length=5)
+    exclude_paths: list[str] = Field(default_factory=list, max_length=256)
+
+    @field_validator("exclude_paths")
+    @classmethod
+    def validate_exclude_paths(cls, value: list[str]) -> list[str]:
+        for path in value:
+            if not isinstance(path, str) or not path.strip():
+                raise ValueError("operational picture exclude paths must be text")
+            if len(path) > 256:
+                raise ValueError("operational picture exclude path is too long")
+        return value
 
     @field_validator("item_ids")
     @classmethod
@@ -67,11 +78,11 @@ def _http_error(exc: ApplicationServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-def _require_complete_scenario_binding(
-    binding: AssistantScenarioBinding | None,
+def _require_complete_world_binding(
+    binding: AssistantWorldBinding | None,
     *,
     source: str,
-) -> AssistantScenarioBinding:
+) -> AssistantWorldBinding:
     if binding is None:
         raise ValueError(f"{source} environment binding is absent")
     missing = binding.missing_identity_fields()
@@ -82,13 +93,13 @@ def _require_complete_scenario_binding(
     return binding
 
 
-def _binding_is_ready(binding: AssistantScenarioBinding) -> bool:
+def _binding_is_ready(binding: AssistantWorldBinding) -> bool:
     return binding.ready and (binding.status or "").lower() == "ready"
 
 
-def _require_same_scenario_binding(
-    picture_binding: AssistantScenarioBinding,
-    active_binding: AssistantScenarioBinding,
+def _require_same_world_binding(
+    picture_binding: AssistantWorldBinding,
+    active_binding: AssistantWorldBinding,
 ) -> None:
     differences = picture_binding.identity_differences(active_binding)
     if differences:
@@ -139,22 +150,22 @@ def _assistant_response_payload(
         )
         return result
 
-    active_binding: AssistantScenarioBinding | None = None
+    active_binding: AssistantWorldBinding | None = None
     try:
-        picture_binding = _require_complete_scenario_binding(
-            response.picture_scenario_binding,
+        picture_binding = _require_complete_world_binding(
+            response.picture_world_binding,
             source="operational picture",
         )
         if validate_proposal is None:
             raise ValueError(
                 "post-generation current environment validation is unavailable"
             )
-        validated, active_scenario = validate_proposal(proposal)
-        active_binding = _require_complete_scenario_binding(
-            AssistantScenarioBinding.from_mapping(active_scenario),
+        validated, active_world = validate_proposal(proposal)
+        active_binding = _require_complete_world_binding(
+            AssistantWorldBinding.from_mapping(active_world),
             source="post-generation current environment",
         )
-        _require_same_scenario_binding(picture_binding, active_binding)
+        _require_same_world_binding(picture_binding, active_binding)
     except (ApplicationServiceError, MissionValidationError, TypeError, ValueError) as exc:
         result["mission_proposal_validation"] = {
             "valid": False,
@@ -162,7 +173,7 @@ def _assistant_response_payload(
             "issues": [{"message": str(exc)}],
         }
         if active_binding is not None:
-            result["mission_proposal_validation"]["scenario_binding"] = (
+            result["mission_proposal_validation"]["world_binding"] = (
                 active_binding.model_dump(mode="json")
             )
         _append_api_debug_event(
@@ -176,7 +187,7 @@ def _assistant_response_payload(
             "valid": True,
             "scope": "schema_semantics_and_current_environment",
             "issues": [],
-            "scenario_binding": active_binding.model_dump(mode="json"),
+            "world_binding": active_binding.model_dump(mode="json"),
             "command_ready": command_ready,
             "command_issues": (
                 []
@@ -241,13 +252,20 @@ def mission_router(
     return router
 
 
-def scenario_router(service: ScenarioApplicationService) -> APIRouter:
-    router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
+def world_router(service: WorldApplicationService) -> APIRouter:
+    router = APIRouter(prefix="/api/worlds", tags=["worlds"])
 
     @router.get("")
     async def catalog() -> dict[str, Any]:
         try:
-            return await service.list_scenarios()
+            return await service.list_worlds()
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.post("")
+    async def create(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.create_world(payload)
         except ApplicationServiceError as exc:
             raise _http_error(exc) from exc
 
@@ -255,11 +273,116 @@ def scenario_router(service: ScenarioApplicationService) -> APIRouter:
     async def active() -> dict[str, Any]:
         return service.active()
 
-    @router.post("/activate")
-    @router.post("/launch")
-    async def activate(payload: dict[str, Any]) -> dict[str, Any]:
+    @router.post("/active/features")
+    async def create_live_feature(payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return await service.activate(payload)
+            return await service.invoke(service.world_runtime.create_live_feature, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.put("/active/features/{feature_id}")
+    async def update_live_feature(feature_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.update_live_feature, feature_id, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.delete("/active/features/{feature_id}")
+    async def delete_live_feature(feature_id: str) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.delete_live_feature, feature_id)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.get("/{world_id}")
+    async def get(world_id: str) -> dict[str, Any]:
+        try:
+            return await service.get_world(world_id)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.put("/{world_id}")
+    async def update(world_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.update_world(world_id, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.delete("/{world_id}")
+    async def delete(world_id: str) -> dict[str, Any]:
+        try:
+            return await service.delete_world(world_id)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.post("/{world_id}/launch")
+    async def launch(world_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            revision = payload.get("revision")
+            if isinstance(revision, bool) or not isinstance(revision, int):
+                raise ApplicationServiceError(422, "revision must be an integer")
+            return await service.launch(world_id, revision)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.post("/{world_id}/road-imports/query")
+    async def query_road_import(world_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.query_road_import, world_id, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.get("/{world_id}/road-imports/{import_id}")
+    async def get_road_import(world_id: str, import_id: str) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.get_road_import, world_id, import_id)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.delete("/{world_id}/road-imports/{import_id}")
+    async def delete_road_import(
+        world_id: str,
+        import_id: str,
+        revision: int = Query(..., ge=1),
+    ) -> dict[str, Any]:
+        try:
+            return await service.invoke(
+                service.world_runtime.delete_road_import, world_id, import_id, revision
+            )
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    return router
+
+
+def vehicle_model_router(service: WorldApplicationService) -> APIRouter:
+    router = APIRouter(prefix="/api/vehicle-models", tags=["vehicle-models"])
+
+    @router.get("")
+    async def list_models() -> dict[str, Any]:
+        try:
+            return {"vehicle_models": await service.invoke(service.world_runtime.list_vehicle_models)}
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.post("")
+    async def create_model(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.create_vehicle_model, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.put("/{model_id}")
+    async def update_model(model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.update_vehicle_model, model_id, payload)
+        except ApplicationServiceError as exc:
+            raise _http_error(exc) from exc
+
+    @router.delete("/{model_id}")
+    async def delete_model(model_id: str) -> dict[str, Any]:
+        try:
+            return await service.invoke(service.world_runtime.delete_vehicle_model, model_id)
         except ApplicationServiceError as exc:
             raise _http_error(exc) from exc
 

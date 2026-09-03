@@ -27,6 +27,18 @@ ALLOWED_USER_FEATURE_GEOMETRIES = {
 
 
 def load_legacy_geojson_map(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
+    static = load_static_geojson_map(repo_root, map_name)
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            *static.get("features", []),
+            *load_user_geojson_map(repo_root, map_name).get("features", []),
+        ],
+    }
+
+
+def load_static_geojson_map(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
+    """Load version-controlled authoring assets without mutable runtime files."""
     backend_map_dir = repo_root / "backend" / "config" / "data" / "map" / map_name
     legacy_map_dir = repo_root / "legacy_ros" / "config" / "data" / "map" / map_name
     map_dir = backend_map_dir if backend_map_dir.is_dir() else legacy_map_dir
@@ -57,7 +69,6 @@ def load_legacy_geojson_map(repo_root: Path, map_name: str = "rma") -> dict[str,
             normalized["properties"] = properties
             features.append(normalized)
 
-    features.extend(load_user_geojson_map(repo_root, map_name).get("features", []))
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -149,8 +160,8 @@ def normalize_user_geojson_feature(feature: dict[str, Any]) -> dict[str, Any]:
 def load_osm_roads_overlay(repo_root: Path, map_name: str = "rma") -> dict[str, Any]:
     """Load a previously frozen overlay without performing implicit network I/O.
 
-    New OSM data is fetched only by the explicit Scenario Lab polygon query and
-    becomes authoritative only after scenario activation stores it in MapDB.
+    New OSM data is fetched only by an explicit World Builder polygon query and
+    becomes authoritative only after a world launch stores it in MapDB.
     """
     cache_path = repo_root / "data" / "runtime" / f"osm_roads_{map_name}.geojson"
     if cache_path.exists():
@@ -176,15 +187,15 @@ def query_osm_roads_for_bbox(
     if overpass is None:
         raise ValueError("OpenStreetMap Overpass query failed")
 
-    collection = _overpass_roads_to_feature_collection(overpass, feature_type="scenario_osm_road")
+    collection = _overpass_roads_to_feature_collection(overpass, feature_type="world_osm_road")
     features = collection.get("features", [])[: max(1, max_features)]
     for feature in features:
         properties = dict(feature.get("properties") or {})
         properties.update(
             {
-                "feature_type": "scenario_osm_road",
+                "feature_type": "world_osm_road",
                 "source": "openstreetmap-overpass",
-                "source_tool": "scenario_lab_osm_section",
+                "source_tool": "world_builder_osm_section",
             }
         )
         feature["properties"] = properties
@@ -212,7 +223,7 @@ def query_osm_roads_for_polygon(
     if overpass is None:
         raise ValueError("OpenStreetMap Overpass query failed")
 
-    collection = _overpass_roads_to_feature_collection(overpass, feature_type="scenario_osm_road")
+    collection = _overpass_roads_to_feature_collection(overpass, feature_type="world_osm_road")
     features: list[dict[str, Any]] = []
     source_way_count = 0
     for feature in collection.get("features", []):
@@ -235,9 +246,9 @@ def query_osm_roads_for_polygon(
             properties.update(
                 {
                     "feature_id": feature_id,
-                    "feature_type": "scenario_osm_road",
+                    "feature_type": "world_osm_road",
                     "source": "openstreetmap-overpass",
-                    "source_tool": "scenario_lab_osm_polygon",
+                    "source_tool": "world_builder_osm_polygon",
                     "clip": "polygon",
                 }
             )
@@ -500,7 +511,7 @@ def _validate_bbox(bbox: tuple[float, float, float, float]) -> tuple[float, floa
         raise ValueError("bbox coordinates are outside valid longitude/latitude ranges")
     if west >= east or south >= north:
         raise ValueError("bbox must be [west, south, east, north]")
-    if (east - west) * (north - south) > 0.01:
+    if (east - west) * (north - south) > 0.05:
         raise ValueError("bbox is too large for an interactive OSM import")
     return west, south, east, north
 

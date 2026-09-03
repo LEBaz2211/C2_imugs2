@@ -125,7 +125,8 @@ void Interface::_initMissionCallback( const c2_msgs::msg::InitMissionRequest::Sh
     if(!json_result.Success)
     {
       std::cout << "_initMissionCallback -> Error while parsing InitMission: " << json_result.Log << std::endl;
-      this->_publishSwarmLog(2,"", "_initMissionCallback -> Error while parsing InitMission");
+      this->_publishSwarmLog(2,"", "_initMissionCallback -> Error while parsing InitMission: " + json_result.Log);
+      return;
     }
 
     auto &mission_config = json_result.Result.value();

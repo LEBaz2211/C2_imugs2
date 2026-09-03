@@ -9,16 +9,15 @@ Keep these distinctions explicit when relevant:
 - planner readiness does not prove that a mission route exists;
 - command acceptance does not prove execution or mission success;
 - non-empty waypoint tasks are evidence of a usable planned path;
-- stale, failed, activating, and inactive environments are not ready for
+- stale, failed, launching, and inactive environments are not ready for
   mission commands; and
 - temporary lack of readiness does not prevent editing a previously grounded
   mission working copy.
 
 Mission and map facts must come from the operator's request, the current
 environment, or unchanged fields of the exact prior proposal being revised.
-Entries in `current_environment.operator_objectives` are mutable Point
-objectives drawn by the operator. They are current coordinate evidence but are
-not active map assets; use their exact coordinates only as inline mission
-geometry.
+Entries in `current_environment.map_features` come only from the active
+immutable snapshot or current-deployment live overlays. A live overlay may be
+inlined by the command boundary; it never changes the planner graph.
 Roads, risks, workspaces, and geofences are environment facts unless the
 mission contract explicitly permits a listed feature reference.

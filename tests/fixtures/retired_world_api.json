@@ -1,0 +1,7 @@
+{
+  "paths": [
+    "/api/scenarios",
+    "/api/scenarios/active",
+    "/api/scenarios/activate"
+  ]
+}

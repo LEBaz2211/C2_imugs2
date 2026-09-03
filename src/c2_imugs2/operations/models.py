@@ -14,7 +14,7 @@ from typing import Any, Mapping
 
 OPERATIONAL_PICTURE_SCHEMA_VERSION = "1.0"
 OPERATIONAL_SECTION_NAMES = (
-    "scenario",
+    "world",
     "agents",
     "missions",
     "plans",
@@ -359,8 +359,8 @@ def _normalize_sections(value: object) -> dict[str, OperationalSection]:
         if not isinstance(section, OperationalSection):
             raise OperationalPictureValidationError(f"section {name!r} must be OperationalSection")
         sections[name] = section
-    if len(sections["scenario"].items) > 1:
-        raise OperationalPictureValidationError("scenario section may contain at most one active scenario")
+    if len(sections["world"].items) > 1:
+        raise OperationalPictureValidationError("world section may contain at most one active world")
     return sections
 
 

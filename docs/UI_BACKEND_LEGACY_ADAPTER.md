@@ -37,10 +37,16 @@ POST   /api/map/features?map=rma
 PUT    /api/map/features/{feature_id}?map=rma
 DELETE /api/map/features/{feature_id}?map=rma
 GET    /api/map/osm-roads?map=rma
-POST   /api/map/osm-roads/query?map=rma
-GET    /api/scenarios
-GET    /api/scenarios/active
-POST   /api/scenarios/activate
+GET/POST /api/worlds
+GET    /api/worlds/active
+GET/PUT/DELETE /api/worlds/{world_id}
+POST   /api/worlds/{world_id}/launch
+POST   /api/worlds/active/features
+PUT/DELETE /api/worlds/active/features/{feature_id}
+POST   /api/worlds/{world_id}/road-imports/query
+GET/DELETE /api/worlds/{world_id}/road-imports/{import_id}
+GET/POST /api/vehicle-models
+PUT/DELETE /api/vehicle-models/{model_id}
 GET    /api/assistant/status
 GET    /api/assistant/operational-picture
 POST   /api/assistant/messages
@@ -57,16 +63,16 @@ GET    /api/events
 
 `/api/missions/init` requires a ready active world, normalizes old mission
 config aliases, executes the canonical draft-2020-12 JSON Schema and semantic
-checks, verifies scenario vehicle membership, ensures the legacy mission ID is
-UUID-shaped, then posts `action=initialize` to the old REST bridge. Scenario
+checks, verifies world vehicle membership, ensures the legacy mission ID is
+UUID-shaped, then posts `action=initialize` to the old REST bridge. World
 roads are not added to mission JSON.
 
-The operator-facing **Launch world** action uses the compatibility endpoint
-`/api/scenarios/activate`. It content-addresses the complete world definition, records
-durable activation phases in MongoDB, writes its selected assets and downloaded
+The operator-facing **Launch world** action posts the last acknowledged
+revision to `/api/worlds/{world_id}/launch`. It content-addresses the complete world definition, records
+durable launch phases in MongoDB, writes its selected assets and downloaded
 OSM LineStrings to an immutable MapDB collection, clears prior mission runtime,
 restarts centralized coordination, the planner, the C2 REST bridge, and
-rosbridge, replaces the prior scenario robot containers, and returns success
+rosbridge, replaces the prior world robot containers, and returns success
 only after the exact collection and all robot IDs are verified. The local
 host-network simulation uses loopback-only ROS discovery with an expanded
 CycloneDDS participant-index range, so host interface changes cannot strand a
@@ -74,16 +80,15 @@ still-listening gateway outside the ROS graph or cap the local multi-process fle
 Repeating the same healthy content is idempotent.
 
 The definition is no longer a runtime input after launch. Runtime consumers
-use the exact frozen MapDB collection, durable active-world record, and live
-ROS state. The `scenario` naming in URLs, IDs, implementation symbols, and
-Mongo collections is retained as a compatibility detail.
+use the exact frozen MapDB snapshot, durable active-world record,
+current-deployment live overlays, and live ROS state.
 
 `/api/assistant/messages` performs one non-streaming LangChain request to the
 configured LM Studio server, with maximum Qwen reasoning enabled and provider
 retries disabled. It injects a freshly
 materialized, source-labelled operational picture into every message and
 reports the revision used. The model-facing projection calls the active world
-the current environment and omits scenario/version/collection/activation
+the current environment and omits world/version/collection/launch
 identity; the backend retains that identity for stale-proposal validation.
 Bounded active Point/Polygon feature facts are read from the exact active MapDB
 collection, so a named feature can be grounded without treating mutable

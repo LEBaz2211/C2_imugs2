@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "mission_id": "40000000-0000-4000-8000-000000000001",
+  "required_capabilities": ["radio_relay"],
+  "phase": 1,
+  "name": "ICD 4 — feasible ordered communication relay",
+  "behavior": 0,
+  "vehicles": ["f17d27fc-50f6-11ec-bf63-0242ac130002", "fcee3176-50f6-11ec-bf63-0242ac130002", "a18d27fc-50f6-11ec-bf63-0242ac130055", "5caeb16f-58d6-4346-b198-ad16e32d11ca"],
+  "objective": {
+    "geometry": {"geometry_type": "LineString", "coordinates": [[4.3900, 50.8440], [4.3980, 50.8440]]},
+    "vehicle_order": true,
+    "maximize_area_coverage": true,
+    "maximum_coverage_distances": [500],
+    "maximum_distance": 100,
+    "line_of_sight_propagation": true
+  }
+}
